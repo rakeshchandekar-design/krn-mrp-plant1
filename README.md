@@ -1,3 +1,3 @@
-# KRN MRP Plant1 – Render/Neon Ready
+# KRN MRP Plant1
 
-This is the prepared project for deployment.
+Full workflow app with GRN, Heat, QA, and Lot routes.
