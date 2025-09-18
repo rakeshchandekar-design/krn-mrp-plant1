@@ -3,10 +3,24 @@ services:
     name: krn-mrp-plant1
     env: python
     plan: free
-    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
-    startCommand: "uvicorn krn_mrp_app.main:app --host 0.0.0.0 --port $PORT"
+
+    buildCommand: >
+      pip install --upgrade pip &&
+      pip install -r requirements.txt
+
+    # Use gunicorn to ensure the process binds 0.0.0.0:$PORT reliably
+    startCommand: >
+      gunicorn
+      -k uvicorn.workers.UvicornWorker
+      -w 1
+      -b 0.0.0.0:$PORT
+      --timeout 120
+      krn_mrp_app.main:app
+
     envVars:
       - key: DATABASE_URL
         value: "postgresql://neondb_owner:npg_cKjEtJ6bX1fd@ep-wild-king-a15fllug-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
       - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: WEB_CONCURRENCY
         value: "1"
