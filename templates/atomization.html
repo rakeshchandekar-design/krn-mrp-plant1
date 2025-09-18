@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Atomization – New Lot</h2>
+<form method="post" action="/atomization/new">
+  <label>Lot Weight (kg) <input type="number" step="0.1" name="lot_weight" value="3000"/></label>
+  <label>Include FeSi in any heat? (If yes → KRFS) 
+    <select name="includes_fesi">
+      <option value="no">No</option>
+      <option value="yes">Yes</option>
+    </select>
+  </label>
+  <h3>Select Approved Heats</h3>
+  <div style="max-height:280px;overflow:auto;border:1px solid #eee;padding:8px">
+  {% for h in heats %}
+    <label><input type="checkbox" name="heat_ids" value="{{h.id}}"/> {{ h.heat_no }} – {{ '%.1f'|format(h.actual_output) }} kg</label><br/>
+  {% endfor %}
+  </div>
+  <p class="small">Lot chemistry = average of selected heat QA chemistry.</p>
+  <p><button class="btn">Create Lot</button></p>
+</form>
+
+<h2>Lots</h2>
+<table>
+  <tr><th>Lot</th><th>Grade</th><th>Weight</th><th>QA</th><th>Status</th><th>Actions</th></tr>
+  {% for l in lots %}
+  <tr>
+    <td>{{ l.lot_no }}</td>
+    <td>{{ l.grade }}</td>
+    <td>{{ '%.1f'|format(l.weight) }}</td>
+    <td>{{ l.qa_status }}</td>
+    <td>{{ l.status }}</td>
+    <td>
+      <a class="btn" href="/qa/lot/{{l.id}}">QA</a>
+      <a class="btn btn-secondary" href="/traceability/lot/{{l.id}}">Trace</a>
+      <a class="btn btn-secondary" href="/pdf/lot/{{l.id}}">PDF</a>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

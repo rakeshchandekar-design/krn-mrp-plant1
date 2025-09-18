@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Melting – New Heat</h2>
+<div class="alert small">
+  FIFO stock enforcement: you can only consume what is available in GRN stock. At least 1 RM line is required.
+  Theoretical output uses 3% loss; Actual output = Inputs − Slag.
+</div>
+<form method="post" action="/melting/new">
+  <label>Heat Notes (optional) <input name="notes"/></label>
+  <h3>Raw Materials</h3>
+  <div id="rm-lines">
+    {% for i in range(1,5) %}
+    <div>
+      <label>RM Type
+        <select name="rm_type_{{i}}">
+          <option value="">--</option>
+          {% for r in rm_types %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Qty (kg) <input type="number" step="0.1" name="rm_qty_{{i}}"/></label>
+    </div>
+    {% endfor %}
+  </div>
+  <label>Slag Qty (kg) <input type="number" step="0.1" name="slag_qty" value="0"/></label>
+  <p><button class="btn">Save Heat</button></p>
+</form>
+
+<h2>Pending QA</h2>
+<table>
+  <tr><th>Heat No</th><th>Inputs (kg)</th><th>Slag</th><th>Actual Output</th><th>Theoretical</th><th>Δ</th><th>Status</th><th>Action</th></tr>
+  {% for h in pending %}
+  <tr>
+    <td>{{ h.heat_no }}</td>
+    <td>{{ '%.1f'|format(h.total_inputs) }}</td>
+    <td>{{ '%.1f'|format(h.slag_qty) }}</td>
+    <td>{{ '%.1f'|format(h.actual_output) }}</td>
+    <td>{{ '%.1f'|format(h.theoretical) }}</td>
+    <td class="{{ 'red' if (h.actual_output < h.theoretical*0.97 or h.actual_output>h.theoretical*1.03) }}">{{ '%.1f'|format(h.actual_output - h.theoretical) }}</td>
+    <td>{{ h.qa_status }}</td>
+    <td><a class="btn" href="/qa/heat/{{h.id}}">QA</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

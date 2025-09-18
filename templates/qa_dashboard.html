@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>QA Dashboard</h2>
+<h3>Heats</h3>
+<table>
+  <tr><th>Heat</th><th>Δ vs Theoretical</th><th>Status</th><th>Action</th></tr>
+  {% for h in heats %}
+  <tr>
+    <td>{{ h.heat_no }}</td>
+    <td class="{{ 'red' if (h.actual_output < h.theoretical*0.97 or h.actual_output>h.theoretical*1.03) }}">{{ '%.1f'|format(h.actual_output - h.theoretical) }}</td>
+    <td>{{ h.qa_status }}</td>
+    <td><a class="btn" href="/qa/heat/{{h.id}}">Open</a></td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h3>Lots</h3>
+<table>
+  <tr><th>Lot</th><th>Grade</th><th>Weight</th><th>Status</th><th>Action</th></tr>
+  {% for l in lots %}
+  <tr>
+    <td>{{ l.lot_no }}</td>
+    <td>{{ l.grade }}</td>
+    <td>{{ '%.1f'|format(l.weight) }}</td>
+    <td>{{ l.qa_status }}</td>
+    <td><a class="btn" href="/qa/lot/{{l.id}}">Open</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

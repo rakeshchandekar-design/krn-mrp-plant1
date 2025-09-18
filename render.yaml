@@ -2,9 +2,5 @@ services:
   - type: web
     name: krn-mrp-plant1
     env: python
-    plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "uvicorn krn_mrp_app.main:app --host 0.0.0.0 --port $PORT"
-    envVars:
-      - key: DATABASE_URL
-        value: postgresql://neondb_owner:npg_cKjEtJ6bX1fd@ep-wild-king-a15fllug-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require

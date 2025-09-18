@@ -1,0 +1,22 @@
+
+body{font-family:Inter,Arial,Helvetica,sans-serif;margin:20px}
+a{color:#0b64d6;text-decoration:none}
+a:hover{text-decoration:underline}
+nav{display:flex;gap:18px;align-items:center;margin-bottom:18px;padding:10px 0;border-bottom:1px solid #eee}
+nav img{height:28px;margin-right:10px}
+table{border-collapse:collapse;width:100%;margin-top:12px}
+th,td{border:1px solid #ddd;padding:8px;font-size:14px}
+th{background:#fafafa;text-align:left}
+.btn{display:inline-block;background:#0b64d6;color:#fff;padding:6px 10px;border-radius:6px}
+.btn-secondary{background:#555}
+label{display:block;margin-top:8px}
+input,select{padding:6px;border:1px solid #ccc;border-radius:6px;width:100%;max-width:340px}
+hr{border:none;border-top:1px solid #eee;margin:18px 0}
+.small{color:#666;font-size:12px}
+.alert{background:#fff6e5;border:1px solid #ffd59f;padding:10px;border-radius:6px}
+.success{background:#e9f9ee;border:1px solid #b6e7c6}
+.red{color:#b00020}
+.header-brand{display:flex;align-items:center;gap:10px}
+.header-brand h1{font-size:18px;margin:0;font-weight:700}
+.top-right{margin-left:auto;display:flex;gap:12px}
+code{background:#f5f5f5;padding:2px 6px;border-radius:4px}

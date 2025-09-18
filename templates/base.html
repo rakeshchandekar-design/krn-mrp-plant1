@@ -1,5 +1,27 @@
+{% macro active(h) %}{% if request.url.path.startswith(h) %}style="font-weight:700"{% endif %}{% endmacro %}
 <!doctype html>
-<html><head><meta charset='utf-8'><title>KRN MRP</title><link rel='stylesheet' href='/static/style.css'></head>
-<body><h1>KRN MRP Plant 1</h1><nav><a href='/grn'>GRN</a> | <a href='/heat'>Melting</a> | <a href='/lot'>Atomization (Lots)</a></nav><hr>
-{% block content %}{% endblock %}
-</body></html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>KRN Alloys Pvt Ltd – Plant 1</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+  <nav>
+    <div class="header-brand">
+      <img src="/static/KRN_Logo.png" alt="KRN" />
+      <h1>KRN Alloys Pvt Ltd – Plant 1</h1>
+    </div>
+    <div class="top-right">
+      <a href="/" {{ active('/') }}>Home</a>
+      <a href="/grn" {{ active('/grn') }}>Stores (GRN)</a>
+      <a href="/melting" {{ active('/melting') }}>Melting</a>
+      <a href="/atomization" {{ active('/atomization') }}>Atomization</a>
+      <a href="/qa" {{ active('/qa') }}>QA</a>
+      <a href="/qa-dashboard" {{ active('/qa-dashboard') }}>QA Dashboard</a>
+    </div>
+  </nav>
+  {% block content %}{% endblock %}
+</body>
+</html>

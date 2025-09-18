@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>GRNs</h2>
+<p><a class="btn" href="/grn/new">+ New GRN</a></p>
+<table>
+  <tr><th>ID</th><th>Date</th><th>Supplier</th><th>RM</th><th>Qty (kg)</th><th>Price</th><th>Amount</th><th>Remaining</th></tr>
+  {% for g in grns %}
+  <tr>
+    <td>{{ g.id }}</td>
+    <td>{{ g.date }}</td>
+    <td>{{ g.supplier }}</td>
+    <td>{{ g.rm_type }}</td>
+    <td>{{ '%.1f'|format(g.qty) }}</td>
+    <td>{{ '%.2f'|format(g.price) }}</td>
+    <td>{{ '%.1f'|format(g.qty*g.price) }}</td>
+    <td>{{ '%.1f'|format(g.remaining_qty) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h3>Current RM Prices</h3>
+<ul>
+  {% for k,v in prices.items() %}
+    <li>{{ k }}: ₹{{ '%.1f'|format(v) }}</li>
+  {% endfor %}
+</ul>
+{% endblock %}

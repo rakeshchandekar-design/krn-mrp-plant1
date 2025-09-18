@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>QA – Lot {{ lot.lot_no }} ({{ lot.grade }})</h2>
+<form method="post">
+  <h3>Chemical (averaged prefilled; edit if needed)</h3>
+  {% for c in ['C','Si','S','P','Cu','Ni','Mn','Fe'] %}
+    <label>{{ c }} <input name="{{c}}" value="{{ getattr(chem,c.lower(), '') }}"/></label>
+  {% endfor %}
+  <h3>Physical</h3>
+  <label>AD (g/cc) <input name="ad" value="{{ phys.ad or '' }}"/></label>
+  <label>Flow (sec/50g) <input name="flow" value="{{ phys.flow or '' }}"/></label>
+
+  <h3>PSD (%)</h3>
+  {% for p in ['+212','+180','-180+150','-150+75','-75+45','-45'] %}
+    <label>{{ p }} <input name="{{p}}" value="{{ psd.get(p,'') }}"/></label>
+  {% endfor %}
+
+  <label>Decision
+    <select name="decision">
+      <option value="APPROVED" {% if lot.qa_status=='APPROVED' %}selected{% endif %}>APPROVED</option>
+      <option value="HOLD" {% if lot.qa_status=='HOLD' %}selected{% endif %}>HOLD</option>
+      <option value="REJECTED" {% if lot.qa_status=='REJECTED' %}selected{% endif %}>REJECTED</option>
+    </select>
+  </label>
+  <label>Remarks <input name="remarks" value="{{ lot.qa_remarks or '' }}"/></label>
+  <p><button class="btn">Save</button> <a class="btn btn-secondary" href="/atomization">Back</a></p>
+</form>
+{% endblock %}
