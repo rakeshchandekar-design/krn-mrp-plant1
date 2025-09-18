@@ -1,0 +1,5 @@
+{% extends 'base.html' %}{% block content %}
+<h2>Lots</h2><p><a href='/lot/new'>+ New Lot</a></p>
+<table><tr><th>ID</th><th>Lot No</th><th>Grade</th><th>Total kg</th><th>QA</th><th>Open</th></tr>
+{% for l in lots %}<tr><td>{{l.id}}</td><td>{{l.lot_no}}</td><td>{{l.grade}}</td><td>{{l.total_kg}}</td><td>{{l.qa_status}}</td><td><a href='/lot/{{l.id}}'>Open</a></td></tr>{% endfor %}
+</table>{% endblock %}

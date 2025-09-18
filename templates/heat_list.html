@@ -1,0 +1,6 @@
+{% extends 'base.html' %}{% block content %}
+<h2>Heats</h2><p><a href='/heat/new'>+ New Heat</a></p>
+<table><tr><th>ID</th><th>Heat No</th><th>Grade</th><th>Input (kg)</th><th>Theoretical (kg)</th><th>Actual (kg)</th><th>QA</th><th>Open</th></tr>
+{% for h in heats %}<tr><td>{{h.id}}</td><td>{{h.heat_no}}</td><td>{{h.grade}}</td><td>{{h.input_total_kg}}</td><td>{{h.theoretical_out_kg}}</td><td>{{h.actual_out_kg}}</td><td>{{h.qa_status}}</td><td><a href='/heat/{{h.id}}'>Open</a></td></tr>{% endfor %}
+</table>
+{% endblock %}

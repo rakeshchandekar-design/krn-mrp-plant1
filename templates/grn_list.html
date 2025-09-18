@@ -1,0 +1,7 @@
+{% extends 'base.html' %}{% block content %}
+<h2>GRNs</h2><p><a href='/grn/new'>+ New GRN</a></p>
+<table><tr><th>ID</th><th>Date</th><th>Supplier</th><th>RM</th><th>Qty (kg)</th><th>Price</th><th>Amount</th></tr>
+{% for r in rows %}<tr><td>{{r.id}}</td><td>{{r.date.strftime('%Y-%m-%d')}}</td><td>{{r.supplier}}</td><td>{{r.rm_type}}</td><td>{{r.qty_kg}}</td><td>{{r.price_per_kg}}</td><td>{{r.amount}}</td></tr>{% endfor %}
+</table>
+<h3>Current RM Prices</h3><ul>{% for k,v in prices.items() %}<li>{{k}}: ₹{{v}}</li>{% endfor %}</ul>
+{% endblock %}

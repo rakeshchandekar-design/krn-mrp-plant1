@@ -1,0 +1,14 @@
+{% extends 'base.html' %}{% block content %}
+<h2>New Heat</h2>
+<form method='post'>
+RM1: <select name='rm1'>{% for rm in rm_types %}<option value='{{rm}}'>{{rm}}</option>{% endfor %}</select>
+Qty1: <input name='qty1' type='number' step='0.01' required><br>
+RM2: <select name='rm2'><option value=''>--</option>{% for rm in rm_types %}<option value='{{rm}}'>{{rm}}</option>{% endfor %}</select>
+Qty2: <input name='qty2' type='number' step='0.01'><br>
+RM3: <select name='rm3'><option value=''>--</option>{% for rm in rm_types %}<option value='{{rm}}'>{{rm}}</option>{% endfor %}</select>
+Qty3: <input name='qty3' type='number' step='0.01'><br>
+Actual output (kg) (optional): <input name='actual_out_kg' type='number' step='0.01'><br>
+<button type='submit'>Create Heat</button>
+</form>
+<p>Rule: If any RM is FeSi → grade KRFS; else KRIP. Theoretical yield = 97% of input.</p>
+{% endblock %}

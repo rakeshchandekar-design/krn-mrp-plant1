@@ -1,0 +1,20 @@
+{% extends 'base.html' %}{% block content %}
+<h2>New Atomization Lot</h2>
+<form method='post'>
+Grade: <select id='grade' name='grade' onchange='toggleLists()'><option value='KRIP'>KRIP</option><option value='KRFS'>KRFS</option></select>
+<p>Select approved heats (same grade). Minimum total 3000 kg.</p>
+<div id='krip'><h3>KRIP Heats</h3>
+{% for h in heats_krip %}<label><input type='checkbox' value='{{h.id}}' class='hid'> {{h.heat_no}} (Theo {{h.theoretical_out_kg}} / Actual {{h.actual_out_kg}})</label><br>{% endfor %}
+</div>
+<div id='krfs' style='display:none'><h3>KRFS Heats</h3>
+{% for h in heats_krfs %}<label><input type='checkbox' value='{{h.id}}' class='hid'> {{h.heat_no}} (Theo {{h.theoretical_out_kg}} / Actual {{h.actual_out_kg}})</label><br>{% endfor %}
+</div>
+<input type='hidden' name='heat_ids' id='heat_ids'>
+<button type='submit' onclick='collect()'>Create Lot</button>
+</form>
+<script>
+function toggleLists(){const g=document.getElementById('grade').value;document.getElementById('krip').style.display=g==='KRIP'?'block':'none';document.getElementById('krfs').style.display=g==='KRFS'?'block':'none';}
+function collect(){const ids=[...document.querySelectorAll('.hid:checked')].map(x=>x.value);document.getElementById('heat_ids').value=ids.join(',');}
+toggleLists();
+</script>
+{% endblock %}

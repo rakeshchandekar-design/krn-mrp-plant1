@@ -1,0 +1,17 @@
+{% extends 'base.html' %}{% block content %}
+<h2>Lot {{lot.lot_no}} ({{lot.grade}})</h2>
+<p>Total: {{lot.total_kg}} kg</p>
+{% if avg %}<p><b>Avg Chemistry from Heats:</b> C {{avg.c}}, Si {{avg.si}}, S {{avg.s}}, P {{avg.p}}, Cu {{avg.cu}}, Ni {{avg.ni}}, Mn {{avg.mn}}, Fe {{avg.fe}}</p>{% endif %}
+<h3>Lot QA</h3>{% if lqa %}<p>Status: {{'APPROVED' if lqa.approved else 'REJECTED'}}</p>{% endif %}
+<form method='post' action='/lot/{{lot.id}}/qa'>
+AD (g/cc 2.8–3.0): <input name='ad' step='0.01' type='number'>  Flow (s/50g ≤35): <input name='flow' step='0.1' type='number'><br>
+PSD: +212 <input name='plus_212' step='0.1' type='number'>,
++180 <input name='plus_180' step='0.1' type='number'>,
+-180+150 <input name='m180_p150' step='0.1' type='number'>,
+-150+75 <input name='m150_p75' step='0.1' type='number'>,
+-75+45 <input name='m75_p45' step='0.1' type='number'>,
+-45 <input name='m45' step='0.1' type='number'><br>
+Approve? <select name='approve'><option value='yes'>Yes</option><option value='no'>No</option></select>
+<button type='submit'>Submit Lot QA</button>
+</form>
+{% endblock %}

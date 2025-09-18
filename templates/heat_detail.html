@@ -1,0 +1,18 @@
+{% extends 'base.html' %}{% block content %}
+<h2>Heat {{heat.heat_no}} ({{heat.grade}})</h2>
+<p>Input total: {{heat.input_total_kg}} kg, Theoretical: {{heat.theoretical_out_kg}} kg, Actual: {{heat.actual_out_kg}} kg</p>
+<h3>Inputs</h3><ul>{% for i in inputs %}<li>{{i.rm_type}}: {{i.qty_kg}} kg</li>{% endfor %}</ul>
+<h3>QA</h3>{% if hqa %}<p>Status: {{'APPROVED' if hqa.approved else 'REJECTED'}}</p>{% endif %}
+<form method='post' action='/heat/{{heat.id}}/qa'>
+C <input name='c' step='0.0001' type='number'>,
+Si <input name='si' step='0.0001' type='number'>,
+S <input name='s' step='0.0001' type='number'>,
+P <input name='p' step='0.0001' type='number'>,
+Cu <input name='cu' step='0.0001' type='number'>,
+Ni <input name='ni' step='0.0001' type='number'>,
+Mn <input name='mn' step='0.0001' type='number'>,
+Fe <input name='fe' step='0.0001' type='number'>
+<br>Approve? <select name='approve'><option value='yes'>Yes</option><option value='no'>No</option></select>
+<button type='submit'>Submit QA</button>
+</form>
+{% endblock %}
