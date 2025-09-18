@@ -1,13 +1,18 @@
+# ---- Web / API ----
 fastapi==0.115.0
-uvicorn[standard]==0.30.6
+uvicorn==0.30.6
+gunicorn==21.2.0
+
+# ---- Templates & uploads ----
 jinja2==3.1.4
 aiofiles==23.2.1
 python-multipart==0.0.9
 
+# ---- Data / DB ----
 SQLAlchemy==2.0.34
-databases==0.9.0
 psycopg2-binary==2.9.9
 pydantic==2.8.2
 pydantic-settings==2.4.0
 
+# ---- PDF ----
 reportlab==4.2.2
