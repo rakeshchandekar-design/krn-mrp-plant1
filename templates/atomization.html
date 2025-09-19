@@ -14,6 +14,7 @@
     <thead>
       <tr>
         <th>Heat</th>
+        <th>Type</th>
         <th>Available (kg)</th>
         <th>Allocate (kg)</th>
         <th>Heat Unit Cost</th>
@@ -23,6 +24,13 @@
       {% for h in heats %}
       <tr>
         <td>{{ h.obj.heat_no }}</td>
+        <td>
+          {% if h.has_fesi %}
+            <span class="badge" style="background:#1f6feb;color:#fff;padding:2px 8px;border-radius:10px;">KRFS (FeSi)</span>
+          {% else %}
+            <span class="badge" style="background:#2da44e;color:#fff;padding:2px 8px;border-radius:10px;">KRIP</span>
+          {% endif %}
+        </td>
         <td>{{ '%.1f'|format(h.available) }}</td>
         <td>
           <input name="alloc_{{ h.obj.id }}" type="number" step="0.1" min="0" max="{{ h.available }}" placeholder="0.0" style="width:120px;" />
@@ -39,7 +47,7 @@
 <h2>Lots</h2>
 <table class="table">
   <thead>
-    <tr><th>Lot</th><th>Grade</th><th>Weight</th><th>QA</th><th>Status</th><th>Actions</th></tr>
+    <tr><th>Lot</th><th>Grade</th><th>Weight</th><th>QA</th><th>Remarks</th><th>Actions</th></tr>
   </thead>
   <tbody>
     {% for l in lots %}
