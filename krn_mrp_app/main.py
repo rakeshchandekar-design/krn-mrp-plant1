@@ -418,14 +418,28 @@ def heat_available_output(db, h: "Heat") -> float:
 # -------------------------------------------------
 # Atomization (with partial allocations)
 # -------------------------------------------------
+
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(request: Request, db: SessionLocal = Depends(get_db)):
     heats_all = db.query(Heat).filter(Heat.qa_status == "APPROVED").order_by(Heat.id.desc()).all()
     heats_view = []
     for h in heats_all:
-        avail = heat_available_output(db, h)
-        if avail > 0.0001:
-            heats_view.append({"obj": h, "available": round(avail, 1), "unit_cost": round(h.unit_cost or 0.0, 2)})
+        # available kg after previous lot allocations
+        used = float(db.query(func.coalesce(func.sum(LotHeat.alloc_kg), 0.0)).filter(LotHeat.heat_id == h.id).scalar() or 0.0)
+        available = max((h.actual_output or 0.0) - used, 0.0)
+        if available <= 0.0001:
+            continue
+
+        # NEW: detect FeSi usage for badge (KRFS)
+        has_fesi = any(cons.rm_type == "FeSi" for cons in h.rm_consumptions)
+
+        heats_view.append({
+            "obj": h,
+            "available": round(available, 1),
+            "unit_cost": round(h.unit_cost or 0.0, 2),
+            "has_fesi": has_fesi,
+        })
+
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
     return templates.TemplateResponse("atomization.html", {"request": request, "heats": heats_view, "lots": lots})
 
