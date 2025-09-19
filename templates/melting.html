@@ -1,44 +1,66 @@
-{% extends "base.html" %}
-{% block content %}
-<h2>Melting – New Heat</h2>
-<div class="alert small">
-  FIFO stock enforcement: you can only consume what is available in GRN stock. At least 1 RM line is required.
-  Theoretical output uses 3% loss; Actual output = Inputs − Slag.
-</div>
-<form method="post" action="/melting/new">
-  <label>Heat Notes (optional) <input name="notes"/></label>
-  <h3>Raw Materials</h3>
-  <div id="rm-lines">
-    {% for i in range(1,5) %}
-    <div>
-      <label>RM Type
-        <select name="rm_type_{{i}}">
-          <option value="">--</option>
-          {% for r in rm_types %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
-        </select>
-      </label>
-      <label>Qty (kg) <input type="number" step="0.1" name="rm_qty_{{i}}"/></label>
-    </div>
-    {% endfor %}
-  </div>
-  <label>Slag Qty (kg) <input type="number" step="0.1" name="slag_qty" value="0"/></label>
-  <p><button class="btn">Save Heat</button></p>
-</form>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Melting</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif; margin:20px;}
+    .sec{margin-bottom:24px}
+    table{border-collapse:collapse; width:100%}
+    th,td{border:1px solid #e5e7eb; padding:8px; text-align:left}
+    th{background:#f3f4f6}
+    .badge{display:inline-block; padding:2px 8px; border-radius:12px; font-size:12px; color:#fff}
+    .badge-success{background:#16a34a}
+    .badge-info{background:#0ea5e9}
+    input,select{padding:4px 6px}
+    .btn{padding:8px 14px; border-radius:8px; background:#111827; color:#fff; border:none}
+  </style>
+</head>
+<body>
+  <h1>Melting</h1>
 
-<h2>Pending QA</h2>
-<table>
-  <tr><th>Heat No</th><th>Inputs (kg)</th><th>Slag</th><th>Actual Output</th><th>Theoretical</th><th>Δ</th><th>Status</th><th>Action</th></tr>
-  {% for h in pending %}
-  <tr>
-    <td>{{ h.heat_no }}</td>
-    <td>{{ '%.1f'|format(h.total_inputs) }}</td>
-    <td>{{ '%.1f'|format(h.slag_qty) }}</td>
-    <td>{{ '%.1f'|format(h.actual_output) }}</td>
-    <td>{{ '%.1f'|format(h.theoretical) }}</td>
-    <td class="{{ 'red' if (h.actual_output < h.theoretical*0.97 or h.actual_output>h.theoretical*1.03) }}">{{ '%.1f'|format(h.actual_output - h.theoretical) }}</td>
-    <td>{{ h.qa_status }}</td>
-    <td><a class="btn" href="/qa/heat/{{h.id}}">QA</a></td>
-  </tr>
-  {% endfor %}
-</table>
-{% endblock %}
+  <div class="sec">
+    <h2>New Heat</h2>
+    <form method="post" action="/melting/new">
+      <div><label>Notes</label><input type="text" name="notes"></div>
+      <div><label>Slag Qty (kg)</label><input type="number" step="0.1" name="slag_qty" value="0.0"></div>
+
+      <h3>Raw Materials (up to 4 lines)</h3>
+      {% for i in [1,2,3,4] %}
+        <div>
+          <select name="rm_type_{{ i }}">
+            <option value="">-- RM Type --</option>
+            {% for t in rm_types %}
+              <option value="{{ t }}">{{ t }}</option>
+            {% endfor %}
+          </select>
+          <input type="number" step="0.1" name="rm_qty_{{ i }}" placeholder="Qty (kg)">
+        </div>
+      {% endfor %}
+      <p><button class="btn" type="submit">Create Heat</button></p>
+    </form>
+  </div>
+
+  <div class="sec">
+    <h2>Heats</h2>
+    <table>
+      <thead><tr><th>Heat</th><th>Type</th><th>Output (kg)</th><th>QA</th><th>Actions</th></tr></thead>
+      <tbody>
+        {% for h in pending %}
+          <tr>
+            <td>{{ h.heat_no }}</td>
+            <td>
+              {% set g = heat_grades.get(h.id) %}
+              {% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>
+              {% else %}<span class="badge badge-success">KRIP</span>{% endif %}
+            </td>
+            <td>{{ '%.1f' % (h.actual_output or 0) }}</td>
+            <td>{{ h.qa_status }}</td>
+            <td><a href="/qa/heat/{{ h.id }}">QA</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
