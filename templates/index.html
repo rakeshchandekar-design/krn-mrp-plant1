@@ -1,4 +1,33 @@
 {% extends "base.html" %}
 {% block content %}
-<p>Welcome. Use the navigation above. First time? Run <code>/setup</code> once to create tables.</p>
+<h2>Plant Dashboard</h2>
+
+<div class="cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;">
+  <div class="card" style="border:1px solid #ddd;border-radius:10px;padding:16px;">
+    <h3>RM Stock (qty)</h3>
+    <p style="font-size:24px;margin:4px 0;">{{ '%.1f'|format(kpi.rm_qty) }} kg</p>
+    <small>Value ≈ ₹ {{ '%.0f'|format(kpi.rm_value) }}</small>
+  </div>
+  <div class="card" style="border:1px solid #ddd;border-radius:10px;padding:16px;">
+    <h3>Heats WIP</h3>
+    <p style="font-size:24px;margin:4px 0;">{{ kpi.wip_heats }} heats</p>
+    <small>Qty WIP: {{ '%.1f'|format(kpi.wip_qty) }} kg</small>
+  </div>
+  <div class="card" style="border:1px solid #ddd;border-radius:10px;padding:16px;">
+    <h3>Lots (KRIP)</h3>
+    <p style="font-size:24px;margin:4px 0;">{{ '%.1f'|format(kpi.lots_krip_qty) }} kg</p>
+  </div>
+  <div class="card" style="border:1px solid #ddd;border-radius:10px;padding:16px;">
+    <h3>Lots (KRFS)</h3>
+    <p style="font-size:24px;margin:4px 0;">{{ '%.1f'|format(kpi.lots_krfs_qty) }} kg</p>
+  </div>
+  <div class="card" style="border:1px solid #ddd;border-radius:10px;padding:16px;">
+    <h3>Today’s Lots</h3>
+    <p style="font-size:24px;margin:4px 0;">{{ kpi.today_lots }}</p>
+  </div>
+</div>
+
+<p style="margin-top:18px;">
+  Need more KPIs (utilization, downtime, values by price)? We can add them later.
+</p>
 {% endblock %}
