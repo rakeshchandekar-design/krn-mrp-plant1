@@ -13,7 +13,7 @@ from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
 
 # SQLAlchemy
-from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func
+from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text  # <-- added text
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
 # -------------------------------------------------
@@ -43,6 +43,36 @@ engine = create_engine(
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
+
+# -------------------------------------------------
+# Schema migration helpers (add costing columns if missing)
+# -------------------------------------------------
+def _table_has_column(conn, table: str, col: str) -> bool:
+    # SQLite: use PRAGMA table_info; Postgres: information_schema.columns
+    if str(engine.url).startswith("sqlite"):
+        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+        names = [r[1] for r in rows]  # 0:cid, 1:name
+        return col in names
+    else:
+        q = text("""
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = :t
+              AND column_name = :c
+            LIMIT 1
+        """)
+        return conn.execute(q, {"t": table, "c": col}).first() is not None
+
+def migrate_schema(engine):
+    # Adds rm_cost, process_cost, total_cost, unit_cost to HEAT if they don't exist
+    with engine.begin() as conn:
+        for col in ["rm_cost", "process_cost", "total_cost", "unit_cost"]:
+            if not _table_has_column(conn, "heat", col):
+                if str(engine.url).startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE heat ADD COLUMN {col} REAL DEFAULT 0"))
+                else:
+                    conn.execute(text(f"ALTER TABLE heat ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
 
 # -------------------------------------------------
 # Constants
@@ -182,7 +212,8 @@ def home(request: Request):
 @app.get("/setup")
 def setup(db: SessionLocal = Depends(get_db)):
     Base.metadata.create_all(bind=engine)
-    return HTMLResponse('Tables created and ready. Go to <a href="/grn">GRN</a>.')
+    migrate_schema(engine)  # <-- ensure costing columns exist
+    return HTMLResponse('Tables created/migrated. Go to <a href="/grn">GRN</a>.')
 
 # -------------------------------------------------
 # GRN
