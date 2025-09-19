@@ -1,40 +1,61 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>Atomization – New Lot</h2>
-<form method="post" action="/atomization/new">
-  <label>Lot Weight (kg) <input type="number" step="0.1" name="lot_weight" value="3000"/></label>
-  <label>Include FeSi in any heat? (If yes → KRFS) 
-    <select name="includes_fesi">
-      <option value="no">No</option>
-      <option value="yes">Yes</option>
-    </select>
+
+<form method="post" action="/atomization/new" style="margin-bottom:20px;">
+  <label>Lot Weight (kg)
+    <input name="lot_weight" value="3000" />
   </label>
-  <h3>Select Approved Heats</h3>
-  <div style="max-height:280px;overflow:auto;border:1px solid #eee;padding:8px">
-  {% for h in heats %}
-    <label><input type="checkbox" name="heat_ids" value="{{h.id}}"/> {{ h.heat_no }} – {{ '%.1f'|format(h.actual_output) }} kg</label><br/>
-  {% endfor %}
-  </div>
-  <p class="small">Lot chemistry = average of selected heat QA chemistry.</p>
+
+  <h3>Allocate Quantity From Approved Heats</h3>
+  <p style="color:#666;">Enter the kg you want to take from each heat (you can split a heat across multiple lots).</p>
+
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Heat</th>
+        <th>Available (kg)</th>
+        <th>Allocate (kg)</th>
+        <th>Heat Unit Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in heats %}
+      <tr>
+        <td>{{ h.obj.heat_no }}</td>
+        <td>{{ '%.1f'|format(h.available) }}</td>
+        <td>
+          <input name="alloc_{{ h.obj.id }}" type="number" step="0.1" min="0" max="{{ h.available }}" placeholder="0.0" style="width:120px;" />
+        </td>
+        <td>₹ {{ '%.2f'|format(h.unit_cost) }}/kg</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
   <p><button class="btn">Create Lot</button></p>
 </form>
 
 <h2>Lots</h2>
-<table>
-  <tr><th>Lot</th><th>Grade</th><th>Weight</th><th>QA</th><th>Status</th><th>Actions</th></tr>
-  {% for l in lots %}
-  <tr>
-    <td>{{ l.lot_no }}</td>
-    <td>{{ l.grade }}</td>
-    <td>{{ '%.1f'|format(l.weight) }}</td>
-    <td>{{ l.qa_status }}</td>
-    <td>{{ l.status }}</td>
-    <td>
-      <a class="btn" href="/qa/lot/{{l.id}}">QA</a>
-      <a class="btn btn-secondary" href="/traceability/lot/{{l.id}}">Trace</a>
-      <a class="btn btn-secondary" href="/pdf/lot/{{l.id}}">PDF</a>
-    </td>
-  </tr>
-  {% endfor %}
+<table class="table">
+  <thead>
+    <tr><th>Lot</th><th>Grade</th><th>Weight</th><th>QA</th><th>Status</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+    {% for l in lots %}
+    <tr>
+      <td>{{ l.lot_no }}</td>
+      <td>{{ l.grade }}</td>
+      <td>{{ '%.1f'|format(l.weight or 0) }}</td>
+      <td>{{ l.qa_status }}</td>
+      <td>{{ l.qa_remarks or '' }}</td>
+      <td>
+        <a class="btn" href="/qa/lot/{{ l.id }}">QA</a>
+        <a class="btn btn-secondary" href="/traceability/lot/{{ l.id }}">Trace</a>
+        <a class="btn btn-secondary" href="/pdf/lot/{{ l.id }}">PDF</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
 </table>
 {% endblock %}
