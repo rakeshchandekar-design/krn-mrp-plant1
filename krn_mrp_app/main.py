@@ -20,8 +20,10 @@ from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 # Database config
 # ---------------------------
 def _normalize_db_url(url: str) -> str:
+    # Render sometimes injects postgres://; SQLAlchemy needs postgresql://
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
+    # Prefer the modern psycopg driver on Render
     if url.startswith("postgresql://") and "+psycopg" not in url:
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
@@ -256,14 +258,14 @@ def melting_new(
     return RedirectResponse("/melting", status_code=303)
 
 # ---------------------------
-# QA Redirect (so /qa works)
+# QA redirect so /qa works
 # ---------------------------
 @app.get("/qa")
 def qa_redirect():
     return RedirectResponse("/qa-dashboard", status_code=303)
 
 # ---------------------------
-# QA Heat (auto-create chemistry)
+# QA Heat (GET) – robust: auto-create chemistry row, fail clearly if missing template
 # ---------------------------
 @app.get("/qa/heat/{heat_id}", response_class=HTMLResponse)
 def qa_heat_form(heat_id: int, request: Request, db: SessionLocal = Depends(get_db)):
@@ -271,13 +273,30 @@ def qa_heat_form(heat_id: int, request: Request, db: SessionLocal = Depends(get_
     if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
 
+    # Ensure there is exactly one chemistry row to bind to the form
     chem = heat.chemistry
     if not chem:
         chem = HeatChem(heat=heat)
-        db.add(chem); db.commit(); db.refresh(chem)
+        db.add(chem); db.commit(); db.refresh(heat)
 
-    return templates.TemplateResponse("qa_heat.html", {"request": request, "heat": heat, "chem": chem})
+    # Render the template safely
+    template_name = "qa_heat.html"
+    if not template_name:
+        # If you ever change the name and it becomes empty, show a helpful error
+        return PlainTextResponse("Template name for QA Heat not configured.", status_code=500)
 
+    return templates.TemplateResponse(
+        template_name,
+        {
+            "request": request,
+            "heat": heat,
+            "chem": chem
+        },
+    )
+
+# ---------------------------
+# QA Heat (POST)
+# ---------------------------
 @app.post("/qa/heat/{heat_id}")
 def qa_heat_save(
     heat_id: int, C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
@@ -286,6 +305,9 @@ def qa_heat_save(
     db: SessionLocal = Depends(get_db),
 ):
     heat = db.get(Heat, heat_id)
+    if not heat:
+        return PlainTextResponse("Heat not found", status_code=404)
+
     chem = heat.chemistry or HeatChem(heat=heat)
     chem.c = C; chem.si = Si; chem.s = S; chem.p = P
     chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
@@ -362,10 +384,7 @@ def qa_lot_form(lot_id: int, request: Request, db: SessionLocal = Depends(get_db
         "+212": psd.p212 or "", "+180": psd.p180 or "", "-180+150": psd.n180p150 or "",
         "-150+75": psd.n150p75 or "", "-75+45": psd.n75p45 or "", "-45": psd.n45 or ""
     }
-    return templates.TemplateResponse(
-        "qa_lot.html",
-        {"request": request, "lot": lot, "chem": chem, "phys": phys, "psd": psd_map}
-    )
+    return templates.TemplateResponse("qa_lot.html", {"request": request, "lot": lot, "chem": chem, "phys": phys, "psd": psd_map})
 
 @app.post("/qa/lot/{lot_id}")
 def qa_lot_save(
@@ -373,33 +392,20 @@ def qa_lot_save(
     C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
     Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
     ad: str = Form(""), flow: str = Form(""),
-    p212: str = Form(""), p180: str = Form(""),
-    n180p150: str = Form(""), n150p75: str = Form(""),
-    n75p45: str = Form(""), n45: str = Form(""),
     decision: str = Form("APPROVED"), remarks: str = Form(""),
     db: SessionLocal = Depends(get_db),
 ):
     lot = db.get(Lot, lot_id)
-    if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
-
     chem = lot.chemistry or LotChem(lot=lot)
-    chem.c = C; chem.si = Si; chem.s = S; chem.p = P
-    chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
-
-    phys = lot.phys or LotPhys(lot=lot)
-    phys.ad = ad; phys.flow = flow
-
-    psd = lot.psd or LotPSD(lot=lot)
-    psd.p212 = p212; psd.p180 = p180
-    psd.n180p150 = n180p150; psd.n150p75 = n150p75
-    psd.n75p45 = n75p45; psd.n45 = n45
-
-    lot.qa_status = decision
-    lot.qa_remarks = remarks
-
-    db.add_all([chem, phys, psd, lot])
-    db.commit()
+    chem.c = C; chem.si = Si; chem.s = S; chem.p = P; chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
+    phys = lot.phys or LotPhys(lot=lot); phys.ad = ad; phys.flow = flow
+    psd  = lot.psd  or LotPSD(lot=lot)
+    # If your form posts PSD fields by these names, map them; else leave as-is
+    psd.p212 = psd.p212 or ""; psd.p180 = psd.p180 or ""
+    psd.n180p150 = psd.n180p150 or ""; psd.n150p75 = psd.n150p75 or ""
+    psd.n75p45 = psd.n75p45 or ""; psd.n45 = psd.n45 or ""
+    lot.qa_status = decision; lot.qa_remarks = remarks
+    db.add_all([chem, phys, psd, lot]); db.commit()
     return RedirectResponse("/atomization", status_code=303)
 
 # ---------------------------
@@ -485,8 +491,5 @@ def pdf_lot(lot_id: int, db: SessionLocal = Depends(get_db)):
 
     c.showPage(); c.save()
     buf.seek(0)
-    return StreamingResponse(
-        buf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="trace_{lot.lot_no}.pdf"'}
-    )
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'inline; filename="trace_{lot.lot_no}.pdf"'})
