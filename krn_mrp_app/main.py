@@ -13,16 +13,16 @@ from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
 
 # SQLAlchemy
-from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text  # <-- added text
+from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
 # -------------------------------------------------
-# Costing constants (as per your instruction)
+# Costing constants
 # -------------------------------------------------
-MELT_COST_PER_KG_KRIP = 6.0   # applied at Heat stage based on final grade logic
-MELT_COST_PER_KG_KRFS = 8.0   # applied at Heat stage when FeSi is used in that heat
-ATOMIZATION_COST_PER_KG = 5.0 # applied at Lot stage
-SURCHARGE_PER_KG = 2.0        # applied at Lot stage
+MELT_COST_PER_KG_KRIP = 6.0
+MELT_COST_PER_KG_KRFS = 8.0
+ATOMIZATION_COST_PER_KG = 5.0
+SURCHARGE_PER_KG = 2.0
 
 # -------------------------------------------------
 # Database config
@@ -45,13 +45,12 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
 # -------------------------------------------------
-# Schema migration helpers (add costing columns if missing)
+# Schema migration helpers
 # -------------------------------------------------
 def _table_has_column(conn, table: str, col: str) -> bool:
-    # SQLite: use PRAGMA table_info; Postgres: information_schema.columns
     if str(engine.url).startswith("sqlite"):
         rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
-        names = [r[1] for r in rows]  # 0:cid, 1:name
+        names = [r[1] for r in rows]
         return col in names
     else:
         q = text("""
@@ -65,14 +64,22 @@ def _table_has_column(conn, table: str, col: str) -> bool:
         return conn.execute(q, {"t": table, "c": col}).first() is not None
 
 def migrate_schema(engine):
-    # Adds rm_cost, process_cost, total_cost, unit_cost to HEAT if they don't exist
     with engine.begin() as conn:
+        # Heat costing columns
         for col in ["rm_cost", "process_cost", "total_cost", "unit_cost"]:
             if not _table_has_column(conn, "heat", col):
                 if str(engine.url).startswith("sqlite"):
                     conn.execute(text(f"ALTER TABLE heat ADD COLUMN {col} REAL DEFAULT 0"))
                 else:
                     conn.execute(text(f"ALTER TABLE heat ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
+        # Lot costing columns
+        for col in ["unit_cost", "total_cost"]:
+            if not _table_has_column(conn, "lot", col):
+                if str(engine.url).startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE lot ADD COLUMN {col} REAL DEFAULT 0"))
+                else:
+                    conn.execute(text(f"ALTER TABLE lot ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
+
 
 # -------------------------------------------------
 # Constants
