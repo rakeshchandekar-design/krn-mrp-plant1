@@ -1,37 +1,30 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Ready Stock</title>
-  <style>
-    body{font-family:system-ui,Arial,sans-serif; margin:20px;}
-    table{border-collapse:collapse; width:100%}
-    th,td{border:1px solid #e5e7eb; padding:8px; text-align:left}
-    th{background:#f3f4f6}
-    a{padding:4px 8px; border:1px solid #d1d5db; border-radius:6px; text-decoration:none}
-  </style>
-</head>
-<body>
-  <h2>Ready Stock (QA Approved Lots)</h2>
-  <table>
-    <thead>
-      <tr><th>Lot</th><th>Grade</th><th>Weight</th><th>Unit Cost</th><th>Remarks</th><th>Actions</th></tr>
-    </thead>
-    <tbody>
-      {% for lot in lots %}
-        <tr>
-          <td>{{ lot.lot_no }}</td>
-          <td>{{ lot.grade }}</td>
-          <td>{{ '%.1f' % (lot.weight or 0) }}</td>
-          <td>₹ {{ '%.2f' % (lot.unit_cost or 0) }}</td>
-          <td>{{ lot.qa_remarks or '' }}</td>
-          <td>
-            <a href="/pdf/lot/{{ lot.id }}">Trace PDF</a>
-            <!-- Future: add /dispatch/{{lot.id}} or /anneal/{{lot.id}} actions -->
-          </td>
-        </tr>
-      {% endfor %}
-    </tbody>
+<!doctype html><html><body>
+{% include "_base_top.html" %}
+<div style="padding:16px">
+  <h2>Ready Stock (QA Approved)</h2>
+
+  <form method="get" action="/ready-stock" style="margin:10px 0;">
+    From: <input type="date" name="from_date" value="{{from_date}}">
+    To: <input type="date" name="to_date" value="{{to_date}}">
+    <button>Filter</button>
+  </form>
+
+  <table border="1" cellpadding="6" cellspacing="0">
+    <tr><th>Lot</th><th>Grade</th><th>Weight</th><th>Issued</th><th>Action</th></tr>
+    {% for l in lots %}
+    <tr>
+      <td>{{l.lot_no}}</td><td>{{l.grade}}</td><td>{{"%.1f"|format(l.weight)}}</td>
+      <td>{% if l.status=='ISSUED' %}{{l.issued_to}}{% else %}-{% endif %}</td>
+      <td>
+        {% if l.status=='READY' %}
+        <form method="post" action="/ready-stock/issue/{{l.id}}" style="display:inline">
+          <select name="to"><option value="DISPATCH">Dispatch</option><option value="ANNEAL">Annealing</option></select>
+          <button>Issue</button>
+        </form>
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
   </table>
-</body>
-</html>
+</div>
+</body></html>
