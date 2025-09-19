@@ -14,10 +14,7 @@ from reportlab.pdfgen import canvas
 
 # SQLAlchemy
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text
-from sqlalchemy.orm import sessionmaker, declarative_base, relationship
-
-# Starlette (for reading the posted form in atomization)
-from starlette.datastructures import FormData
+from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
 
 # -------------------------------------------------
 # Costing constants
@@ -82,12 +79,6 @@ def migrate_schema(engine):
                     conn.execute(text(f"ALTER TABLE lot ADD COLUMN {col} REAL DEFAULT 0"))
                 else:
                     conn.execute(text(f"ALTER TABLE lot ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
-        # NEW: partial allocation column on lot_heat
-        if not _table_has_column(conn, "lot_heat", "alloc_kg"):
-            if str(engine.url).startswith("sqlite"):
-                conn.execute(text("ALTER TABLE lot_heat ADD COLUMN alloc_kg REAL DEFAULT 0"))
-            else:
-                conn.execute(text("ALTER TABLE lot_heat ADD COLUMN IF NOT EXISTS alloc_kg DOUBLE PRECISION DEFAULT 0"))
 
 # -------------------------------------------------
 # Constants
@@ -122,7 +113,7 @@ class Heat(Base):
     qa_status = Column(String, default="PENDING")
     qa_remarks = Column(String)
 
-    # costing
+    # costing (new)
     rm_cost = Column(Float, default=0.0)
     process_cost = Column(Float, default=0.0)
     total_cost = Column(Float, default=0.0)
@@ -159,7 +150,7 @@ class Lot(Base):
     qa_status = Column(String, default="PENDING")
     qa_remarks = Column(String)
 
-    # costing
+    # costing (new)
     unit_cost = Column(Float, default=0.0)
     total_cost = Column(Float, default=0.0)
 
@@ -173,7 +164,6 @@ class LotHeat(Base):
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     heat_id = Column(Integer, ForeignKey("heat.id"))
-    alloc_kg = Column(Float, default=0.0)  # <-- NEW: how many kg from this heat to this lot
     lot = relationship("Lot", back_populates="heats")
     heat = relationship("Heat")
 
@@ -218,15 +208,24 @@ def get_db():
         db.close()
 
 # -------------------------------------------------
+# Helpers
+# -------------------------------------------------
+def heat_grade(heat: Heat) -> str:
+    """KRFS if any FeSi consumed, else KRIP."""
+    for cons in heat.rm_consumptions:
+        if cons.rm_type == "FeSi":
+            return "KRFS"
+    return "KRIP"
+
+# -------------------------------------------------
 # Home + Setup
 # -------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    # Keep simple - no KPI object to avoid 'kpi is undefined'
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/setup")
-def setup(db: SessionLocal = Depends(get_db)):
+def setup(db: Session = Depends(get_db)):
     Base.metadata.create_all(bind=engine)
     migrate_schema(engine)
     return HTMLResponse('Tables created/migrated. Go to <a href="/grn">GRN</a>.')
@@ -235,7 +234,7 @@ def setup(db: SessionLocal = Depends(get_db)):
 # GRN
 # -------------------------------------------------
 @app.get("/grn", response_class=HTMLResponse)
-def grn_list(request: Request, db: SessionLocal = Depends(get_db)):
+def grn_list(request: Request, db: Session = Depends(get_db)):
     grns = db.query(GRN).order_by(GRN.id.desc()).all()
     return templates.TemplateResponse("grn.html", {"request": request, "grns": grns, "prices": rm_price_defaults()})
 
@@ -246,7 +245,7 @@ def grn_new(request: Request):
 @app.post("/grn/new")
 def grn_new_post(
     date: str = Form(...), supplier: str = Form(...), rm_type: str = Form(...),
-    qty: float = Form(...), price: float = Form(...), db: SessionLocal = Depends(get_db)
+    qty: float = Form(...), price: float = Form(...), db: Session = Depends(get_db)
 ):
     g = GRN(date=dt.date.fromisoformat(date), supplier=supplier, rm_type=rm_type,
             qty=qty, remaining_qty=qty, price=price)
@@ -256,14 +255,11 @@ def grn_new_post(
 # -------------------------------------------------
 # Stock helpers (FIFO)
 # -------------------------------------------------
-def available_stock(db, rm_type: str):
+def available_stock(db: Session, rm_type: str):
     rows = db.query(GRN).filter(GRN.rm_type == rm_type, GRN.remaining_qty > 0).order_by(GRN.id.asc()).all()
     return sum(r.remaining_qty for r in rows)
 
-def consume_fifo(db, rm_type: str, qty_needed: float, heat: Heat) -> float:
-    """
-    Consume FIFO and return the RM cost added for this rm_type consumption.
-    """
+def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat) -> float:
     rows = db.query(GRN).filter(GRN.rm_type == rm_type, GRN.remaining_qty > 0).order_by(GRN.id.asc()).all()
     remaining = qty_needed
     added_cost = 0.0
@@ -284,16 +280,18 @@ def consume_fifo(db, rm_type: str, qty_needed: float, heat: Heat) -> float:
 # Melting
 # -------------------------------------------------
 @app.get("/melting", response_class=HTMLResponse)
-def melting_page(request: Request, db: SessionLocal = Depends(get_db)):
+def melting_page(request: Request, db: Session = Depends(get_db)):
     pending = db.query(Heat).order_by(Heat.id.desc()).all()
-    return templates.TemplateResponse("melting.html", {"request": request, "rm_types": RM_TYPES, "pending": pending})
+    # optional: pass grade labels for UI badges
+    grades = {h.id: heat_grade(h) for h in pending}
+    return templates.TemplateResponse("melting.html", {"request": request, "rm_types": RM_TYPES, "pending": pending, "heat_grades": grades})
 
 @app.post("/melting/new")
 def melting_new(
     request: Request,
     notes: Optional[str] = Form(None),
     slag_qty: float = Form(0.0),
-    db: SessionLocal = Depends(get_db),
+    db: Session = Depends(get_db),
     rm_type_1: Optional[str] = Form(None), rm_qty_1: Optional[float] = Form(None),
     rm_type_2: Optional[str] = Form(None), rm_qty_2: Optional[float] = Form(None),
     rm_type_3: Optional[str] = Form(None), rm_qty_3: Optional[float] = Form(None),
@@ -359,10 +357,10 @@ def qa_redirect():
     return RedirectResponse("/qa-dashboard", status_code=303)
 
 # -------------------------------------------------
-# QA Heat (auto-create chemistry)
+# QA Heat
 # -------------------------------------------------
 @app.get("/qa/heat/{heat_id}", response_class=HTMLResponse)
-def qa_heat_form(heat_id: int, request: Request, db: SessionLocal = Depends(get_db)):
+def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
     heat = db.get(Heat, heat_id)
     if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
@@ -378,15 +376,16 @@ def qa_heat_form(heat_id: int, request: Request, db: SessionLocal = Depends(get_
             "request": request,
             "heat": heat,
             "chem": {
-                "C": (heat.chemistry.c if heat.chemistry and heat.chemistry.c else ""),
-                "Si": (heat.chemistry.si if heat.chemistry and heat.chemistry.si else ""),
-                "S": (heat.chemistry.s if heat.chemistry and heat.chemistry.s else ""),
-                "P": (heat.chemistry.p if heat.chemistry and heat.chemistry.p else ""),
-                "Cu": (heat.chemistry.cu if heat.chemistry and heat.chemistry.cu else ""),
-                "Ni": (heat.chemistry.ni if heat.chemistry and heat.chemistry.ni else ""),
-                "Mn": (heat.chemistry.mn if heat.chemistry and heat.chemistry.mn else ""),
-                "Fe": (heat.chemistry.fe if heat.chemistry and heat.chemistry.fe else ""),
+                "C": (chem.c or ""),
+                "Si": (chem.si or ""),
+                "S": (chem.s or ""),
+                "P": (chem.p or ""),
+                "Cu": (chem.cu or ""),
+                "Ni": (chem.ni or ""),
+                "Mn": (chem.mn or ""),
+                "Fe": (chem.fe or ""),
             },
+            "grade": heat_grade(heat),
         },
     )
 
@@ -395,9 +394,12 @@ def qa_heat_save(
     heat_id: int, C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
     Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
     decision: str = Form("APPROVED"), remarks: str = Form(""),
-    db: SessionLocal = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
     heat = db.get(Heat, heat_id)
+    if not heat:
+        return PlainTextResponse("Heat not found", status_code=404)
+
     chem = heat.chemistry or HeatChem(heat=heat)
     chem.c = C; chem.si = Si; chem.s = S; chem.p = P
     chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
@@ -406,187 +408,153 @@ def qa_heat_save(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# Helpers for atomization (partial allocation)
+# Atomization
 # -------------------------------------------------
-def heat_allocated_kg(db, heat_id: int) -> float:
-    return float(db.query(func.coalesce(func.sum(LotHeat.alloc_kg), 0.0)).filter(LotHeat.heat_id == heat_id).scalar() or 0.0)
-
-def heat_available_output(db, h: "Heat") -> float:
-    used = heat_allocated_kg(db, h.id)
-    return max((h.actual_output or 0.0) - used, 0.0)
-
-# -------------------------------------------------
-# Atomization (with partial allocations)
-# -------------------------------------------------
-
 @app.get("/atomization", response_class=HTMLResponse)
-def atom_page(request: Request, db: SessionLocal = Depends(get_db)):
-    heats_all = db.query(Heat).filter(Heat.qa_status == "APPROVED").order_by(Heat.id.desc()).all()
-    heats_view = []
-    for h in heats_all:
-        # available kg after previous lot allocations
-        used = float(db.query(func.coalesce(func.sum(LotHeat.alloc_kg), 0.0)).filter(LotHeat.heat_id == h.id).scalar() or 0.0)
-        available = max((h.actual_output or 0.0) - used, 0.0)
-        if available <= 0.0001:
-            continue
-
-        # NEW: detect FeSi usage for badge (KRFS)
-        has_fesi = any(cons.rm_type == "FeSi" for cons in h.rm_consumptions)
-
-        heats_view.append({
-            "obj": h,
-            "available": round(available, 1),
-            "unit_cost": round(h.unit_cost or 0.0, 2),
-            "has_fesi": has_fesi,
-        })
-
+def atom_page(request: Request, db: Session = Depends(get_db)):
+    heats = db.query(Heat).filter(Heat.qa_status == "APPROVED").order_by(Heat.id.desc()).all()
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
-    return templates.TemplateResponse("atomization.html", {"request": request, "heats": heats_view, "lots": lots})
+    grades = {h.id: heat_grade(h) for h in heats}
+    return templates.TemplateResponse("atomization.html", {"request": request, "heats": heats, "lots": lots, "heat_grades": grades})
 
 @app.post("/atomization/new")
-async def atom_new(request: Request, db: SessionLocal = Depends(get_db)):
-    form: FormData = await request.form()
+def atom_new(
+    lot_weight: float = Form(3000.0),
+    includes_fesi: str = Form("no"),  # ignored; we auto-detect KRFS below
+    heat_ids: List[int] = Form([]),
+    db: Session = Depends(get_db)
+):
+    if not heat_ids:
+        return PlainTextResponse("Select at least one heat", status_code=400)
 
-    # Lot weight (may be overridden by sum of allocations below)
-    try:
-        lot_weight = float(form.get("lot_weight") or 0)
-    except:
-        lot_weight = 0.0
-
-    # Collect alloc_<heat_id> fields
-    allocations = {}  # heat_id -> kg
-    for k, v in form.multi_items():
-        if not k.startswith("alloc_"):
-            continue
-        try:
-            hid = int(k.split("_", 1)[1])
-            kg = float(v or 0)
-        except:
-            continue
-        if kg > 0:
-            allocations[hid] = allocations.get(hid, 0.0) + kg
-
-    if not allocations:
-        return PlainTextResponse("Enter at least one allocation > 0 kg.", status_code=400)
-
-    heats = db.query(Heat).filter(Heat.id.in_(allocations.keys())).all()
+    heats = db.query(Heat).filter(Heat.id.in_(heat_ids)).all()
     if not heats:
         return PlainTextResponse("Selected heats not found", status_code=404)
 
-    total_alloc = 0.0
-    any_fesi = False
-    for h in heats:
-        avail = heat_available_output(db, h)
-        want = allocations.get(h.id, 0.0)
-        if want > avail + 1e-6:
-            return PlainTextResponse(
-                f"Heat {h.heat_no}: requested {want:.1f} kg, available {avail:.1f} kg.",
-                status_code=400
-            )
-        total_alloc += want
-        for cons in h.rm_consumptions:
-            if cons.rm_type == "FeSi":
-                any_fesi = True
-                break
-
-    # Lot weight = sum of allocations
-    lot_weight = total_alloc
-
+    any_fesi = any(heat_grade(h) == "KRFS" for h in heats)
     grade = "KRFS" if any_fesi else "KRIP"
+
+    # Create lot number
     today = dt.date.today().strftime("%Y%m%d")
     seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"KR%{today}%")).scalar() or 0) + 1
     lot_no = f"{grade}-{today}-{seq:03d}"
     lot = Lot(lot_no=lot_no, weight=lot_weight, grade=grade)
     db.add(lot); db.flush()
 
-    # Link heats with allocated kg
     for h in heats:
-        alloc = allocations.get(h.id, 0.0)
-        if alloc > 0:
-            db.add(LotHeat(lot_id=lot.id, heat_id=h.id, alloc_kg=alloc))
+        db.add(LotHeat(lot_id=lot.id, heat_id=h.id))
 
-    # Weighted-average heat unit cost by allocated kg
+    # Weighted-average heat unit cost
+    total_output = 0.0
     weighted_cost = 0.0
     for h in heats:
-        alloc = allocations.get(h.id, 0.0)
-        weighted_cost += alloc * (h.unit_cost or 0.0)
-    avg_heat_unit_cost = (weighted_cost / lot_weight) if lot_weight > 0 else 0.0
+        out = h.actual_output or 0.0
+        total_output += out
+        weighted_cost += (h.unit_cost or 0.0) * out
+    avg_heat_unit_cost = (weighted_cost / total_output) if total_output > 0 else 0.0
 
-    # Add atomization + surcharge
     lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
     lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
 
-    # Prefill chemistry as allocation-weighted average
-    vals = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
-    wt   = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
+    # Prefill chemistry as average of selected heats
+    vals = {k: [] for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
     for h in heats:
-        alloc = allocations.get(h.id, 0.0)
         ch = h.chemistry
-        if not ch or alloc <= 0:
+        if not ch:
             continue
-        for key in list(vals.keys()):
+        for key in vals.keys():
             v = getattr(ch, key)
             try:
-                fv = float(v)
-                vals[key] += fv * alloc
-                wt[key]   += alloc
+                vals[key].append(float(v))
             except:
                 pass
-    avg = {k: (vals[k] / wt[k] if wt[k] > 0 else None) for k in vals}
+    avg = {k: (sum(v) / len(v) if v else None) for k, v in vals.items()}
     lc = LotChem(lot=lot, **{k: (str(v) if v is not None else "") for k, v in avg.items()})
     db.add(lc); db.commit()
     return RedirectResponse("/atomization", status_code=303)
 
 # -------------------------------------------------
-# QA Lot (auto-create chem/phys/psd)
+# QA Lot (auto-create chem/phys/psd + safe dicts)
 # -------------------------------------------------
 @app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
-def qa_lot_form(lot_id: int, request: Request, db: SessionLocal = Depends(get_db)):
+def qa_lot_form(lot_id: int, request: Request, db: Session = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     if not lot:
         return PlainTextResponse("Lot not found", status_code=404)
 
-    chem = lot.chemistry
-    phys = lot.phys
-    psd  = lot.psd
     created = False
-    if not chem:
-        chem = LotChem(lot=lot); db.add(chem); created = True
-    if not phys:
-        phys = LotPhys(lot=lot); db.add(phys); created = True
-    if not psd:
-        psd = LotPSD(lot=lot); db.add(psd); created = True
+    if not lot.chemistry:
+        lot.chemistry = LotChem(lot=lot); db.add(lot.chemistry); created = True
+    if not lot.phys:
+        lot.phys = LotPhys(lot=lot); db.add(lot.phys); created = True
+    if not lot.psd:
+        lot.psd = LotPSD(lot=lot); db.add(lot.psd); created = True
     if created:
         db.commit()
         db.refresh(lot)
 
     psd_map = {
-        "+212": psd.p212 or "", "+180": psd.p180 or "", "-180+150": psd.n180p150 or "",
-        "-150+75": psd.n150p75 or "", "-75+45": psd.n75p45 or "", "-45": psd.n45 or ""
+        "+212": lot.psd.p212 or "", "+180": lot.psd.p180 or "",
+        "-180+150": lot.psd.n180p150 or "", "-150+75": lot.psd.n150p75 or "",
+        "-75+45": lot.psd.n75p45 or "", "-45": lot.psd.n45 or ""
     }
+
+    chem_map = {
+        "C": lot.chemistry.c or "", "Si": lot.chemistry.si or "",
+        "S": lot.chemistry.s or "", "P": lot.chemistry.p or "",
+        "Cu": lot.chemistry.cu or "", "Ni": lot.chemistry.ni or "",
+        "Mn": lot.chemistry.mn or "", "Fe": lot.chemistry.fe or "",
+    }
+
+    phys_map = {"ad": lot.phys.ad or "", "flow": lot.phys.flow or ""}
+
     return templates.TemplateResponse(
         "qa_lot.html",
-        {"request": request, "lot": lot, "chem": chem, "phys": phys, "psd": psd_map}
+        {"request": request, "lot": lot, "chem": chem_map, "phys": phys_map, "psd": psd_map, "grade": lot.grade}
     )
 
 @app.post("/qa/lot/{lot_id}")
-def qa_lot_save(
+async def qa_lot_save(
     lot_id: int,
-    C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
-    Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
-    ad: str = Form(""), flow: str = Form(""),
-    decision: str = Form("APPROVED"), remarks: str = Form(""),
-    db: SessionLocal = Depends(get_db),
+    request: Request,               # needed to read special PSD field names
+    decision: str = Form("APPROVED"),
+    remarks: str = Form(""),
+    db: Session = Depends(get_db),
 ):
     lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+
+    form = await request.form()
+
+    # Chemistry
     chem = lot.chemistry or LotChem(lot=lot)
-    chem.c = C; chem.si = Si; chem.s = S; chem.p = P; chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
-    phys = lot.phys or LotPhys(lot=lot); phys.ad = ad; phys.flow = flow
-    psd  = lot.psd  or LotPSD(lot=lot)
-    psd.p212 = psd.p212 or ""; psd.p180 = psd.p180 or ""
-    psd.n180p150 = psd.n180p150 or ""; psd.n150p75 = psd.n150p75 or ""
-    psd.n75p45 = psd.n75p45 or ""; psd.n45 = psd.n45 or ""
-    lot.qa_status = decision; lot.qa_remarks = remarks
+    chem.c  = form.get("C", "")
+    chem.si = form.get("Si", "")
+    chem.s  = form.get("S", "")
+    chem.p  = form.get("P", "")
+    chem.cu = form.get("Cu", "")
+    chem.ni = form.get("Ni", "")
+    chem.mn = form.get("Mn", "")
+    chem.fe = form.get("Fe", "")
+
+    # Physical
+    phys = lot.phys or LotPhys(lot=lot)
+    phys.ad   = form.get("ad", "")
+    phys.flow = form.get("flow", "")
+
+    # PSD (special names like '+212')
+    psd = lot.psd or LotPSD(lot=lot)
+    psd.p212      = form.get("+212", "")
+    psd.p180      = form.get("+180", "")
+    psd.n180p150  = form.get("-180+150", "")
+    psd.n150p75   = form.get("-150+75", "")
+    psd.n75p45    = form.get("-75+45", "")
+    psd.n45       = form.get("-45", "")
+
+    lot.qa_status = decision
+    lot.qa_remarks = remarks
+
     db.add_all([chem, phys, psd, lot]); db.commit()
     return RedirectResponse("/atomization", status_code=303)
 
@@ -594,16 +562,18 @@ def qa_lot_save(
 # QA Dashboard
 # -------------------------------------------------
 @app.get("/qa-dashboard", response_class=HTMLResponse)
-def qa_dashboard(request: Request, db: SessionLocal = Depends(get_db)):
+def qa_dashboard(request: Request, db: Session = Depends(get_db)):
     heats = db.query(Heat).order_by(Heat.id.desc()).all()
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
-    return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots})
+    # optional: maps for badges if your template wants to show them
+    heat_grades = {h.id: heat_grade(h) for h in heats}
+    return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots, "heat_grades": heat_grades})
 
 # -------------------------------------------------
 # Traceability
 # -------------------------------------------------
 @app.get("/traceability/lot/{lot_id}", response_class=HTMLResponse)
-def trace_lot(lot_id: int, request: Request, db: SessionLocal = Depends(get_db)):
+def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     heats = [lh.heat for lh in lot.heats]
     rows = []
@@ -637,7 +607,7 @@ def draw_header(c: canvas.Canvas, title: str):
     c.line(1.5 * cm, height - 3.3 * cm, width - 1.5 * cm, height - 3.3 * cm)
 
 @app.get("/pdf/lot/{lot_id}")
-def pdf_lot(lot_id: int, db: SessionLocal = Depends(get_db)):
+def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
