@@ -1,4 +1,10 @@
-{% extends "base.html" %}
-{% block content %}
-<p>Welcome. Use the navigation above. First time? Run <code>/setup</code> once to create tables.</p>
-{% endblock %}
+<!doctype html><html><body>
+{% include "_base_top.html" %}
+<div style="padding:16px">
+  <h2>Dashboard</h2>
+  <div>GRNs Today: <b>{{kpi.grn_today}}</b></div>
+  <div>Heats Today: <b>{{kpi.heats_today}}</b></div>
+  <div>Lots Today: <b>{{kpi.lots_today}}</b></div>
+  <div>Approved Lots Ready: <b>{{kpi.ready}}</b></div>
+</div>
+</body></html>
