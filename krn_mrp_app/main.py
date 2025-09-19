@@ -378,3 +378,115 @@ def qa_lot_save(
     n75p45: str = Form(""), n45: str = Form(""),
     decision: str = Form("APPROVED"), remarks: str = Form(""),
     db: SessionLocal = Depends(get_db),
+):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+
+    chem = lot.chemistry or LotChem(lot=lot)
+    chem.c = C; chem.si = Si; chem.s = S; chem.p = P
+    chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
+
+    phys = lot.phys or LotPhys(lot=lot)
+    phys.ad = ad; phys.flow = flow
+
+    psd = lot.psd or LotPSD(lot=lot)
+    psd.p212 = p212; psd.p180 = p180
+    psd.n180p150 = n180p150; psd.n150p75 = n150p75
+    psd.n75p45 = n75p45; psd.n45 = n45
+
+    lot.qa_status = decision
+    lot.qa_remarks = remarks
+
+    db.add_all([chem, phys, psd, lot])
+    db.commit()
+    return RedirectResponse("/atomization", status_code=303)
+
+# ---------------------------
+# QA Dashboard
+# ---------------------------
+@app.get("/qa-dashboard", response_class=HTMLResponse)
+def qa_dashboard(request: Request, db: SessionLocal = Depends(get_db)):
+    heats = db.query(Heat).order_by(Heat.id.desc()).all()
+    lots = db.query(Lot).order_by(Lot.id.desc()).all()
+    return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots})
+
+# ---------------------------
+# Traceability
+# ---------------------------
+@app.get("/traceability/lot/{lot_id}", response_class=HTMLResponse)
+def trace_lot(lot_id: int, request: Request, db: SessionLocal = Depends(get_db)):
+    lot = db.get(Lot, lot_id)
+    heats = [lh.heat for lh in lot.heats]
+    rows = []
+    for h in heats:
+        for cons in h.rm_consumptions:
+            rows.append(
+                type(
+                    "Row",
+                    (),
+                    {
+                        "heat_no": h.heat_no,
+                        "rm_type": cons.rm_type,
+                        "grn_id": cons.grn_id,
+                        "supplier": cons.grn.supplier if cons.grn else "",
+                        "qty": cons.qty,
+                    },
+                )
+            )
+    return templates.TemplateResponse("trace_lot.html", {"request": request, "lot": lot, "heats": heats, "grn_rows": rows})
+
+# ---------------------------
+# PDF
+# ---------------------------
+def draw_header(c: canvas.Canvas, title: str):
+    width, height = A4
+    logo_path = os.path.join(os.path.dirname(__file__), "..", "static", "KRN_Logo.png")
+    if os.path.exists(logo_path):
+        c.drawImage(logo_path, 1.5 * cm, height - 3 * cm, width=4 * cm, preserveAspectRatio=True, mask="auto")
+    c.setFont("Helvetica-Bold", 14); c.drawString(7 * cm, height - 2 * cm, "KRN Alloys Pvt Ltd")
+    c.setFont("Helvetica-Bold", 12); c.drawString(7 * cm, height - 2.7 * cm, title)
+    c.line(1.5 * cm, height - 3.3 * cm, width - 1.5 * cm, height - 3.3 * cm)
+
+@app.get("/pdf/lot/{lot_id}")
+def pdf_lot(lot_id: int, db: SessionLocal = Depends(get_db)):
+    lot = db.get(Lot, lot_id)
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+    draw_header(c, f"Traceability Report – Lot {lot.lot_no}")
+
+    y = height - 4 * cm
+    c.setFont("Helvetica", 11)
+    c.drawString(2 * cm, y, f"Grade: {lot.grade}"); y -= 14
+    c.drawString(2 * cm, y, f"Weight: {lot.weight:.1f} kg"); y -= 14
+    c.drawString(2 * cm, y, f"Lot QA: {lot.qa_status}"); y -= 18
+
+    c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "Heats"); y -= 14
+    c.setFont("Helvetica", 10)
+    for lh in lot.heats:
+        h = lh.heat
+        c.drawString(2.2 * cm, y, f"{h.heat_no}  | Out: {h.actual_output:.1f} kg | QA: {h.qa_status}")
+        y -= 12
+        if y < 3 * cm:
+            c.showPage(); draw_header(c, f"Traceability Report – Lot {lot.lot_no}"); y = height - 4 * cm
+
+    y -= 6
+    c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "GRN Consumption (FIFO)"); y -= 14
+    c.setFont("Helvetica", 10)
+    for lh in lot.heats:
+        h = lh.heat
+        for cons in h.rm_consumptions:
+            g = cons.grn
+            c.drawString(2.2 * cm, y, f"Heat {h.heat_no} | {cons.rm_type} | GRN #{cons.grn_id} | {g.supplier if g else ''} | {cons.qty:.1f} kg")
+            y -= 12
+            if y < 3 * cm:
+                c.showPage(); draw_header(c, f"Traceability Report – Lot {lot.lot_no}"); y = height - 4 * cm
+
+    c.showPage(); c.save()
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="trace_{lot.lot_no}.pdf"'}
+    )
