@@ -72,6 +72,7 @@ def migrate_schema(engine):
                     conn.execute(text(f"ALTER TABLE heat ADD COLUMN {col} REAL DEFAULT 0"))
                 else:
                     conn.execute(text(f"ALTER TABLE heat ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
+
         # Heat allocation tracking (how much of the heat is already used in lots)
         if not _table_has_column(conn, "heat", "alloc_used"):
             if str(engine.url).startswith("sqlite"):
@@ -215,6 +216,12 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "..", "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "..", "templates"))
 
+# Auto-migrate on startup so /atomization can't 500 after deploy
+@app.on_event("startup")
+def _startup_migrate():
+    Base.metadata.create_all(bind=engine)
+    migrate_schema(engine)
+
 # -------------------------------------------------
 # DB dependency
 # -------------------------------------------------
@@ -236,9 +243,16 @@ def heat_grade(heat: Heat) -> str:
     return "KRIP"
 
 def heat_available(db: Session, heat: Heat) -> float:
-    """kg available from this heat for atomization."""
-    used = db.query(func.coalesce(func.sum(LotHeat.qty), 0.0)).filter(LotHeat.heat_id == heat.id).scalar() or 0.0
-    # mirror to heat.alloc_used so dashboard can show quickly
+    """kg available from this heat for atomization (robust if migrations lag)."""
+    try:
+        used = (
+            db.query(func.coalesce(func.sum(LotHeat.qty), 0.0))
+              .filter(LotHeat.heat_id == heat.id)
+              .scalar()
+            or 0.0
+        )
+    except Exception:
+        used = 0.0
     heat.alloc_used = float(used)
     return max((heat.actual_output or 0.0) - used, 0.0)
 
@@ -444,8 +458,7 @@ def atom_page(request: Request, db: Session = Depends(get_db)):
 
     grades = {h.id: heat_grade(h) for h in heats}
     available_map = {h.id: heat_available(db, h) for h in heats}
-    # persist alloc_used refresh without forcing template to commit
-    db.commit()
+    db.commit()  # persist alloc_used mirror
 
     return templates.TemplateResponse(
         "atomization.html",
@@ -622,7 +635,6 @@ async def qa_lot_save(
     lot.qa_remarks = remarks
 
     db.add_all([chem, phys, psd, lot]); db.commit()
-    # go back to atomization screen
     return RedirectResponse("/atomization", status_code=303)
 
 # -------------------------------------------------
@@ -634,6 +646,14 @@ def qa_dashboard(request: Request, db: Session = Depends(get_db)):
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
     heat_grades = {h.id: heat_grade(h) for h in heats}
     return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots, "heat_grades": heat_grades})
+
+# -------------------------------------------------
+# Ready Stock (QA APPROVED lots)
+# -------------------------------------------------
+@app.get("/ready-stock", response_class=HTMLResponse)
+def ready_stock(request: Request, db: Session = Depends(get_db)):
+    lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").order_by(Lot.id.desc()).all()
+    return templates.TemplateResponse("ready_stock.html", {"request": request, "lots": lots})
 
 # -------------------------------------------------
 # Traceability
@@ -710,4 +730,4 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
     c.showPage(); c.save()
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/pdf",
-                             headers={"Content-Disposition": f'inline; filename=\"trace_{lot.lot_no}.pdf\"'})
+                             headers={"Content-Disposition": f'inline; filename="trace_{lot.lot_no}.pdf"'})
