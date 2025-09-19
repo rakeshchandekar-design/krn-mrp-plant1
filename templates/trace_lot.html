@@ -1,27 +1,14 @@
-{% extends "base.html" %}
-{% block content %}
-<h2>Traceability – Lot {{ lot.lot_no }}</h2>
-<p>Grade: {{ lot.grade }} | Weight: {{ '%.1f'|format(lot.weight) }} kg | QA: {{ lot.qa_status }}</p>
-<h3>Heats Used</h3>
-<table>
-  <tr><th>Heat</th><th>Output (kg)</th><th>QA</th></tr>
-  {% for h in heats %}
-  <tr><td>{{ h.heat_no }}</td><td>{{ '%.1f'|format(h.actual_output) }}</td><td>{{ h.qa_status }}</td></tr>
-  {% endfor %}
-</table>
-
-<h3>GRN Consumption (FIFO)</h3>
-<table>
-  <tr><th>Heat</th><th>RM</th><th>GRN ID</th><th>Supplier</th><th>Qty (kg)</th></tr>
-  {% for row in grn_rows %}
-  <tr>
-    <td>{{ row.heat_no }}</td>
-    <td>{{ row.rm_type }}</td>
-    <td>{{ row.grn_id }}</td>
-    <td>{{ row.supplier }}</td>
-    <td>{{ '%.1f'|format(row.qty) }}</td>
-  </tr>
-  {% endfor %}
-</table>
-<p><a class="btn" href="/pdf/lot/{{lot.id}}">Download PDF</a></p>
-{% endblock %}
+<!doctype html><html><body>
+{% include "_base_top.html" %}
+<div style="padding:16px">
+  <h2>Traceability – {{lot.lot_no}}</h2>
+  <p>Grade: {{lot.grade}} | Weight: {{'%.1f'|format(lot.weight)}} kg | QA: {{lot.qa_status}}</p>
+  <h3>Allocated Heats</h3>
+  <table border="1" cellpadding="6" cellspacing="0">
+    <tr><th>Heat</th><th>RM Type</th><th>GRN</th><th>Supplier</th><th>Qty (kg)</th></tr>
+    {% for r in grn_rows %}
+    <tr><td>{{r.heat_no}}</td><td>{{r.rm_type}}</td><td>{{r.grn_id}}</td><td>{{r.supplier}}</td><td>{{'%.1f'|format(r.qty)}}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</body></html>
