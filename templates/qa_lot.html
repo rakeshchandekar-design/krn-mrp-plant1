@@ -4,34 +4,41 @@
 
 <form method="post">
   <h3>Chemical (averaged prefilled; edit if needed)</h3>
+  {# Use Jinja's attribute() to read fields from the SQLAlchemy object #}
   {% for c in ['C','Si','S','P','Cu','Ni','Mn','Fe'] %}
-    <label>{{ c }}
-      <input name="{{ c }}" value="{{ chem_map[c] }}"/>
+    <label style="display:inline-block;min-width:110px;margin:4px 12px 4px 0;">
+      {{ c }}
+      <input name="{{ c }}" value="{{ attribute(chem, c|lower) or '' }}" />
     </label>
   {% endfor %}
 
   <h3>Physical</h3>
-  <label>AD (g/cc) <input name="ad"   value="{{ phys.ad   or '' }}"/></label>
+  <label>AD (g/cc) <input name="ad" value="{{ phys.ad or '' }}"/></label>
   <label>Flow (sec/50g) <input name="flow" value="{{ phys.flow or '' }}"/></label>
 
   <h3>PSD (%)</h3>
-  <!-- IMPORTANT: use valid names that match the POST (p212, p180, …) -->
-  <label>+212 <input name="p212"      value="{{ psd_map['p212'] }}"/></label>
-  <label>+180 <input name="p180"      value="{{ psd_map['p180'] }}"/></label>
-  <label>-180+150 <input name="n180p150" value="{{ psd_map['n180p150'] }}"/></label>
-  <label>-150+75 <input name="n150p75"  value="{{ psd_map['n150p75'] }}"/></label>
-  <label>-75+45 <input name="n75p45"   value="{{ psd_map['n75p45'] }}"/></label>
-  <label>-45 <input name="n45"        value="{{ psd_map['n45'] }}"/></label>
+  {# If you want these to save, we can wire them later; leaving as display/edit for now #}
+  <label>+212 <input name="+212" value="{{ psd['+212'] }}"/></label>
+  <label>+180 <input name="+180" value="{{ psd['+180'] }}"/></label>
+  <label>-180+150 <input name="-180+150" value="{{ psd['-180+150'] }}"/></label>
+  <label>-150+75 <input name="-150+75" value="{{ psd['-150+75'] }}"/></label>
+  <label>-75+45 <input name="-75+45" value="{{ psd['-75+45'] }}"/></label>
+  <label>-45 <input name="-45" value="{{ psd['-45'] }}"/></label>
 
-  <label>Decision
+  <h3>Decision</h3>
+  <label>
     <select name="decision">
-      <option value="APPROVED" {% if lot.qa_status=='APPROVED' %}selected{% endif %}>APPROVED</option>
-      <option value="HOLD"     {% if lot.qa_status=='HOLD' %}selected{% endif %}>HOLD</option>
-      <option value="REJECTED" {% if lot.qa_status=='REJECTED' %}selected{% endif %}>REJECTED</option>
+      <option value="APPROVED"  {% if lot.qa_status=='APPROVED' %}selected{% endif %}>APPROVED</option>
+      <option value="HOLD"      {% if lot.qa_status=='HOLD' %}selected{% endif %}>HOLD</option>
+      <option value="REJECTED"  {% if lot.qa_status=='REJECTED' %}selected{% endif %}>REJECTED</option>
     </select>
   </label>
 
   <label>Remarks <input name="remarks" value="{{ lot.qa_remarks or '' }}"/></label>
-  <p><button class="btn">Save</button> <a class="btn btn-secondary" href="/atomization">Back</a></p>
+
+  <p style="margin-top:10px;">
+    <button class="btn">Save</button>
+    <a class="btn btn-secondary" href="/atomization">Back</a>
+  </p>
 </form>
 {% endblock %}
