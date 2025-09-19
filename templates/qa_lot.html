@@ -4,39 +4,38 @@
 
 <form method="post">
   <h3>Chemical (averaged prefilled; edit if needed)</h3>
-  {# Use Jinja's attribute() to read fields from the SQLAlchemy object #}
   {% for c in ['C','Si','S','P','Cu','Ni','Mn','Fe'] %}
-    <label style="display:inline-block;min-width:110px;margin:4px 12px 4px 0;">
-      {{ c }}
-      <input name="{{ c }}" value="{{ attribute(chem, c|lower) or '' }}" />
-    </label>
+    <label style="display:inline-block;min-width:60px">{{ c }}</label>
+    <input name="{{c}}" value="{{ chem[c] }}"/>
   {% endfor %}
 
   <h3>Physical</h3>
-  <label>AD (g/cc) <input name="ad" value="{{ phys.ad or '' }}"/></label>
-  <label>Flow (sec/50g) <input name="flow" value="{{ phys.flow or '' }}"/></label>
+  <label style="display:inline-block;min-width:120px">AD (g/cc)</label>
+  <input name="ad" value="{{ phys['ad'] }}"/>
+  <label style="display:inline-block;min-width:120px;margin-left:16px">Flow (sec/50g)</label>
+  <input name="flow" value="{{ phys['flow'] }}"/>
 
   <h3>PSD (%)</h3>
-  {# If you want these to save, we can wire them later; leaving as display/edit for now #}
-  <label>+212 <input name="+212" value="{{ psd['+212'] }}"/></label>
-  <label>+180 <input name="+180" value="{{ psd['+180'] }}"/></label>
-  <label>-180+150 <input name="-180+150" value="{{ psd['-180+150'] }}"/></label>
-  <label>-150+75 <input name="-150+75" value="{{ psd['-150+75'] }}"/></label>
-  <label>-75+45 <input name="-75+45" value="{{ psd['-75+45'] }}"/></label>
-  <label>-45 <input name="-45" value="{{ psd['-45'] }}"/></label>
+  {% for p in ['+212','+180','-180+150','-150+75','-75+45','-45'] %}
+    <label style="display:inline-block;min-width:100px">{{ p }}</label>
+    <input name="{{p}}" value="{{ psd[p] }}"/>
+  {% endfor %}
 
-  <h3>Decision</h3>
-  <label>
+  <div style="margin-top:12px">
+    <label>Decision</label>
     <select name="decision">
-      <option value="APPROVED"  {% if lot.qa_status=='APPROVED' %}selected{% endif %}>APPROVED</option>
-      <option value="HOLD"      {% if lot.qa_status=='HOLD' %}selected{% endif %}>HOLD</option>
-      <option value="REJECTED"  {% if lot.qa_status=='REJECTED' %}selected{% endif %}>REJECTED</option>
+      <option value="APPROVED" {% if lot.qa_status=='APPROVED' %}selected{% endif %}>APPROVED</option>
+      <option value="HOLD" {% if lot.qa_status=='HOLD' %}selected{% endif %}>HOLD</option>
+      <option value="REJECTED" {% if lot.qa_status=='REJECTED' %}selected{% endif %}>REJECTED</option>
     </select>
-  </label>
+  </div>
 
-  <label>Remarks <input name="remarks" value="{{ lot.qa_remarks or '' }}"/></label>
+  <div style="margin-top:8px">
+    <label>Remarks</label>
+    <input name="remarks" value="{{ lot.qa_remarks or '' }}" style="min-width:360px"/>
+  </div>
 
-  <p style="margin-top:10px;">
+  <p style="margin-top:12px">
     <button class="btn">Save</button>
     <a class="btn btn-secondary" href="/atomization">Back</a>
   </p>
