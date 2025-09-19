@@ -256,12 +256,26 @@ def melting_new(
     return RedirectResponse("/melting", status_code=303)
 
 # ---------------------------
-# QA Heat
+# QA Redirect (so /qa works)
+# ---------------------------
+@app.get("/qa")
+def qa_redirect():
+    return RedirectResponse("/qa-dashboard", status_code=303)
+
+# ---------------------------
+# QA Heat (auto-create chemistry)
 # ---------------------------
 @app.get("/qa/heat/{heat_id}", response_class=HTMLResponse)
 def qa_heat_form(heat_id: int, request: Request, db: SessionLocal = Depends(get_db)):
     heat = db.get(Heat, heat_id)
-    chem = heat.chemistry or HeatChem(heat=heat)
+    if not heat:
+        return PlainTextResponse("Heat not found", status_code=404)
+
+    chem = heat.chemistry
+    if not chem:
+        chem = HeatChem(heat=heat)
+        db.add(chem); db.commit(); db.refresh(chem)
+
     return templates.TemplateResponse("qa_heat.html", {"request": request, "heat": heat, "chem": chem})
 
 @app.post("/qa/heat/{heat_id}")
@@ -322,14 +336,28 @@ def atom_new(lot_weight: float = Form(3000.0), includes_fesi: str = Form("no"),
     return RedirectResponse("/atomization", status_code=303)
 
 # ---------------------------
-# QA Lot
+# QA Lot (auto-create chem/phys/psd)
 # ---------------------------
 @app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
 def qa_lot_form(lot_id: int, request: Request, db: SessionLocal = Depends(get_db)):
     lot = db.get(Lot, lot_id)
-    chem = lot.chemistry or LotChem(lot=lot)
-    phys = lot.phys or LotPhys(lot=lot)
-    psd = lot.psd or LotPSD(lot=lot)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+
+    chem = lot.chemistry
+    phys = lot.phys
+    psd  = lot.psd
+    created = False
+    if not chem:
+        chem = LotChem(lot=lot); db.add(chem); created = True
+    if not phys:
+        phys = LotPhys(lot=lot); db.add(phys); created = True
+    if not psd:
+        psd = LotPSD(lot=lot); db.add(psd); created = True
+    if created:
+        db.commit()
+        db.refresh(lot)
+
     psd_map = {
         "+212": psd.p212 or "", "+180": psd.p180 or "", "-180+150": psd.n180p150 or "",
         "-150+75": psd.n150p75 or "", "-75+45": psd.n75p45 or "", "-45": psd.n45 or ""
@@ -349,8 +377,8 @@ def qa_lot_save(
     chem = lot.chemistry or LotChem(lot=lot)
     chem.c = C; chem.si = Si; chem.s = S; chem.p = P; chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
     phys = lot.phys or LotPhys(lot=lot); phys.ad = ad; phys.flow = flow
-    psd = lot.psd or LotPSD(lot=lot)
-    # Keep blank unless your form posts PSD values with these names; adapt as needed:
+    psd  = lot.psd  or LotPSD(lot=lot)
+    # If your form posts PSD fields by these names, map them; else leave as-is
     psd.p212 = psd.p212 or ""; psd.p180 = psd.p180 or ""
     psd.n180p150 = psd.n180p150 or ""; psd.n150p75 = psd.n150p75 or ""
     psd.n75p45 = psd.n75p45 or ""; psd.n45 = psd.n45 or ""
