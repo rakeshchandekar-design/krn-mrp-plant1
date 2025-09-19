@@ -14,10 +14,7 @@ from reportlab.pdfgen import canvas
 
 # SQLAlchemy
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func
-from sqlalchemy.orm import (
-    sessionmaker, declarative_base, relationship,
-    joinedload, selectinload
-)
+from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
 # ---------------------------
 # Database config
@@ -166,7 +163,7 @@ def home(request: Request):
 @app.get("/setup")
 def setup(db: SessionLocal = Depends(get_db)):
     Base.metadata.create_all(bind=engine)
-    return HTMLResponse('Tables created. Go to <a href="/grn">GRN</a>.')
+    return HTMLResponse('Tables created and ready. Go to <a href="/grn">GRN</a>.')
 
 # ---------------------------
 # GRN
@@ -191,7 +188,7 @@ def grn_new_post(
     return RedirectResponse("/grn", status_code=303)
 
 # ---------------------------
-# FIFO stock helpers
+# Stock helpers (FIFO)
 # ---------------------------
 def available_stock(db, rm_type: str):
     rows = db.query(GRN).filter(GRN.rm_type == rm_type, GRN.remaining_qty > 0).order_by(GRN.id.asc()).all()
@@ -216,8 +213,8 @@ def consume_fifo(db, rm_type: str, qty_needed: float, heat: Heat):
 # ---------------------------
 @app.get("/melting", response_class=HTMLResponse)
 def melting_page(request: Request, db: SessionLocal = Depends(get_db)):
-    heats = db.query(Heat).order_by(Heat.id.desc()).all()
-    return templates.TemplateResponse("melting.html", {"request": request, "rm_types": RM_TYPES, "pending": heats})
+    pending = db.query(Heat).order_by(Heat.id.desc()).all()
+    return templates.TemplateResponse("melting.html", {"request": request, "rm_types": RM_TYPES, "pending": pending})
 
 @app.post("/melting/new")
 def melting_new(
@@ -230,8 +227,7 @@ def melting_new(
     rm_type_3: Optional[str] = Form(None), rm_qty_3: Optional[float] = Form(None),
     rm_type_4: Optional[str] = Form(None), rm_qty_4: Optional[float] = Form(None),
 ):
-    lines = [(t, float(q)) for t, q in [(rm_type_1, rm_qty_1), (rm_type_2, rm_qty_2),
-                                        (rm_type_3, rm_qty_3), (rm_type_4, rm_qty_4)]
+    lines = [(t, float(q)) for t, q in [(rm_type_1, rm_qty_1), (rm_type_2, rm_qty_2), (rm_type_3, rm_qty_3), (rm_type_4, rm_qty_4)]
              if t and q and q > 0]
     if not lines:
         return PlainTextResponse("At least one RM line is required.", status_code=400)
@@ -260,31 +256,27 @@ def melting_new(
     return RedirectResponse("/melting", status_code=303)
 
 # ---------------------------
-# QA redirect
+# QA Redirect (so /qa works)
 # ---------------------------
 @app.get("/qa")
 def qa_redirect():
     return RedirectResponse("/qa-dashboard", status_code=303)
 
 # ---------------------------
-# QA Heat
+# QA Heat (auto-create chemistry)
 # ---------------------------
 @app.get("/qa/heat/{heat_id}", response_class=HTMLResponse)
 def qa_heat_form(heat_id: int, request: Request, db: SessionLocal = Depends(get_db)):
-    heat = (
-        db.query(Heat)
-        .options(joinedload(Heat.chemistry), selectinload(Heat.rm_consumptions).joinedload(HeatRM.grn))
-        .filter(Heat.id == heat_id)
-        .first()
-    )
+    heat = db.get(Heat, heat_id)
     if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
 
-    if not heat.chemistry:
+    chem = heat.chemistry
+    if not chem:
         chem = HeatChem(heat=heat)
-        db.add(chem); db.commit(); db.refresh(heat)
+        db.add(chem); db.commit(); db.refresh(chem)
 
-    return templates.TemplateResponse("qa_heat.html", {"request": request, "heat": heat, "chem": heat.chemistry})
+    return templates.TemplateResponse("qa_heat.html", {"request": request, "heat": heat, "chem": chem})
 
 @app.post("/qa/heat/{heat_id}")
 def qa_heat_save(
@@ -329,10 +321,11 @@ def atom_new(lot_weight: float = Form(3000.0), includes_fesi: str = Form("no"),
     heats = db.query(Heat).filter(Heat.id.in_(heat_ids)).all()
     vals = {k: [] for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
     for h in heats:
-        if not h.chemistry:
+        ch = h.chemistry
+        if not ch:
             continue
         for key in vals.keys():
-            v = getattr(h.chemistry, key)
+            v = getattr(ch, key)
             try:
                 vals[key].append(float(v))
             except:
@@ -343,42 +336,45 @@ def atom_new(lot_weight: float = Form(3000.0), includes_fesi: str = Form("no"),
     return RedirectResponse("/atomization", status_code=303)
 
 # ---------------------------
-# QA Lot
+# QA Lot (auto-create chem/phys/psd)
 # ---------------------------
 @app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
 def qa_lot_form(lot_id: int, request: Request, db: SessionLocal = Depends(get_db)):
-    lot = (
-        db.query(Lot)
-        .options(
-            joinedload(Lot.chemistry),
-            joinedload(Lot.phys),
-            joinedload(Lot.psd),
-            selectinload(Lot.heats).joinedload(LotHeat.heat).joinedload(Heat.chemistry),
-        )
-        .filter(Lot.id == lot_id)
-        .first()
-    )
+    lot = db.get(Lot, lot_id)
     if not lot:
         return PlainTextResponse("Lot not found", status_code=404)
 
+    chem = lot.chemistry
+    phys = lot.phys
+    psd  = lot.psd
     created = False
-    if not lot.chemistry:
-        db.add(LotChem(lot=lot)); created = True
-    if not lot.phys:
-        db.add(LotPhys(lot=lot)); created = True
-    if not lot.psd:
-        db.add(LotPSD(lot=lot)); created = True
+    if not chem:
+        chem = LotChem(lot=lot); db.add(chem); created = True
+    if not phys:
+        phys = LotPhys(lot=lot); db.add(phys); created = True
+    if not psd:
+        psd = LotPSD(lot=lot); db.add(psd); created = True
     if created:
-        db.commit(); db.refresh(lot)
+        db.commit()
+        db.refresh(lot)
 
-    psd = lot.psd
     psd_map = {
         "+212": psd.p212 or "", "+180": psd.p180 or "", "-180+150": psd.n180p150 or "",
         "-150+75": psd.n150p75 or "", "-75+45": psd.n75p45 or "", "-45": psd.n45 or ""
     }
-    return templates.TemplateResponse("qa_lot.html", {"request": request, "lot": lot, "chem": lot.chemistry, "phys": lot.phys, "psd": psd_map})
+    return templates.TemplateResponse(
+        "qa_lot.html",
+        {"request": request, "lot": lot, "chem": chem, "phys": phys, "psd": psd_map}
+    )
 
 @app.post("/qa/lot/{lot_id}")
 def qa_lot_save(
     lot_id: int,
     C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
+    Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
+    ad: str = Form(""), flow: str = Form(""),
+    p212: str = Form(""), p180: str = Form(""),
+    n180p150: str = Form(""), n150p75: str = Form(""),
+    n75p45: str = Form(""), n45: str = Form(""),
+    decision: str = Form("APPROVED"), remarks: str = Form(""),
+    db: SessionLocal = Depends(get_db),
