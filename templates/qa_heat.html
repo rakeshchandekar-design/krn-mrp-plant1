@@ -1,18 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>QA – Heat {{ heat.heat_no }}</h2>
-<p>Inputs: {{ '%.1f'|format(heat.total_inputs) }} kg,
-   Slag: {{ '%.1f'|format(heat.slag_qty) }} kg,
-   Actual output: {{ '%.1f'|format(heat.actual_output) }} kg</p>
-
+<p>Inputs: {{ '%.1f'|format(heat.total_inputs) }} kg, Slag: {{ '%.1f'|format(heat.slag_qty) }} kg, Actual output: {{ '%.1f'|format(heat.actual_output) }} kg</p>
 <form method="post">
   <h3>Chemical</h3>
-  {% for c in elements %}
-    <label>{{ c }}
-      <input name="{{ c }}" value="{{ chem_map[c] }}"/>
-    </label>
+  {% for c in ['C','Si','S','P','Cu','Ni','Mn','Fe'] %}
+    <label>{{ c }} <input name="{{ c }}" value="{{ chem_map[c] | default('') }}"></label>
   {% endfor %}
-
   <label>Decision
     <select name="decision">
       <option value="APPROVED" {% if heat.qa_status=='APPROVED' %}selected{% endif %}>APPROVED</option>
@@ -20,14 +14,7 @@
       <option value="REJECTED" {% if heat.qa_status=='REJECTED' %}selected{% endif %}>REJECTED</option>
     </select>
   </label>
-
-  <label>Remarks
-    <input name="remarks" value="{{ heat.qa_remarks or '' }}"/>
-  </label>
-
-  <p>
-    <button class="btn">Save</button>
-    <a class="btn btn-secondary" href="/qa">Back</a>
-  </p>
+  <label>Remarks <input name="remarks" value="{{ heat.qa_remarks or '' }}"></label>
+  <p><button class="btn">Save</button> <a class="btn btn-secondary" href="/melting">Back</a></p>
 </form>
 {% endblock %}
