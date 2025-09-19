@@ -16,6 +16,9 @@ from reportlab.pdfgen import canvas
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
+# Starlette (for reading the posted form in atomization)
+from starlette.datastructures import FormData
+
 # -------------------------------------------------
 # Costing constants
 # -------------------------------------------------
@@ -79,7 +82,12 @@ def migrate_schema(engine):
                     conn.execute(text(f"ALTER TABLE lot ADD COLUMN {col} REAL DEFAULT 0"))
                 else:
                     conn.execute(text(f"ALTER TABLE lot ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
-
+        # NEW: partial allocation column on lot_heat
+        if not _table_has_column(conn, "lot_heat", "alloc_kg"):
+            if str(engine.url).startswith("sqlite"):
+                conn.execute(text("ALTER TABLE lot_heat ADD COLUMN alloc_kg REAL DEFAULT 0"))
+            else:
+                conn.execute(text("ALTER TABLE lot_heat ADD COLUMN IF NOT EXISTS alloc_kg DOUBLE PRECISION DEFAULT 0"))
 
 # -------------------------------------------------
 # Constants
@@ -114,11 +122,11 @@ class Heat(Base):
     qa_status = Column(String, default="PENDING")
     qa_remarks = Column(String)
 
-    # costing (new)
-    rm_cost = Column(Float, default=0.0)        # total RM cost consumed FIFO
-    process_cost = Column(Float, default=0.0)   # melting process cost (₹/kg * output)
-    total_cost = Column(Float, default=0.0)     # rm_cost + process_cost
-    unit_cost = Column(Float, default=0.0)      # total_cost / actual_output
+    # costing
+    rm_cost = Column(Float, default=0.0)
+    process_cost = Column(Float, default=0.0)
+    total_cost = Column(Float, default=0.0)
+    unit_cost = Column(Float, default=0.0)
 
     rm_consumptions = relationship("HeatRM", back_populates="heat", cascade="all, delete-orphan")
     chemistry = relationship("HeatChem", uselist=False, back_populates="heat")
@@ -151,9 +159,9 @@ class Lot(Base):
     qa_status = Column(String, default="PENDING")
     qa_remarks = Column(String)
 
-    # costing (new)
-    unit_cost = Column(Float, default=0.0)  # heat-unit-cost + atomization + surcharge
-    total_cost = Column(Float, default=0.0) # unit_cost * weight
+    # costing
+    unit_cost = Column(Float, default=0.0)
+    total_cost = Column(Float, default=0.0)
 
     heats = relationship("LotHeat", back_populates="lot", cascade="all, delete-orphan")
     chemistry = relationship("LotChem", uselist=False, back_populates="lot")
@@ -165,6 +173,7 @@ class LotHeat(Base):
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     heat_id = Column(Integer, ForeignKey("heat.id"))
+    alloc_kg = Column(Float, default=0.0)  # <-- NEW: how many kg from this heat to this lot
     lot = relationship("Lot", back_populates="heats")
     heat = relationship("Heat")
 
@@ -219,7 +228,7 @@ def home(request: Request):
 @app.get("/setup")
 def setup(db: SessionLocal = Depends(get_db)):
     Base.metadata.create_all(bind=engine)
-    migrate_schema(engine)  # <-- ensure costing columns exist
+    migrate_schema(engine)
     return HTMLResponse('Tables created/migrated. Go to <a href="/grn">GRN</a>.')
 
 # -------------------------------------------------
@@ -363,7 +372,6 @@ def qa_heat_form(heat_id: int, request: Request, db: SessionLocal = Depends(get_
         chem = HeatChem(heat=heat)
         db.add(chem); db.commit(); db.refresh(chem)
 
-    # Render simple template (your qa_heat.html with getattr removed already)
     return templates.TemplateResponse(
         "qa_heat.html",
         {
@@ -398,78 +406,119 @@ def qa_heat_save(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# Atomization
+# Helpers for atomization (partial allocation)
+# -------------------------------------------------
+def heat_allocated_kg(db, heat_id: int) -> float:
+    return float(db.query(func.coalesce(func.sum(LotHeat.alloc_kg), 0.0)).filter(LotHeat.heat_id == heat_id).scalar() or 0.0)
+
+def heat_available_output(db, h: "Heat") -> float:
+    used = heat_allocated_kg(db, h.id)
+    return max((h.actual_output or 0.0) - used, 0.0)
+
+# -------------------------------------------------
+# Atomization (with partial allocations)
 # -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(request: Request, db: SessionLocal = Depends(get_db)):
-    heats = db.query(Heat).filter(Heat.qa_status == "APPROVED").order_by(Heat.id.desc()).all()
+    heats_all = db.query(Heat).filter(Heat.qa_status == "APPROVED").order_by(Heat.id.desc()).all()
+    heats_view = []
+    for h in heats_all:
+        avail = heat_available_output(db, h)
+        if avail > 0.0001:
+            heats_view.append({"obj": h, "available": round(avail, 1), "unit_cost": round(h.unit_cost or 0.0, 2)})
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
-    return templates.TemplateResponse("atomization.html", {"request": request, "heats": heats, "lots": lots})
+    return templates.TemplateResponse("atomization.html", {"request": request, "heats": heats_view, "lots": lots})
 
 @app.post("/atomization/new")
-def atom_new(
-    lot_weight: float = Form(3000.0),
-    includes_fesi: str = Form("no"),  # ignored; we auto-detect KRFS below
-    heat_ids: List[int] = Form([]),
-    db: SessionLocal = Depends(get_db)
-):
-    if not heat_ids:
-        return PlainTextResponse("Select at least one heat", status_code=400)
+async def atom_new(request: Request, db: SessionLocal = Depends(get_db)):
+    form: FormData = await request.form()
 
-    # Pull heats
-    heats = db.query(Heat).filter(Heat.id.in_(heat_ids)).all()
+    # Lot weight (may be overridden by sum of allocations below)
+    try:
+        lot_weight = float(form.get("lot_weight") or 0)
+    except:
+        lot_weight = 0.0
+
+    # Collect alloc_<heat_id> fields
+    allocations = {}  # heat_id -> kg
+    for k, v in form.multi_items():
+        if not k.startswith("alloc_"):
+            continue
+        try:
+            hid = int(k.split("_", 1)[1])
+            kg = float(v or 0)
+        except:
+            continue
+        if kg > 0:
+            allocations[hid] = allocations.get(hid, 0.0) + kg
+
+    if not allocations:
+        return PlainTextResponse("Enter at least one allocation > 0 kg.", status_code=400)
+
+    heats = db.query(Heat).filter(Heat.id.in_(allocations.keys())).all()
     if not heats:
         return PlainTextResponse("Selected heats not found", status_code=404)
 
-    # Auto-detect KRFS if any selected heat used FeSi
+    total_alloc = 0.0
     any_fesi = False
     for h in heats:
+        avail = heat_available_output(db, h)
+        want = allocations.get(h.id, 0.0)
+        if want > avail + 1e-6:
+            return PlainTextResponse(
+                f"Heat {h.heat_no}: requested {want:.1f} kg, available {avail:.1f} kg.",
+                status_code=400
+            )
+        total_alloc += want
         for cons in h.rm_consumptions:
             if cons.rm_type == "FeSi":
                 any_fesi = True
                 break
-        if any_fesi:
-            break
+
+    # Lot weight = sum of allocations
+    lot_weight = total_alloc
 
     grade = "KRFS" if any_fesi else "KRIP"
-
-    # Create lot number
     today = dt.date.today().strftime("%Y%m%d")
     seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"KR%{today}%")).scalar() or 0) + 1
     lot_no = f"{grade}-{today}-{seq:03d}"
     lot = Lot(lot_no=lot_no, weight=lot_weight, grade=grade)
     db.add(lot); db.flush()
 
-    # Link heats to lot
+    # Link heats with allocated kg
     for h in heats:
-        db.add(LotHeat(lot_id=lot.id, heat_id=h.id))
+        alloc = allocations.get(h.id, 0.0)
+        if alloc > 0:
+            db.add(LotHeat(lot_id=lot.id, heat_id=h.id, alloc_kg=alloc))
 
-    # Weighted-average heat unit cost (already includes RM + melting)
-    total_output = 0.0
+    # Weighted-average heat unit cost by allocated kg
     weighted_cost = 0.0
     for h in heats:
-        out = h.actual_output or 0.0
-        total_output += out
-        weighted_cost += (h.unit_cost or 0.0) * out
-    avg_heat_unit_cost = (weighted_cost / total_output) if total_output > 0 else 0.0
+        alloc = allocations.get(h.id, 0.0)
+        weighted_cost += alloc * (h.unit_cost or 0.0)
+    avg_heat_unit_cost = (weighted_cost / lot_weight) if lot_weight > 0 else 0.0
 
-    # Add atomization + surcharge at Lot stage
+    # Add atomization + surcharge
     lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
     lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
 
-    # Prefill chemistry as average of selected heats (same as before)
-    vals = {k: [] for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
+    # Prefill chemistry as allocation-weighted average
+    vals = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
+    wt   = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
     for h in heats:
+        alloc = allocations.get(h.id, 0.0)
         ch = h.chemistry
-        if not ch:
+        if not ch or alloc <= 0:
             continue
-        for key in vals.keys():
+        for key in list(vals.keys()):
             v = getattr(ch, key)
             try:
-                vals[key].append(float(v))
+                fv = float(v)
+                vals[key] += fv * alloc
+                wt[key]   += alloc
             except:
                 pass
-    avg = {k: (sum(v) / len(v) if v else None) for k, v in vals.items()}
+    avg = {k: (vals[k] / wt[k] if wt[k] > 0 else None) for k in vals}
     lc = LotChem(lot=lot, **{k: (str(v) if v is not None else "") for k, v in avg.items()})
     db.add(lc); db.commit()
     return RedirectResponse("/atomization", status_code=303)
@@ -503,13 +552,7 @@ def qa_lot_form(lot_id: int, request: Request, db: SessionLocal = Depends(get_db
     }
     return templates.TemplateResponse(
         "qa_lot.html",
-        {
-            "request": request,
-            "lot": lot,
-            "chem": chem,
-            "phys": phys,
-            "psd": psd_map
-        }
+        {"request": request, "lot": lot, "chem": chem, "phys": phys, "psd": psd_map}
     )
 
 @app.post("/qa/lot/{lot_id}")
@@ -526,7 +569,6 @@ def qa_lot_save(
     chem.c = C; chem.si = Si; chem.s = S; chem.p = P; chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
     phys = lot.phys or LotPhys(lot=lot); phys.ad = ad; phys.flow = flow
     psd  = lot.psd  or LotPSD(lot=lot)
-    # If your form posts PSD fields by these names, map them; else leave as-is
     psd.p212 = psd.p212 or ""; psd.p180 = psd.p180 or ""
     psd.n180p150 = psd.n180p150 or ""; psd.n150p75 = psd.n150p75 or ""
     psd.n75p45 = psd.n75p45 or ""; psd.n45 = psd.n45 or ""
@@ -535,7 +577,7 @@ def qa_lot_save(
     return RedirectResponse("/atomization", status_code=303)
 
 # -------------------------------------------------
-# QA Dashboard (unchanged template)
+# QA Dashboard
 # -------------------------------------------------
 @app.get("/qa-dashboard", response_class=HTMLResponse)
 def qa_dashboard(request: Request, db: SessionLocal = Depends(get_db)):
