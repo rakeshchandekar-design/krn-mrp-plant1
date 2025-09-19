@@ -1,27 +1,31 @@
-{% extends "base.html" %}
-{% block content %}
-<h2>GRNs</h2>
-<p><a class="btn" href="/grn/new">+ New GRN</a></p>
-<table>
-  <tr><th>ID</th><th>Date</th><th>Supplier</th><th>RM</th><th>Qty (kg)</th><th>Price</th><th>Amount</th><th>Remaining</th></tr>
-  {% for g in grns %}
-  <tr>
-    <td>{{ g.id }}</td>
-    <td>{{ g.date }}</td>
-    <td>{{ g.supplier }}</td>
-    <td>{{ g.rm_type }}</td>
-    <td>{{ '%.1f'|format(g.qty) }}</td>
-    <td>{{ '%.2f'|format(g.price) }}</td>
-    <td>{{ '%.1f'|format(g.qty*g.price) }}</td>
-    <td>{{ '%.1f'|format(g.remaining_qty) }}</td>
-  </tr>
-  {% endfor %}
-</table>
+<!doctype html><html><body>
+{% include "_base_top.html" %}
+<div style="padding:16px">
+  <h2>Stores (GRN)</h2>
 
-<h3>Current RM Prices</h3>
-<ul>
-  {% for k,v in prices.items() %}
-    <li>{{ k }}: ₹{{ '%.1f'|format(v) }}</li>
-  {% endfor %}
-</ul>
-{% endblock %}
+  <form method="get" action="/grn" style="margin:10px 0;">
+    From: <input type="date" name="from_date" value="{{from_date}}">
+    To: <input type="date" name="to_date" value="{{to_date}}">
+    <label><input type="checkbox" name="show_all" value="1" {% if show_all %}checked{% endif %}> Show exhausted</label>
+    <button>Filter</button>
+    {% if role in ["ADMIN","RAP"] %}<a href="/grn/new" style="margin-left:12px;">+ New GRN</a>{% endif %}
+  </form>
+
+  <table border="1" cellpadding="6" cellspacing="0">
+    <tr>
+      <th>GRN No</th><th>Date</th><th>Supplier</th><th>RM</th>
+      <th>Inward</th><th>Remaining</th>
+    </tr>
+    {% for g in grns %}
+    <tr>
+      <td>{{g.grn_no}}</td>
+      <td>{{g.date}}</td>
+      <td>{{g.supplier}}</td>
+      <td>{{g.rm_type}}</td>
+      <td>{{"%.1f"|format(g.qty)}} kg @ ₹{{"%.2f"|format(g.price)}}</td>
+      <td>{{"%.1f"|format(g.remaining_qty)}} kg @ ₹{{"%.2f"|format(g.price)}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+</body></html>
