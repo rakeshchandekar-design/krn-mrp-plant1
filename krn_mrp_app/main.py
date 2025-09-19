@@ -17,7 +17,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, Date, Fore
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
 
 # -------------------------------------------------
-# Costing constants (keep as-is)
+# Costing constants
 # -------------------------------------------------
 MELT_COST_PER_KG_KRIP = 6.0
 MELT_COST_PER_KG_KRFS = 8.0
@@ -45,7 +45,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
 # -------------------------------------------------
-# Schema migration (only the fields we actually use)
+# Schema migration helpers
 # -------------------------------------------------
 def _table_has_column(conn, table: str, col: str) -> bool:
     if str(engine.url).startswith("sqlite"):
@@ -73,14 +73,14 @@ def migrate_schema(engine):
                 else:
                     conn.execute(text(f"ALTER TABLE heat ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
 
-        # Track how much of a heat has been allocated into lots
+        # Heat allocation tracking (how much of the heat is already used in lots)
         if not _table_has_column(conn, "heat", "alloc_used"):
             if str(engine.url).startswith("sqlite"):
                 conn.execute(text("ALTER TABLE heat ADD COLUMN alloc_used REAL DEFAULT 0"))
             else:
                 conn.execute(text("ALTER TABLE heat ADD COLUMN IF NOT EXISTS alloc_used DOUBLE PRECISION DEFAULT 0"))
 
-        # Lot costing
+        # Lot costing columns
         for col in ["unit_cost", "total_cost"]:
             if not _table_has_column(conn, "lot", col):
                 if str(engine.url).startswith("sqlite"):
@@ -88,7 +88,7 @@ def migrate_schema(engine):
                 else:
                     conn.execute(text(f"ALTER TABLE lot ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
 
-        # LotHeat qty for partial allocation
+        # LotHeat qty column (partial allocations)
         if not _table_has_column(conn, "lot_heat", "qty"):
             if str(engine.url).startswith("sqlite"):
                 conn.execute(text("ALTER TABLE lot_heat ADD COLUMN qty REAL DEFAULT 0"))
@@ -135,7 +135,7 @@ class Heat(Base):
     unit_cost = Column(Float, default=0.0)
 
     # partial allocations
-    alloc_used = Column(Float, default=0.0)
+    alloc_used = Column(Float, default=0.0)  # total kg moved to lots
 
     rm_consumptions = relationship("HeatRM", back_populates="heat", cascade="all, delete-orphan")
     chemistry = relationship("HeatChem", uselist=False, back_populates="heat")
@@ -210,20 +210,17 @@ class LotPSD(Base):
     lot = relationship("Lot", back_populates="psd")
 
 # -------------------------------------------------
-# App + Templates (robust paths)
+# App + Templates
 # -------------------------------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
-if not os.path.isdir(TEMPLATES_DIR):
-    TEMPLATES_DIR = os.path.join(BASE_DIR, "..", "templates")
-
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-if not os.path.isdir(STATIC_DIR):
-    STATIC_DIR = os.path.join(BASE_DIR, "..", "static")
-
 app = FastAPI()
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
+app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "..", "static")), name="static")
+templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "..", "templates"))
+
+# Auto-migrate on startup so /atomization can't 500 after deploy
+@app.on_event("startup")
+def _startup_migrate():
+    Base.metadata.create_all(bind=engine)
+    migrate_schema(engine)
 
 # -------------------------------------------------
 # DB dependency
@@ -239,58 +236,45 @@ def get_db():
 # Helpers
 # -------------------------------------------------
 def heat_grade(heat: Heat) -> str:
+    """KRFS if any FeSi consumed, else KRIP."""
     for cons in heat.rm_consumptions:
         if cons.rm_type == "FeSi":
             return "KRFS"
     return "KRIP"
 
 def heat_available(db: Session, heat: Heat) -> float:
-    used = db.query(func.coalesce(func.sum(LotHeat.qty), 0.0)).filter(LotHeat.heat_id == heat.id).scalar() or 0.0
+    """kg available from this heat for atomization (robust if migrations lag)."""
+    try:
+        used = (
+            db.query(func.coalesce(func.sum(LotHeat.qty), 0.0))
+              .filter(LotHeat.heat_id == heat.id)
+              .scalar()
+            or 0.0
+        )
+    except Exception:
+        used = 0.0
     heat.alloc_used = float(used)
     return max((heat.actual_output or 0.0) - used, 0.0)
 
 # -------------------------------------------------
-# KPI builder
+# Home + Setup
 # -------------------------------------------------
-def build_kpi(db: Session) -> Dict[str, int]:
-    today = dt.date.today()
-    grn_today = db.query(func.count(GRN.id)).filter(GRN.date == today).scalar() or 0
-    heats_pending = db.query(func.count(Heat.id)).filter(Heat.qa_status == "PENDING").scalar() or 0
-    heats_approved = db.query(func.count(Heat.id)).filter(Heat.qa_status == "APPROVED").scalar() or 0
-    lots_pending = db.query(func.count(Lot.id)).filter(Lot.qa_status == "PENDING").scalar() or 0
-    lots_approved = db.query(func.count(Lot.id)).filter(Lot.qa_status == "APPROVED").scalar() or 0
-    return {
-        "grn_today": grn_today,
-        "heats_pending": heats_pending,
-        "heats_approved": heats_approved,
-        "lots_pending": lots_pending,
-        "lots_approved": lots_approved,
-    }
-
-# -------------------------------------------------
-# Health + Setup + Home
-# -------------------------------------------------
-@app.get("/healthz")
-def healthz():
-    return {"ok": True}
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/setup")
 def setup(db: Session = Depends(get_db)):
     Base.metadata.create_all(bind=engine)
     migrate_schema(engine)
-    return HTMLResponse('Tables created/migrated. Go to <a href="/">Home</a>.')
-
-@app.get("/", response_class=HTMLResponse)
-def home(request: Request, db: Session = Depends(get_db)):
-    kpi = build_kpi(db)
-    return templates.TemplateResponse("index.html", {"request": request, "kpi": kpi})
+    return HTMLResponse('Tables created/migrated. Go to <a href="/grn">GRN</a>.')
 
 # -------------------------------------------------
 # GRN
 # -------------------------------------------------
 @app.get("/grn", response_class=HTMLResponse)
 def grn_list(request: Request, db: Session = Depends(get_db)):
-    grns = db.query(GRN).filter(GRN.remaining_qty > 0).order_by(GRN.id.desc()).all()
+    grns = db.query(GRN).order_by(GRN.id.desc()).all()
     return templates.TemplateResponse("grn.html", {"request": request, "grns": grns, "prices": rm_price_defaults()})
 
 @app.get("/grn/new", response_class=HTMLResponse)
@@ -347,7 +331,7 @@ def melting_page(request: Request, db: Session = Depends(get_db)):
 def melting_new(
     request: Request,
     notes: Optional[str] = Form(None),
-    slag_qty: float = Form(...),  # required
+    slag_qty: float = Form(0.0),
     db: Session = Depends(get_db),
     rm_type_1: Optional[str] = Form(None), rm_qty_1: Optional[float] = Form(None),
     rm_type_2: Optional[str] = Form(None), rm_qty_2: Optional[float] = Form(None),
@@ -357,8 +341,8 @@ def melting_new(
     lines = [(t, float(q)) for t, q in [(rm_type_1, rm_qty_1), (rm_type_2, rm_qty_2),
                                         (rm_type_3, rm_qty_3), (rm_type_4, rm_qty_4)]
              if t and q and q > 0]
-    if len(lines) < 2:
-        return PlainTextResponse("Enter at least two RM lines.", status_code=400)
+    if not lines:
+        return PlainTextResponse("At least one RM line is required.", status_code=400)
 
     # Create heat number
     today = dt.date.today().strftime("%Y%m%d")
@@ -367,7 +351,7 @@ def melting_new(
     heat = Heat(heat_no=heat_no, notes=notes or "", slag_qty=slag_qty)
     db.add(heat); db.flush()
 
-    # Check stock
+    # Check stock first
     for t, q in lines:
         if available_stock(db, t) < q - 1e-6:
             db.rollback()
@@ -407,12 +391,15 @@ def melting_new(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# QA redirect + Heat QA
+# QA Redirect
 # -------------------------------------------------
 @app.get("/qa")
 def qa_redirect():
     return RedirectResponse("/qa-dashboard", status_code=303)
 
+# -------------------------------------------------
+# QA Heat
+# -------------------------------------------------
 @app.get("/qa/heat/{heat_id}", response_class=HTMLResponse)
 def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
     heat = db.get(Heat, heat_id)
@@ -462,7 +449,7 @@ def qa_heat_save(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# Atomization (partial allocation)
+# Atomization (with partial allocation)
 # -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(request: Request, db: Session = Depends(get_db)):
@@ -471,7 +458,7 @@ def atom_page(request: Request, db: Session = Depends(get_db)):
 
     grades = {h.id: heat_grade(h) for h in heats}
     available_map = {h.id: heat_available(db, h) for h in heats}
-    db.commit()
+    db.commit()  # persist alloc_used mirror
 
     return templates.TemplateResponse(
         "atomization.html",
@@ -505,14 +492,14 @@ async def atom_new(
     if not heats:
         return PlainTextResponse("Selected heats not found", status_code=404)
 
-    # validate available
+    # validate available for each heat
     for h in heats:
         avail = heat_available(db, h)
         take = allocs.get(h.id, 0.0)
         if take > avail + 1e-6:
             return PlainTextResponse(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.", status_code=400)
 
-    # grade
+    # determine grade: KRFS if ANY contributing heat used FeSi
     any_fesi = any(heat_grade(h) == "KRFS" for h in heats)
     grade = "KRFS" if any_fesi else "KRIP"
 
@@ -533,7 +520,7 @@ async def atom_new(
         h.alloc_used = (h.alloc_used or 0.0) + qty
         total_alloc += qty
 
-    # cost: weighted by allocated qty using the heat unit cost
+    # cost: weighted by **allocated** qty using the heat unit cost
     weighted_cost = 0.0
     for h in heats:
         qty = allocs.get(h.id, 0.0)
@@ -648,7 +635,6 @@ async def qa_lot_save(
     lot.qa_remarks = remarks
 
     db.add_all([chem, phys, psd, lot]); db.commit()
-    # go back to atomization screen
     return RedirectResponse("/atomization", status_code=303)
 
 # -------------------------------------------------
@@ -660,6 +646,14 @@ def qa_dashboard(request: Request, db: Session = Depends(get_db)):
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
     heat_grades = {h.id: heat_grade(h) for h in heats}
     return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots, "heat_grades": heat_grades})
+
+# -------------------------------------------------
+# Ready Stock (QA APPROVED lots)
+# -------------------------------------------------
+@app.get("/ready-stock", response_class=HTMLResponse)
+def ready_stock(request: Request, db: Session = Depends(get_db)):
+    lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").order_by(Lot.id.desc()).all()
+    return templates.TemplateResponse("ready_stock.html", {"request": request, "lots": lots})
 
 # -------------------------------------------------
 # Traceability
@@ -691,7 +685,7 @@ def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
 # -------------------------------------------------
 def draw_header(c: canvas.Canvas, title: str):
     width, height = A4
-    logo_path = os.path.join(STATIC_DIR, "KRN_Logo.png")
+    logo_path = os.path.join(os.path.dirname(__file__), "..", "static", "KRN_Logo.png")
     if os.path.exists(logo_path):
         c.drawImage(logo_path, 1.5 * cm, height - 3 * cm, width=4 * cm, preserveAspectRatio=True, mask="auto")
     c.setFont("Helvetica-Bold", 14); c.drawString(7 * cm, height - 2 * cm, "KRN Alloys Pvt Ltd")
