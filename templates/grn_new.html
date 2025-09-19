@@ -1,16 +1,17 @@
-{% extends "base.html" %}
-{% block content %}
-<h2>New GRN</h2>
-<form method="post">
-  <label>Date <input type="date" name="date" required /></label>
-  <label>Supplier <input name="supplier" required /></label>
-  <label>RM Type
-    <select name="rm_type">
-      {% for r in rm_types %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
-    </select>
-  </label>
-  <label>Qty (kg) <input type="number" step="0.1" name="qty" required /></label>
-  <label>Price (₹/kg) <input type="number" step="0.01" name="price" required /></label>
-  <p><button class="btn">Create GRN</button> <a class="btn btn-secondary" href="/grn">Cancel</a></p>
-</form>
-{% endblock %}
+<!doctype html><html><body>
+{% include "_base_top.html" %}
+<div style="padding:16px;max-width:560px">
+  <h2>New GRN</h2>
+  <form method="post" action="/grn/new">
+    <label>Date</label><br><input type="date" name="date" required><br><br>
+    <label>Supplier</label><br><input name="supplier" required><br><br>
+    <label>RM Type</label><br>
+    <select name="rm_type" required>
+      {% for t in rm_types %}<option>{{t}}</option>{% endfor %}
+    </select><br><br>
+    <label>Qty (kg)</label><br><input type="number" step="0.1" name="qty" required><br><br>
+    <label>Price (₹/kg)</label><br><input type="number" step="0.01" name="price" required><br><br>
+    <button>Save</button>
+  </form>
+</div>
+</body></html>
