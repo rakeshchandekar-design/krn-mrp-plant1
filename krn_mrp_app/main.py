@@ -250,6 +250,24 @@ def heat_available(db: Session, heat: Heat) -> float:
     return max((heat.actual_output or 0.0) - used, 0.0)
 
 # -------------------------------------------------
+# KPI builder
+# -------------------------------------------------
+def build_kpi(db: Session) -> Dict[str, int]:
+    today = dt.date.today()
+    grn_today = db.query(func.count(GRN.id)).filter(GRN.date == today).scalar() or 0
+    heats_pending = db.query(func.count(Heat.id)).filter(Heat.qa_status == "PENDING").scalar() or 0
+    heats_approved = db.query(func.count(Heat.id)).filter(Heat.qa_status == "APPROVED").scalar() or 0
+    lots_pending = db.query(func.count(Lot.id)).filter(Lot.qa_status == "PENDING").scalar() or 0
+    lots_approved = db.query(func.count(Lot.id)).filter(Lot.qa_status == "APPROVED").scalar() or 0
+    return {
+        "grn_today": grn_today,
+        "heats_pending": heats_pending,
+        "heats_approved": heats_approved,
+        "lots_pending": lots_pending,
+        "lots_approved": lots_approved,
+    }
+
+# -------------------------------------------------
 # Health + Setup + Home
 # -------------------------------------------------
 @app.get("/healthz")
@@ -263,8 +281,9 @@ def setup(db: Session = Depends(get_db)):
     return HTMLResponse('Tables created/migrated. Go to <a href="/">Home</a>.')
 
 @app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+def home(request: Request, db: Session = Depends(get_db)):
+    kpi = build_kpi(db)
+    return templates.TemplateResponse("index.html", {"request": request, "kpi": kpi})
 
 # -------------------------------------------------
 # GRN
@@ -514,7 +533,7 @@ async def atom_new(
         h.alloc_used = (h.alloc_used or 0.0) + qty
         total_alloc += qty
 
-    # cost: weighted by allocated qty using heat unit cost
+    # cost: weighted by allocated qty using the heat unit cost
     weighted_cost = 0.0
     for h in heats:
         qty = allocs.get(h.id, 0.0)
@@ -525,7 +544,7 @@ async def atom_new(
     lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
     lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
 
-    # chemistry: weighted average by allocated qty
+    # chemistry prefilling: weighted average by allocated qty (only numeric fields)
     sums = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
     for h in heats:
         q = allocs.get(h.id, 0.0)
@@ -547,7 +566,7 @@ async def atom_new(
     return RedirectResponse("/atomization", status_code=303)
 
 # -------------------------------------------------
-# QA Lot (safe form field names incl. '+212')
+# QA Lot (safe forms with +212 field names)
 # -------------------------------------------------
 @app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
 def qa_lot_form(lot_id: int, request: Request, db: Session = Depends(get_db)):
@@ -629,6 +648,7 @@ async def qa_lot_save(
     lot.qa_remarks = remarks
 
     db.add_all([chem, phys, psd, lot]); db.commit()
+    # go back to atomization screen
     return RedirectResponse("/atomization", status_code=303)
 
 # -------------------------------------------------
