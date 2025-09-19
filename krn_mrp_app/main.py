@@ -1,5 +1,5 @@
 import os, io, datetime as dt
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 # FastAPI
 from fastapi import FastAPI, Request, Form, Depends
@@ -72,6 +72,13 @@ def migrate_schema(engine):
                     conn.execute(text(f"ALTER TABLE heat ADD COLUMN {col} REAL DEFAULT 0"))
                 else:
                     conn.execute(text(f"ALTER TABLE heat ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
+        # Heat allocation tracking (how much of the heat is already used in lots)
+        if not _table_has_column(conn, "heat", "alloc_used"):
+            if str(engine.url).startswith("sqlite"):
+                conn.execute(text("ALTER TABLE heat ADD COLUMN alloc_used REAL DEFAULT 0"))
+            else:
+                conn.execute(text("ALTER TABLE heat ADD COLUMN IF NOT EXISTS alloc_used DOUBLE PRECISION DEFAULT 0"))
+
         # Lot costing columns
         for col in ["unit_cost", "total_cost"]:
             if not _table_has_column(conn, "lot", col):
@@ -79,6 +86,13 @@ def migrate_schema(engine):
                     conn.execute(text(f"ALTER TABLE lot ADD COLUMN {col} REAL DEFAULT 0"))
                 else:
                     conn.execute(text(f"ALTER TABLE lot ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
+
+        # LotHeat qty column (partial allocations)
+        if not _table_has_column(conn, "lot_heat", "qty"):
+            if str(engine.url).startswith("sqlite"):
+                conn.execute(text("ALTER TABLE lot_heat ADD COLUMN qty REAL DEFAULT 0"))
+            else:
+                conn.execute(text("ALTER TABLE lot_heat ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION DEFAULT 0"))
 
 # -------------------------------------------------
 # Constants
@@ -113,11 +127,14 @@ class Heat(Base):
     qa_status = Column(String, default="PENDING")
     qa_remarks = Column(String)
 
-    # costing (new)
+    # costing
     rm_cost = Column(Float, default=0.0)
     process_cost = Column(Float, default=0.0)
     total_cost = Column(Float, default=0.0)
     unit_cost = Column(Float, default=0.0)
+
+    # partial allocations
+    alloc_used = Column(Float, default=0.0)  # total kg moved to lots
 
     rm_consumptions = relationship("HeatRM", back_populates="heat", cascade="all, delete-orphan")
     chemistry = relationship("HeatChem", uselist=False, back_populates="heat")
@@ -150,7 +167,7 @@ class Lot(Base):
     qa_status = Column(String, default="PENDING")
     qa_remarks = Column(String)
 
-    # costing (new)
+    # costing
     unit_cost = Column(Float, default=0.0)
     total_cost = Column(Float, default=0.0)
 
@@ -164,6 +181,7 @@ class LotHeat(Base):
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     heat_id = Column(Integer, ForeignKey("heat.id"))
+    qty = Column(Float, default=0.0)  # allocated kg from the heat into this lot
     lot = relationship("Lot", back_populates="heats")
     heat = relationship("Heat")
 
@@ -216,6 +234,13 @@ def heat_grade(heat: Heat) -> str:
         if cons.rm_type == "FeSi":
             return "KRFS"
     return "KRIP"
+
+def heat_available(db: Session, heat: Heat) -> float:
+    """kg available from this heat for atomization."""
+    used = db.query(func.coalesce(func.sum(LotHeat.qty), 0.0)).filter(LotHeat.heat_id == heat.id).scalar() or 0.0
+    # mirror to heat.alloc_used so dashboard can show quickly
+    heat.alloc_used = float(used)
+    return max((heat.actual_output or 0.0) - used, 0.0)
 
 # -------------------------------------------------
 # Home + Setup
@@ -281,10 +306,12 @@ def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat) -> fl
 # -------------------------------------------------
 @app.get("/melting", response_class=HTMLResponse)
 def melting_page(request: Request, db: Session = Depends(get_db)):
-    pending = db.query(Heat).order_by(Heat.id.desc()).all()
-    # optional: pass grade labels for UI badges
-    grades = {h.id: heat_grade(h) for h in pending}
-    return templates.TemplateResponse("melting.html", {"request": request, "rm_types": RM_TYPES, "pending": pending, "heat_grades": grades})
+    heats = db.query(Heat).order_by(Heat.id.desc()).all()
+    grades = {h.id: heat_grade(h) for h in heats}
+    return templates.TemplateResponse(
+        "melting.html",
+        {"request": request, "rm_types": RM_TYPES, "pending": heats, "heat_grades": grades}
+    )
 
 @app.post("/melting/new")
 def melting_new(
@@ -335,7 +362,7 @@ def melting_new(
 
     # Melting cost per kg depends on FeSi usage (KRFS vs KRIP)
     melt_cost_per_kg = MELT_COST_PER_KG_KRFS if used_fesi else MELT_COST_PER_KG_KRIP
-    if heat.actual_output and heat.actual_output > 0:
+    if (heat.actual_output or 0) > 0:
         heat.rm_cost = total_rm_cost
         heat.process_cost = melt_cost_per_kg * heat.actual_output
         heat.total_cost = heat.rm_cost + heat.process_cost
@@ -350,7 +377,7 @@ def melting_new(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# QA Redirect (so /qa works)
+# QA Redirect
 # -------------------------------------------------
 @app.get("/qa")
 def qa_redirect():
@@ -408,29 +435,58 @@ def qa_heat_save(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# Atomization
+# Atomization (with partial allocation)
 # -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(request: Request, db: Session = Depends(get_db)):
     heats = db.query(Heat).filter(Heat.qa_status == "APPROVED").order_by(Heat.id.desc()).all()
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
+
     grades = {h.id: heat_grade(h) for h in heats}
-    return templates.TemplateResponse("atomization.html", {"request": request, "heats": heats, "lots": lots, "heat_grades": grades})
+    available_map = {h.id: heat_available(db, h) for h in heats}
+    # persist alloc_used refresh without forcing template to commit
+    db.commit()
+
+    return templates.TemplateResponse(
+        "atomization.html",
+        {"request": request, "heats": heats, "lots": lots, "heat_grades": grades, "available_map": available_map}
+    )
 
 @app.post("/atomization/new")
-def atom_new(
+async def atom_new(
+    request: Request,
     lot_weight: float = Form(3000.0),
-    includes_fesi: str = Form("no"),  # ignored; we auto-detect KRFS below
-    heat_ids: List[int] = Form([]),
     db: Session = Depends(get_db)
 ):
-    if not heat_ids:
-        return PlainTextResponse("Select at least one heat", status_code=400)
+    form = await request.form()
 
-    heats = db.query(Heat).filter(Heat.id.in_(heat_ids)).all()
+    # collect allocations typed as alloc_{HEAT_ID}
+    allocs: Dict[int, float] = {}
+    for key, val in form.items():
+        if key.startswith("alloc_"):
+            try:
+                hid = int(key.split("_", 1)[1])
+                qty = float(val or 0)
+                if qty > 0:
+                    allocs[hid] = qty
+            except:
+                pass
+
+    if not allocs:
+        return PlainTextResponse("Enter allocation for at least one heat.", status_code=400)
+
+    heats = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
     if not heats:
         return PlainTextResponse("Selected heats not found", status_code=404)
 
+    # validate available for each heat
+    for h in heats:
+        avail = heat_available(db, h)
+        take = allocs.get(h.id, 0.0)
+        if take > avail + 1e-6:
+            return PlainTextResponse(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.", status_code=400)
+
+    # determine grade: KRFS if ANY contributing heat used FeSi
     any_fesi = any(heat_grade(h) == "KRFS" for h in heats)
     grade = "KRFS" if any_fesi else "KRIP"
 
@@ -441,40 +497,50 @@ def atom_new(
     lot = Lot(lot_no=lot_no, weight=lot_weight, grade=grade)
     db.add(lot); db.flush()
 
+    # link heats with allocated qty & bump alloc_used
+    total_alloc = 0.0
     for h in heats:
-        db.add(LotHeat(lot_id=lot.id, heat_id=h.id))
+        qty = allocs.get(h.id, 0.0)
+        if qty <= 0:
+            continue
+        db.add(LotHeat(lot_id=lot.id, heat_id=h.id, qty=qty))
+        h.alloc_used = (h.alloc_used or 0.0) + qty
+        total_alloc += qty
 
-    # Weighted-average heat unit cost
-    total_output = 0.0
+    # cost: weighted by **allocated** qty using the heat unit cost
     weighted_cost = 0.0
     for h in heats:
-        out = h.actual_output or 0.0
-        total_output += out
-        weighted_cost += (h.unit_cost or 0.0) * out
-    avg_heat_unit_cost = (weighted_cost / total_output) if total_output > 0 else 0.0
+        qty = allocs.get(h.id, 0.0)
+        if qty > 0:
+            weighted_cost += (h.unit_cost or 0.0) * qty
+    avg_heat_unit_cost = (weighted_cost / total_alloc) if total_alloc > 0 else 0.0
 
     lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
     lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
 
-    # Prefill chemistry as average of selected heats
-    vals = {k: [] for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
+    # chemistry prefilling: weighted average by allocated qty (only numeric fields)
+    sums = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
     for h in heats:
-        ch = h.chemistry
-        if not ch:
+        q = allocs.get(h.id, 0.0)
+        if q <= 0 or not h.chemistry:
             continue
-        for key in vals.keys():
-            v = getattr(ch, key)
+        for k in list(sums.keys()):
             try:
-                vals[key].append(float(v))
+                v = float(getattr(h.chemistry, k) or "")
+                sums[k] += v * q
             except:
                 pass
-    avg = {k: (sum(v) / len(v) if v else None) for k, v in vals.items()}
+    avg = {}
+    for k in list(sums.keys()):
+        avg[k] = (sums[k] / total_alloc) if total_alloc > 0 else None
     lc = LotChem(lot=lot, **{k: (str(v) if v is not None else "") for k, v in avg.items()})
-    db.add(lc); db.commit()
+    db.add(lc)
+
+    db.commit()
     return RedirectResponse("/atomization", status_code=303)
 
 # -------------------------------------------------
-# QA Lot (auto-create chem/phys/psd + safe dicts)
+# QA Lot (safe forms with +212 field names)
 # -------------------------------------------------
 @app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
 def qa_lot_form(lot_id: int, request: Request, db: Session = Depends(get_db)):
@@ -516,7 +582,7 @@ def qa_lot_form(lot_id: int, request: Request, db: Session = Depends(get_db)):
 @app.post("/qa/lot/{lot_id}")
 async def qa_lot_save(
     lot_id: int,
-    request: Request,               # needed to read special PSD field names
+    request: Request,
     decision: str = Form("APPROVED"),
     remarks: str = Form(""),
     db: Session = Depends(get_db),
@@ -543,7 +609,7 @@ async def qa_lot_save(
     phys.ad   = form.get("ad", "")
     phys.flow = form.get("flow", "")
 
-    # PSD (special names like '+212')
+    # PSD (field names like '+212')
     psd = lot.psd or LotPSD(lot=lot)
     psd.p212      = form.get("+212", "")
     psd.p180      = form.get("+180", "")
@@ -556,6 +622,7 @@ async def qa_lot_save(
     lot.qa_remarks = remarks
 
     db.add_all([chem, phys, psd, lot]); db.commit()
+    # go back to atomization screen
     return RedirectResponse("/atomization", status_code=303)
 
 # -------------------------------------------------
@@ -565,7 +632,6 @@ async def qa_lot_save(
 def qa_dashboard(request: Request, db: Session = Depends(get_db)):
     heats = db.query(Heat).order_by(Heat.id.desc()).all()
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
-    # optional: maps for badges if your template wants to show them
     heat_grades = {h.id: heat_grade(h) for h in heats}
     return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots, "heat_grades": heat_grades})
 
@@ -644,4 +710,4 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
     c.showPage(); c.save()
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/pdf",
-                             headers={"Content-Disposition": f'inline; filename="trace_{lot.lot_no}.pdf"'})
+                             headers={"Content-Disposition": f'inline; filename=\"trace_{lot.lot_no}.pdf\"'})
