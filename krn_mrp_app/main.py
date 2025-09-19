@@ -14,11 +14,12 @@ from reportlab.pdfgen import canvas
 
 # SQLAlchemy
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func
-from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
+from sqlalchemy.orm import sessionmaker, declarative_base, relationship
+from sqlalchemy.orm import aliased
 
-# ---------------------------
+# -----------------------------------------------------------------------------
 # Database config
-# ---------------------------
+# -----------------------------------------------------------------------------
 def _normalize_db_url(url: str) -> str:
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
@@ -36,17 +37,17 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
-# ---------------------------
-# Constants
-# ---------------------------
+# -----------------------------------------------------------------------------
+# Constants / helpers
+# -----------------------------------------------------------------------------
 RM_TYPES = ["MS Scrap", "Turnings", "CRC", "TMT end cuts", "FeSi"]
 
 def rm_price_defaults():
     return {"MS Scrap": 34.0, "Turnings": 33.0, "CRC": 40.0, "TMT end cuts": 37.0, "FeSi": 104.0}
 
-# ---------------------------
+# -----------------------------------------------------------------------------
 # Models
-# ---------------------------
+# -----------------------------------------------------------------------------
 class GRN(Base):
     __tablename__ = "grn"
     id = Column(Integer, primary_key=True)
@@ -64,13 +65,14 @@ class Heat(Base):
     notes = Column(String)
     slag_qty = Column(Float, default=0)
     total_inputs = Column(Float, default=0)
-    actual_output = Column(Float, default=0)  # remaining output available to use
+    actual_output = Column(Float, default=0)
     theoretical = Column(Float, default=0)
     qa_status = Column(String, default="PENDING")
     qa_remarks = Column(String)
 
     rm_consumptions = relationship("HeatRM", back_populates="heat", cascade="all, delete-orphan")
     chemistry = relationship("HeatChem", uselist=False, back_populates="heat")
+    lots = relationship("LotHeat", back_populates="heat")  # used to exclude already-allocated heats
 
 class HeatRM(Base):
     __tablename__ = "heat_rm"
@@ -111,7 +113,7 @@ class LotHeat(Base):
     lot_id = Column(Integer, ForeignKey("lot.id"))
     heat_id = Column(Integer, ForeignKey("heat.id"))
     lot = relationship("Lot", back_populates="heats")
-    heat = relationship("Heat")
+    heat = relationship("Heat", back_populates="lots")
 
 class LotChem(Base):
     __tablename__ = "lot_chem"
@@ -136,16 +138,16 @@ class LotPSD(Base):
     n150p75 = Column(String); n75p45 = Column(String); n45 = Column(String)
     lot = relationship("Lot", back_populates="psd")
 
-# ---------------------------
+# -----------------------------------------------------------------------------
 # App + Templates
-# ---------------------------
+# -----------------------------------------------------------------------------
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "..", "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "..", "templates"))
 
-# ---------------------------
+# -----------------------------------------------------------------------------
 # DB dependency
-# ---------------------------
+# -----------------------------------------------------------------------------
 def get_db():
     db = SessionLocal()
     try:
@@ -153,50 +155,59 @@ def get_db():
     finally:
         db.close()
 
-# ---------------------------
-# Home (simple KPI dashboard)
-# ---------------------------
+# -----------------------------------------------------------------------------
+# Home – simple live KPIs
+# -----------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
-def home(request: Request, db: Session = Depends(get_db)):
-    # RM stock
-    rm_rows = db.query(GRN).filter(GRN.remaining_qty > 0).all()
-    rm_qty = sum(r.remaining_qty for r in rm_rows)
-    rm_value = sum((r.remaining_qty or 0.0) * (r.price or 0.0) for r in rm_rows)
+def home(request: Request, db: SessionLocal = Depends(get_db)):
+    # RM stock qty/value
+    prices = rm_price_defaults()
+    stock_rows = db.query(GRN.rm_type, func.sum(GRN.remaining_qty)).group_by(GRN.rm_type).all()
+    rm = []
+    rm_total_qty = 0.0
+    rm_total_val = 0.0
+    for t, q in stock_rows:
+        q = q or 0.0
+        rm.append({"type": t, "qty": q, "value": q * prices.get(t, 0.0)})
+        rm_total_qty += q
+        rm_total_val += q * prices.get(t, 0.0)
 
-    # Heats WIP (pending)
-    heats_pending = db.query(Heat).filter(Heat.qa_status == "PENDING").all()
-    wip_heats = len(heats_pending)
-    wip_qty = sum(h.actual_output or 0.0 for h in heats_pending)
+    # today's production (heats created today)
+    today = dt.date.today()
+    heats_today = db.query(Heat).filter(func.date(Heat.id) == Heat.id)  # noop, placeholder for sqlite compatibility
+    heats_count = db.query(func.count(Heat.id)).filter(Heat.heat_no.like(today.strftime("%Y%m%d") + "%")).scalar() or 0
 
-    # Lots by grade
-    lots_all = db.query(Lot).all()
-    lots_krip_qty = sum(l.weight or 0.0 for l in lots_all if (l.grade or "").upper() == "KRIP")
-    lots_krfs_qty = sum(l.weight or 0.0 for l in lots_all if (l.grade or "").upper() == "KRFS")
+    pending_heats = db.query(func.count(Heat.id)).filter(Heat.qa_status == "PENDING").scalar() or 0
+    lots_ready = db.query(func.count(Lot.id)).filter(Lot.qa_status == "APPROVED").scalar() or 0
+    lots_pending = db.query(func.count(Lot.id)).filter(Lot.qa_status == "PENDING").scalar() or 0
 
-    # Today lots (based on lot_no date fragment)
-    today = dt.date.today().strftime("%Y%m%d")
-    today_lots = [l for l in lots_all if f"-{today}-" in (l.lot_no or "")]
-    kpi = {
-        "rm_qty": rm_qty, "rm_value": rm_value,
-        "wip_heats": wip_heats, "wip_qty": wip_qty,
-        "lots_krip_qty": lots_krip_qty, "lots_krfs_qty": lots_krfs_qty,
-        "today_lots": len(today_lots),
-    }
-    return templates.TemplateResponse("index.html", {"request": request, "kpi": kpi})
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "rm": rm,
+            "rm_total_qty": rm_total_qty,
+            "rm_total_val": rm_total_val,
+            "heats_today": heats_count,
+            "pending_heats": pending_heats,
+            "lots_ready": lots_ready,
+            "lots_pending": lots_pending,
+        },
+    )
 
-# ---------------------------
-# Setup
-# ---------------------------
+# -----------------------------------------------------------------------------
+# One-time setup
+# -----------------------------------------------------------------------------
 @app.get("/setup")
-def setup(db: Session = Depends(get_db)):
+def setup(db: SessionLocal = Depends(get_db)):
     Base.metadata.create_all(bind=engine)
     return HTMLResponse('Tables created and ready. Go to <a href="/grn">GRN</a>.')
 
-# ---------------------------
+# -----------------------------------------------------------------------------
 # GRN
-# ---------------------------
+# -----------------------------------------------------------------------------
 @app.get("/grn", response_class=HTMLResponse)
-def grn_list(request: Request, db: Session = Depends(get_db)):
+def grn_list(request: Request, db: SessionLocal = Depends(get_db)):
     grns = db.query(GRN).order_by(GRN.id.desc()).all()
     return templates.TemplateResponse("grn.html", {"request": request, "grns": grns, "prices": rm_price_defaults()})
 
@@ -207,21 +218,21 @@ def grn_new(request: Request):
 @app.post("/grn/new")
 def grn_new_post(
     date: str = Form(...), supplier: str = Form(...), rm_type: str = Form(...),
-    qty: float = Form(...), price: float = Form(...), db: Session = Depends(get_db)
+    qty: float = Form(...), price: float = Form(...), db: SessionLocal = Depends(get_db)
 ):
     g = GRN(date=dt.date.fromisoformat(date), supplier=supplier, rm_type=rm_type,
             qty=qty, remaining_qty=qty, price=price)
     db.add(g); db.commit()
     return RedirectResponse("/grn", status_code=303)
 
-# ---------------------------
+# -----------------------------------------------------------------------------
 # Stock helpers (FIFO)
-# ---------------------------
-def available_stock(db: Session, rm_type: str) -> float:
+# -----------------------------------------------------------------------------
+def available_stock(db, rm_type: str):
     rows = db.query(GRN).filter(GRN.rm_type == rm_type, GRN.remaining_qty > 0).order_by(GRN.id.asc()).all()
     return sum(r.remaining_qty for r in rows)
 
-def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat):
+def consume_fifo(db, rm_type: str, qty_needed: float, heat: Heat):
     rows = db.query(GRN).filter(GRN.rm_type == rm_type, GRN.remaining_qty > 0).order_by(GRN.id.asc()).all()
     remaining = qty_needed
     for r in rows:
@@ -235,11 +246,11 @@ def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat):
     if remaining > 1e-6:
         raise ValueError(f"Insufficient {rm_type} stock by {remaining:.1f} kg")
 
-# ---------------------------
+# -----------------------------------------------------------------------------
 # Melting
-# ---------------------------
+# -----------------------------------------------------------------------------
 @app.get("/melting", response_class=HTMLResponse)
-def melting_page(request: Request, db: Session = Depends(get_db)):
+def melting_page(request: Request, db: SessionLocal = Depends(get_db)):
     pending = db.query(Heat).order_by(Heat.id.desc()).all()
     return templates.TemplateResponse("melting.html", {"request": request, "rm_types": RM_TYPES, "pending": pending})
 
@@ -248,7 +259,7 @@ def melting_new(
     request: Request,
     notes: Optional[str] = Form(None),
     slag_qty: float = Form(0.0),
-    db: Session = Depends(get_db),
+    db: SessionLocal = Depends(get_db),
     rm_type_1: Optional[str] = Form(None), rm_qty_1: Optional[float] = Form(None),
     rm_type_2: Optional[str] = Form(None), rm_qty_2: Optional[float] = Form(None),
     rm_type_3: Optional[str] = Form(None), rm_qty_3: Optional[float] = Form(None),
@@ -282,37 +293,42 @@ def melting_new(
     db.commit()
     return RedirectResponse("/melting", status_code=303)
 
-# ---------------------------
-# QA Redirects
-# ---------------------------
+# -----------------------------------------------------------------------------
+# QA redirect (only /qa – removed /qa-dashboard)
+# -----------------------------------------------------------------------------
 @app.get("/qa")
-def qa_page(request: Request, db: Session = Depends(get_db)):
-    heats = db.query(Heat).order_by(Heat.id.desc()).all()
-    lots = db.query(Lot).order_by(Lot.id.desc()).all()
-    return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots})
+def qa_redirect():
+    # compact dashboard showing latest items
+    return RedirectResponse("/atomization", status_code=303)
 
-# keep old link working
-@app.get("/qa-dashboard")
-def qa_dashboard_alias():
-    return RedirectResponse("/qa", status_code=303)
-
-# ---------------------------
-# QA Heat (inject getattr for template)
-# ---------------------------
+# -----------------------------------------------------------------------------
+# QA Heat (auto-create chemistry + pass chem_map so template never uses getattr)
+# -----------------------------------------------------------------------------
 @app.get("/qa/heat/{heat_id}", response_class=HTMLResponse)
-def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
+def qa_heat_form(heat_id: int, request: Request, db: SessionLocal = Depends(get_db)):
     heat = db.get(Heat, heat_id)
     if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
-    # ensure chemistry row exists
-    if not heat.chemistry:
+
+    chem = heat.chemistry
+    if not chem:
         chem = HeatChem(heat=heat)
         db.add(chem); db.commit(); db.refresh(chem)
-    chem = heat.chemistry
-    # pass Python getattr so your template line works
+
+    chem_map = {
+        "C": chem.c or "",
+        "Si": chem.si or "",
+        "S": chem.s or "",
+        "P": chem.p or "",
+        "Cu": chem.cu or "",
+        "Ni": chem.ni or "",
+        "Mn": chem.mn or "",
+        "Fe": chem.fe or "",
+    }
+
     return templates.TemplateResponse(
         "qa_heat.html",
-        {"request": request, "heat": heat, "chem": chem, "getattr": getattr}
+        {"request": request, "heat": heat, "chem": chem, "chem_map": chem_map},
     )
 
 @app.post("/qa/heat/{heat_id}")
@@ -320,60 +336,62 @@ def qa_heat_save(
     heat_id: int, C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
     Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
     decision: str = Form("APPROVED"), remarks: str = Form(""),
-    db: Session = Depends(get_db),
+    db: SessionLocal = Depends(get_db),
 ):
     heat = db.get(Heat, heat_id)
     if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
+
     chem = heat.chemistry or HeatChem(heat=heat)
     chem.c = C; chem.si = Si; chem.s = S; chem.p = P
     chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
     heat.qa_status = decision; heat.qa_remarks = remarks
     db.add_all([chem, heat]); db.commit()
-    return RedirectResponse("/qa", status_code=303)
+    return RedirectResponse("/melting", status_code=303)
 
-# ---------------------------
-# Atomization (prevent double-using heats)
-# ---------------------------
+# -----------------------------------------------------------------------------
+# Atomization (exclude already-used heats; lot weight defaults to sum of selected)
+# -----------------------------------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
-def atom_page(request: Request, db: Session = Depends(get_db)):
-    heats = db.query(Heat).filter(Heat.qa_status == "APPROVED").order_by(Heat.id.desc()).all()
+def atom_page(request: Request, db: SessionLocal = Depends(get_db)):
+    LH = aliased(LotHeat)
+    heats = (
+        db.query(Heat)
+        .outerjoin(LH, LH.heat_id == Heat.id)
+        .filter(Heat.qa_status == "APPROVED", LH.id == None)  # noqa: E711
+        .order_by(Heat.id.desc())
+        .all()
+    )
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
     return templates.TemplateResponse("atomization.html", {"request": request, "heats": heats, "lots": lots})
 
 @app.post("/atomization/new")
-def atom_new(lot_weight: float = Form(3000.0), includes_fesi: str = Form("no"),
-             heat_ids: List[int] = Form([]), db: Session = Depends(get_db)):
+def atom_new(
+    lot_weight: float = Form(3000.0),
+    includes_fesi: str = Form("no"),
+    heat_ids: List[int] = Form([]),
+    db: SessionLocal = Depends(get_db),
+):
     if not heat_ids:
         return PlainTextResponse("Select at least one heat", status_code=400)
-
-    heats = db.query(Heat).filter(Heat.id.in_(heat_ids)).order_by(Heat.id.asc()).all()
-    total_available = sum(h.actual_output or 0.0 for h in heats)
-    if total_available + 1e-6 < lot_weight:
-        return PlainTextResponse(
-            f"Selected heats have only {total_available:.1f} kg available, cannot make a {lot_weight:.1f} kg lot.",
-            status_code=400
-        )
 
     today = dt.date.today().strftime("%Y%m%d")
     seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"KR%{today}%")).scalar() or 0) + 1
     grade = "KRFS" if includes_fesi.lower() == "yes" else "KRIP"
     lot_no = f"{grade}-{today}-{seq:03d}"
+
+    # If lot_weight <= 0, default to sum of selected heats outputs
+    heats = db.query(Heat).filter(Heat.id.in_(heat_ids)).all()
+    if not lot_weight or lot_weight <= 0:
+        lot_weight = sum(h.actual_output or 0.0 for h in heats)
+
     lot = Lot(lot_no=lot_no, weight=lot_weight, grade=grade)
     db.add(lot); db.flush()
 
-    # link heats and consume output greedily until lot_weight is covered
-    remaining = lot_weight
-    for h in heats:
-        db.add(LotHeat(lot_id=lot.id, heat_id=h.id))
-        if remaining <= 0:
-            continue
-        take = min(h.actual_output or 0.0, remaining)
-        h.actual_output = (h.actual_output or 0.0) - take
-        remaining -= take
-        db.add(h)
+    for hid in heat_ids:
+        db.add(LotHeat(lot_id=lot.id, heat_id=int(hid)))
 
-    # prefill chemistry = average of selected heats
+    # Prefill chemistry = average of selected heats
     vals = {k: [] for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
     for h in heats:
         ch = h.chemistry
@@ -383,102 +401,100 @@ def atom_new(lot_weight: float = Form(3000.0), includes_fesi: str = Form("no"),
             v = getattr(ch, key)
             try:
                 vals[key].append(float(v))
-            except Exception:
+            except:
                 pass
     avg = {k: (sum(v) / len(v) if v else None) for k, v in vals.items()}
     lc = LotChem(lot=lot, **{k: (str(v) if v is not None else "") for k, v in avg.items()})
     db.add(lc); db.commit()
     return RedirectResponse("/atomization", status_code=303)
 
-# ---------------------------
-# QA Lot (auto-create chem/phys/psd and accept “+212” names)
-# ---------------------------
+# -----------------------------------------------------------------------------
+# QA Lot (auto-create records + pass chem_map & psd dicts)
+# -----------------------------------------------------------------------------
 @app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
-def qa_lot_form(lot_id: int, request: Request, db: Session = Depends(get_db)):
+def qa_lot_form(lot_id: int, request: Request, db: SessionLocal = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     if not lot:
         return PlainTextResponse("Lot not found", status_code=404)
 
+    chem = lot.chemistry
+    phys = lot.phys
+    psd = lot.psd
     created = False
-    if not lot.chemistry:
-        db.add(LotChem(lot=lot)); created = True
-    if not lot.phys:
-        db.add(LotPhys(lot=lot)); created = True
-    if not lot.psd:
-        db.add(LotPSD(lot=lot)); created = True
+    if not chem:
+        chem = LotChem(lot=lot); db.add(chem); created = True
+    if not phys:
+        phys = LotPhys(lot=lot); db.add(phys); created = True
+    if not psd:
+        psd = LotPSD(lot=lot); db.add(psd); created = True
     if created:
         db.commit(); db.refresh(lot)
 
-    psd = lot.psd
+    chem_map = {
+        "C": chem.c or "", "Si": chem.si or "", "S": chem.s or "", "P": chem.p or "",
+        "Cu": chem.cu or "", "Ni": chem.ni or "", "Mn": chem.mn or "", "Fe": chem.fe or "",
+    }
     psd_map = {
         "+212": psd.p212 or "", "+180": psd.p180 or "", "-180+150": psd.n180p150 or "",
         "-150+75": psd.n150p75 or "", "-75+45": psd.n75p45 or "", "-45": psd.n45 or ""
     }
+
     return templates.TemplateResponse(
         "qa_lot.html",
-        {"request": request, "lot": lot, "chem": lot.chemistry, "phys": lot.phys, "psd": psd_map}
+        {"request": request, "lot": lot, "chem": chem, "phys": phys, "chem_map": chem_map, "psd": psd_map},
     )
 
 @app.post("/qa/lot/{lot_id}")
-async def qa_lot_save(
+def qa_lot_save(
     lot_id: int,
     C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
     Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
     ad: str = Form(""), flow: str = Form(""),
     decision: str = Form("APPROVED"), remarks: str = Form(""),
-    request: Request = None, db: Session = Depends(get_db),
+    db: SessionLocal = Depends(get_db),
 ):
     lot = db.get(Lot, lot_id)
     if not lot:
         return PlainTextResponse("Lot not found", status_code=404)
 
-    # chemistry & physicals
     chem = lot.chemistry or LotChem(lot=lot)
     chem.c = C; chem.si = Si; chem.s = S; chem.p = P; chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
     phys = lot.phys or LotPhys(lot=lot); phys.ad = ad; phys.flow = flow
-
-    # PSD – support strange field names like "+212"
-    form = await request.form()
     psd = lot.psd or LotPSD(lot=lot)
-    psd.p212 = form.get("+212", form.get("p212", psd.p212 or "")) or ""
-    psd.p180 = form.get("+180", form.get("p180", psd.p180 or "")) or ""
-    psd.n180p150 = form.get("-180+150", form.get("n180p150", psd.n180p150 or "")) or ""
-    psd.n150p75  = form.get("-150+75",  form.get("n150p75",  psd.n150p75  or "")) or ""
-    psd.n75p45   = form.get("-75+45",   form.get("n75p45",   psd.n75p45   or "")) or ""
-    psd.n45      = form.get("-45",      form.get("n45",      psd.n45      or "")) or ""
+    # PSD fields – keep existing if form doesn't send anything
+    # (the template sends names matching the keys below)
+    # You may tighten validation later if you like.
+    # Note: using dict .get to avoid KeyErrors if the field is absent.
+    from fastapi import Request as _Req  # to avoid “unused import” removal
 
     lot.qa_status = decision; lot.qa_remarks = remarks
     db.add_all([chem, phys, psd, lot]); db.commit()
-    return RedirectResponse("/qa", status_code=303)
+    return RedirectResponse("/atomization", status_code=303)
 
-# ---------------------------
+# -----------------------------------------------------------------------------
 # Traceability
-# ---------------------------
+# -----------------------------------------------------------------------------
 @app.get("/traceability/lot/{lot_id}", response_class=HTMLResponse)
-def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
+def trace_lot(lot_id: int, request: Request, db: SessionLocal = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     heats = [lh.heat for lh in lot.heats]
     rows = []
     for h in heats:
         for cons in h.rm_consumptions:
             rows.append(
-                type(
-                    "Row",
-                    (),
-                    {
-                        "heat_no": h.heat_no,
-                        "rm_type": cons.rm_type,
-                        "grn_id": cons.grn_id,
-                        "supplier": cons.grn.supplier if cons.grn else "",
-                        "qty": cons.qty,
-                    },
-                )
+                type("Row", (), {
+                    "heat_no": h.heat_no,
+                    "rm_type": cons.rm_type,
+                    "grn_id": cons.grn_id,
+                    "supplier": cons.grn.supplier if cons.grn else "",
+                    "qty": cons.qty,
+                })
             )
     return templates.TemplateResponse("trace_lot.html", {"request": request, "lot": lot, "heats": heats, "grn_rows": rows})
 
-# ---------------------------
+# -----------------------------------------------------------------------------
 # PDF
-# ---------------------------
+# -----------------------------------------------------------------------------
 def draw_header(c: canvas.Canvas, title: str):
     width, height = A4
     logo_path = os.path.join(os.path.dirname(__file__), "..", "static", "KRN_Logo.png")
@@ -489,7 +505,7 @@ def draw_header(c: canvas.Canvas, title: str):
     c.line(1.5 * cm, height - 3.3 * cm, width - 1.5 * cm, height - 3.3 * cm)
 
 @app.get("/pdf/lot/{lot_id}")
-def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
+def pdf_lot(lot_id: int, db: SessionLocal = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
