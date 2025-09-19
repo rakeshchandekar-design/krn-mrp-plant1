@@ -1,43 +1,64 @@
-{% extends "base.html" %}
-{% block content %}
-<h2>QA – Lot {{ lot.lot_no }} ({{ lot.grade }})</h2>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>QA – Lot</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif; margin:20px;}
+    .badge{display:inline-block; padding:2px 8px; border-radius:12px; font-size:12px; color:#fff}
+    .badge-success{background:#16a34a}
+    .badge-info{background:#0ea5e9}
+    .sec{margin-top:16px}
+    label{display:block; margin-top:6px}
+    input{padding:4px 6px}
+    .grid{display:grid; grid-template-columns:repeat(4, minmax(140px,1fr)); gap:10px}
+    .btn{margin-top:16px; padding:8px 14px; border-radius:8px; background:#111827; color:#fff; border:none}
+  </style>
+</head>
+<body>
+  <h2>QA – Lot {{ lot.lot_no }}
+    {% if grade == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>
+    {% else %}<span class="badge badge-success">KRIP</span>{% endif %}
+  </h2>
 
-<form method="post">
-  <h3>Chemical (averaged prefilled; edit if needed)</h3>
-  {% for c in ['C','Si','S','P','Cu','Ni','Mn','Fe'] %}
-    <label style="display:inline-block;min-width:60px">{{ c }}</label>
-    <input name="{{c}}" value="{{ chem[c] }}"/>
-  {% endfor %}
+  <form method="post">
+    <div class="sec">
+      <h3>Chemistry</h3>
+      <div class="grid">
+        {% for k,v in chem.items() %}
+        <div><label>{{ k }}</label><input type="text" name="{{ k }}" value="{{ v }}"></div>
+        {% endfor %}
+      </div>
+    </div>
 
-  <h3>Physical</h3>
-  <label style="display:inline-block;min-width:120px">AD (g/cc)</label>
-  <input name="ad" value="{{ phys['ad'] }}"/>
-  <label style="display:inline-block;min-width:120px;margin-left:16px">Flow (sec/50g)</label>
-  <input name="flow" value="{{ phys['flow'] }}"/>
+    <div class="sec">
+      <h3>Physical</h3>
+      <label>AD</label><input type="text" name="ad" value="{{ phys.ad }}">
+      <label>Flow</label><input type="text" name="flow" value="{{ phys.flow }}">
+    </div>
 
-  <h3>PSD (%)</h3>
-  {% for p in ['+212','+180','-180+150','-150+75','-75+45','-45'] %}
-    <label style="display:inline-block;min-width:100px">{{ p }}</label>
-    <input name="{{p}}" value="{{ psd[p] }}"/>
-  {% endfor %}
+    <div class="sec">
+      <h3>PSD</h3>
+      <div class="grid">
+        {% for k,v in psd.items() %}
+        <div><label>{{ k }}</label><input type="text" name="{{ k }}" value="{{ v }}"></div>
+        {% endfor %}
+      </div>
+    </div>
 
-  <div style="margin-top:12px">
-    <label>Decision</label>
-    <select name="decision">
-      <option value="APPROVED" {% if lot.qa_status=='APPROVED' %}selected{% endif %}>APPROVED</option>
-      <option value="HOLD" {% if lot.qa_status=='HOLD' %}selected{% endif %}>HOLD</option>
-      <option value="REJECTED" {% if lot.qa_status=='REJECTED' %}selected{% endif %}>REJECTED</option>
-    </select>
-  </div>
+    <div class="sec">
+      <label>Decision</label>
+      <select name="decision">
+        <option value="APPROVED" {% if lot.qa_status=='APPROVED' %}selected{% endif %}>APPROVED</option>
+        <option value="REJECTED" {% if lot.qa_status=='REJECTED' %}selected{% endif %}>REJECTED</option>
+        <option value="HOLD" {% if lot.qa_status=='HOLD' %}selected{% endif %}>HOLD</option>
+      </select>
 
-  <div style="margin-top:8px">
-    <label>Remarks</label>
-    <input name="remarks" value="{{ lot.qa_remarks or '' }}" style="min-width:360px"/>
-  </div>
+      <label>Remarks</label>
+      <input type="text" name="remarks" value="{{ lot.qa_remarks or '' }}">
+    </div>
 
-  <p style="margin-top:12px">
-    <button class="btn">Save</button>
-    <a class="btn btn-secondary" href="/atomization">Back</a>
-  </p>
-</form>
-{% endblock %}
+    <button class="btn" type="submit">Save</button>
+  </form>
+</body>
+</html>
