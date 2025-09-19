@@ -1,31 +1,47 @@
-{% extends "base.html" %}
-{% block content %}
-<h2>QA – Heat {{ heat.heat_no }}</h2>
-<p>
-  Inputs: {{ '%.1f'|format(heat.total_inputs) }} kg,
-  Slag: {{ '%.1f'|format(heat.slag_qty) }} kg,
-  Actual output: {{ '%.1f'|format(heat.actual_output) }} kg
-</p>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>QA – Heat</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif; margin:20px;}
+    .badge{display:inline-block; padding:2px 8px; border-radius:12px; font-size:12px; color:#fff}
+    .badge-success{background:#16a34a}
+    .badge-info{background:#0ea5e9}
+    label{display:block; margin-top:8px}
+    input{padding:4px 6px}
+    .row{display:flex; gap:12px; flex-wrap:wrap}
+    .row > div{min-width:120px}
+    .btn{margin-top:16px; padding:8px 14px; border-radius:8px; background:#111827; color:#fff; border:none}
+  </style>
+</head>
+<body>
+  <h2>QA – Heat {{ heat.heat_no }}
+    {% if grade == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>
+    {% else %}<span class="badge badge-success">KRIP</span>{% endif %}
+  </h2>
 
-<form method="post">
-  <h3>Chemical</h3>
-  {% for c in ['C','Si','S','P','Cu','Ni','Mn','Fe'] %}
-    <label>
-      {{ c }}
-      <input name="{{ c }}" value="{{ chem[c] if chem[c] else '' }}" />
-    </label>
-  {% endfor %}
+  <form method="post">
+    <div class="row">
+      {% for key,val in chem.items() %}
+      <div>
+        <label>{{ key }}</label>
+        <input type="text" name="{{ key }}" value="{{ val }}">
+      </div>
+      {% endfor %}
+    </div>
 
-  <label>Decision
+    <label>Decision</label>
     <select name="decision">
-      <option value="APPROVED" {% if heat.qa_status=='APPROVED' %}selected{% endif %}>APPROVED</option>
-      <option value="HOLD" {% if heat.qa_status=='HOLD' %}selected{% endif %}>HOLD</option>
-      <option value="REJECTED" {% if heat.qa_status=='REJECTED' %}selected{% endif %}>REJECTED</option>
+      <option value="APPROVED">APPROVED</option>
+      <option value="REJECTED">REJECTED</option>
+      <option value="HOLD">HOLD</option>
     </select>
-  </label>
 
-  <label>Remarks <input name="remarks" value="{{ heat.qa_remarks or '' }}"/></label>
+    <label>Remarks</label>
+    <input type="text" name="remarks" value="">
 
-  <p><button class="btn">Save</button> <a class="btn btn-secondary" href="/melting">Back</a></p>
-</form>
-{% endblock %}
+    <div><button class="btn" type="submit">Save</button></div>
+  </form>
+</body>
+</html>
