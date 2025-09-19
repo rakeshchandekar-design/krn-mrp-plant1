@@ -20,10 +20,8 @@ from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 # Database config
 # ---------------------------
 def _normalize_db_url(url: str) -> str:
-    # Render sometimes injects postgres://; SQLAlchemy needs postgresql://
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
-    # Prefer the modern psycopg driver on Render
     if url.startswith("postgresql://") and "+psycopg" not in url:
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
@@ -258,14 +256,16 @@ def melting_new(
     return RedirectResponse("/melting", status_code=303)
 
 # ---------------------------
-# QA redirect so /qa works
+# QA (single page listing heats & lots)
 # ---------------------------
-@app.get("/qa")
-def qa_redirect():
-    return RedirectResponse("/qa-dashboard", status_code=303)
+@app.get("/qa", response_class=HTMLResponse)
+def qa(request: Request, db: SessionLocal = Depends(get_db)):
+    heats = db.query(Heat).order_by(Heat.id.desc()).all()
+    lots = db.query(Lot).order_by(Lot.id.desc()).all()
+    return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots})
 
 # ---------------------------
-# QA Heat (GET) – robust: auto-create chemistry row, fail clearly if missing template
+# QA Heat (auto-create chemistry) with chem_map for template
 # ---------------------------
 @app.get("/qa/heat/{heat_id}", response_class=HTMLResponse)
 def qa_heat_form(heat_id: int, request: Request, db: SessionLocal = Depends(get_db)):
@@ -273,30 +273,30 @@ def qa_heat_form(heat_id: int, request: Request, db: SessionLocal = Depends(get_
     if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
 
-    # Ensure there is exactly one chemistry row to bind to the form
     chem = heat.chemistry
     if not chem:
         chem = HeatChem(heat=heat)
-        db.add(chem); db.commit(); db.refresh(heat)
+        db.add(chem)
+        db.commit()
+        db.refresh(chem)
 
-    # Render the template safely
-    template_name = "qa_heat.html"
-    if not template_name:
-        # If you ever change the name and it becomes empty, show a helpful error
-        return PlainTextResponse("Template name for QA Heat not configured.", status_code=500)
+    chem_map = {
+        "C":  chem.c  or "",
+        "Si": chem.si or "",
+        "S":  chem.s  or "",
+        "P":  chem.p  or "",
+        "Cu": chem.cu or "",
+        "Ni": chem.ni or "",
+        "Mn": chem.mn or "",
+        "Fe": chem.fe or "",
+    }
+    elements = list(chem_map.keys())
 
     return templates.TemplateResponse(
-        template_name,
-        {
-            "request": request,
-            "heat": heat,
-            "chem": chem
-        },
+        "qa_heat.html",
+        {"request": request, "heat": heat, "chem": chem, "chem_map": chem_map, "elements": elements},
     )
 
-# ---------------------------
-# QA Heat (POST)
-# ---------------------------
 @app.post("/qa/heat/{heat_id}")
 def qa_heat_save(
     heat_id: int, C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
@@ -313,7 +313,7 @@ def qa_heat_save(
     chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
     heat.qa_status = decision; heat.qa_remarks = remarks
     db.add_all([chem, heat]); db.commit()
-    return RedirectResponse("/melting", status_code=303)
+    return RedirectResponse("/qa", status_code=303)
 
 # ---------------------------
 # Atomization
@@ -406,16 +406,7 @@ def qa_lot_save(
     psd.n75p45 = psd.n75p45 or ""; psd.n45 = psd.n45 or ""
     lot.qa_status = decision; lot.qa_remarks = remarks
     db.add_all([chem, phys, psd, lot]); db.commit()
-    return RedirectResponse("/atomization", status_code=303)
-
-# ---------------------------
-# QA Dashboard
-# ---------------------------
-@app.get("/qa-dashboard", response_class=HTMLResponse)
-def qa_dashboard(request: Request, db: SessionLocal = Depends(get_db)):
-    heats = db.query(Heat).order_by(Heat.id.desc()).all()
-    lots = db.query(Lot).order_by(Lot.id.desc()).all()
-    return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots})
+    return RedirectResponse("/qa", status_code=303)
 
 # ---------------------------
 # Traceability
