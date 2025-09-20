@@ -17,7 +17,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, Date, Fore
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
 
 # -------------------------------------------------
-# Costing constants
+# Costing constants (baseline)
 # -------------------------------------------------
 MELT_COST_PER_KG_KRIP = 6.0
 MELT_COST_PER_KG_KRFS = 8.0
@@ -45,7 +45,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
 # -------------------------------------------------
-# Schema migration helpers
+# Schema migration (only fields actually used)
 # -------------------------------------------------
 def _table_has_column(conn, table: str, col: str) -> bool:
     if str(engine.url).startswith("sqlite"):
@@ -73,14 +73,14 @@ def migrate_schema(engine):
                 else:
                     conn.execute(text(f"ALTER TABLE heat ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
 
-        # Heat allocation tracking (how much of the heat is already used in lots)
+        # Track how much of a heat is allocated into lots (mirror for dashboards)
         if not _table_has_column(conn, "heat", "alloc_used"):
             if str(engine.url).startswith("sqlite"):
                 conn.execute(text("ALTER TABLE heat ADD COLUMN alloc_used REAL DEFAULT 0"))
             else:
                 conn.execute(text("ALTER TABLE heat ADD COLUMN IF NOT EXISTS alloc_used DOUBLE PRECISION DEFAULT 0"))
 
-        # Lot costing columns
+        # Lot costing
         for col in ["unit_cost", "total_cost"]:
             if not _table_has_column(conn, "lot", col):
                 if str(engine.url).startswith("sqlite"):
@@ -88,7 +88,7 @@ def migrate_schema(engine):
                 else:
                     conn.execute(text(f"ALTER TABLE lot ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
 
-        # LotHeat qty column (partial allocations)
+        # LotHeat qty for partial allocation (prevents /atomization 500 on existing DBs)
         if not _table_has_column(conn, "lot_heat", "qty"):
             if str(engine.url).startswith("sqlite"):
                 conn.execute(text("ALTER TABLE lot_heat ADD COLUMN qty REAL DEFAULT 0"))
@@ -134,8 +134,8 @@ class Heat(Base):
     total_cost = Column(Float, default=0.0)
     unit_cost = Column(Float, default=0.0)
 
-    # partial allocations
-    alloc_used = Column(Float, default=0.0)  # total kg moved to lots
+    # partial allocations (mirror of allocated qty in lots)
+    alloc_used = Column(Float, default=0.0)
 
     rm_consumptions = relationship("HeatRM", back_populates="heat", cascade="all, delete-orphan")
     chemistry = relationship("HeatChem", uselist=False, back_populates="heat")
@@ -210,13 +210,24 @@ class LotPSD(Base):
     lot = relationship("Lot", back_populates="psd")
 
 # -------------------------------------------------
-# App + Templates
+# App + Templates (robust paths)
 # -------------------------------------------------
-app = FastAPI()
-app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "..", "static")), name="static")
-templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "..", "templates"))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+if not os.path.isdir(TEMPLATES_DIR):
+    TEMPLATES_DIR = os.path.join(BASE_DIR, "..", "templates")
 
-# Auto-migrate on startup so /atomization can't 500 after deploy
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+if not os.path.isdir(STATIC_DIR):
+    STATIC_DIR = os.path.join(BASE_DIR, "..", "static")
+
+app = FastAPI()
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+# -------------------------------------------------
+# Startup: auto-migrate so /atomization can't 500 on deploy
+# -------------------------------------------------
 @app.on_event("startup")
 def _startup_migrate():
     Base.metadata.create_all(bind=engine)
@@ -236,38 +247,32 @@ def get_db():
 # Helpers
 # -------------------------------------------------
 def heat_grade(heat: Heat) -> str:
-    """KRFS if any FeSi consumed, else KRIP."""
     for cons in heat.rm_consumptions:
         if cons.rm_type == "FeSi":
             return "KRFS"
     return "KRIP"
 
 def heat_available(db: Session, heat: Heat) -> float:
-    """kg available from this heat for atomization (robust if migrations lag)."""
-    try:
-        used = (
-            db.query(func.coalesce(func.sum(LotHeat.qty), 0.0))
-              .filter(LotHeat.heat_id == heat.id)
-              .scalar()
-            or 0.0
-        )
-    except Exception:
-        used = 0.0
+    used = db.query(func.coalesce(func.sum(LotHeat.qty), 0.0)).filter(LotHeat.heat_id == heat.id).scalar() or 0.0
     heat.alloc_used = float(used)
     return max((heat.actual_output or 0.0) - used, 0.0)
 
 # -------------------------------------------------
-# Home + Setup
+# Health + Setup + Home
 # -------------------------------------------------
-@app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
 
 @app.get("/setup")
 def setup(db: Session = Depends(get_db)):
     Base.metadata.create_all(bind=engine)
     migrate_schema(engine)
-    return HTMLResponse('Tables created/migrated. Go to <a href="/grn">GRN</a>.')
+    return HTMLResponse('Tables created/migrated. Go to <a href="/">Home</a>.')
+
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 # -------------------------------------------------
 # GRN
@@ -331,7 +336,7 @@ def melting_page(request: Request, db: Session = Depends(get_db)):
 def melting_new(
     request: Request,
     notes: Optional[str] = Form(None),
-    slag_qty: float = Form(0.0),
+    slag_qty: float = Form(0.0),  # keep optional as baseline
     db: Session = Depends(get_db),
     rm_type_1: Optional[str] = Form(None), rm_qty_1: Optional[float] = Form(None),
     rm_type_2: Optional[str] = Form(None), rm_qty_2: Optional[float] = Form(None),
@@ -391,15 +396,12 @@ def melting_new(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# QA Redirect
+# QA redirect + Heat QA
 # -------------------------------------------------
 @app.get("/qa")
 def qa_redirect():
     return RedirectResponse("/qa-dashboard", status_code=303)
 
-# -------------------------------------------------
-# QA Heat
-# -------------------------------------------------
 @app.get("/qa/heat/{heat_id}", response_class=HTMLResponse)
 def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
     heat = db.get(Heat, heat_id)
@@ -449,7 +451,7 @@ def qa_heat_save(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# Atomization (with partial allocation)
+# Atomization (partial allocation kept, baseline UI)
 # -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(request: Request, db: Session = Depends(get_db)):
@@ -646,14 +648,6 @@ def qa_dashboard(request: Request, db: Session = Depends(get_db)):
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
     heat_grades = {h.id: heat_grade(h) for h in heats}
     return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots, "heat_grades": heat_grades})
-
-# -------------------------------------------------
-# Ready Stock (QA APPROVED lots)
-# -------------------------------------------------
-@app.get("/ready-stock", response_class=HTMLResponse)
-def ready_stock(request: Request, db: Session = Depends(get_db)):
-    lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").order_by(Lot.id.desc()).all()
-    return templates.TemplateResponse("ready_stock.html", {"request": request, "lots": lots})
 
 # -------------------------------------------------
 # Traceability
