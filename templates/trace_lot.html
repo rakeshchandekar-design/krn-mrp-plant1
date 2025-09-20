@@ -1,14 +1,41 @@
-<!doctype html><html><body>
-{% include "_base_top.html" %}
-<div style="padding:16px">
-  <h2>Traceability – {{lot.lot_no}}</h2>
-  <p>Grade: {{lot.grade}} | Weight: {{'%.1f'|format(lot.weight)}} kg | QA: {{lot.qa_status}}</p>
-  <h3>Allocated Heats</h3>
-  <table border="1" cellpadding="6" cellspacing="0">
-    <tr><th>Heat</th><th>RM Type</th><th>GRN</th><th>Supplier</th><th>Qty (kg)</th></tr>
-    {% for r in grn_rows %}
-    <tr><td>{{r.heat_no}}</td><td>{{r.rm_type}}</td><td>{{r.grn_id}}</td><td>{{r.supplier}}</td><td>{{'%.1f'|format(r.qty)}}</td></tr>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Traceability – Lot</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif; margin:20px;}
+    table{border-collapse:collapse; width:100%}
+    th,td{border:1px solid #e5e7eb; padding:8px; text-align:left}
+    th{background:#f3f4f6}
+    a.btn-link{display:inline-block;margin-bottom:10px}
+  </style>
+</head>
+<body>
+  <h1>Traceability – Lot {{ lot.lot_no }}</h1>
+  <p><a class="btn-link" href="/atomization">Back</a></p>
+
+  <h3>Heats in Lot</h3>
+  <ul>
+    {% for h in heats %}
+      <li>{{ h.heat_no }} – Output: {{ '%.1f' % (h.actual_output or 0) }} kg</li>
     {% endfor %}
+  </ul>
+
+  <h3>GRN Consumption (FIFO)</h3>
+  <table>
+    <thead><tr><th>Heat</th><th>RM Type</th><th>GRN #</th><th>Supplier</th><th>Qty (kg)</th></tr></thead>
+    <tbody>
+      {% for r in grn_rows %}
+      <tr>
+        <td>{{ r.heat_no }}</td>
+        <td>{{ r.rm_type }}</td>
+        <td>{{ r.grn_id }}</td>
+        <td>{{ r.supplier }}</td>
+        <td>{{ '%.1f' % (r.qty or 0) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
   </table>
-</div>
-</body></html>
+</body>
+</html>
