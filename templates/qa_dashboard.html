@@ -1,35 +1,61 @@
-<!doctype html><html><body>
-{% include "_base_top.html" %}
-<div style="padding:16px">
-  <h2>QA Dashboard</h2>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>QA Dashboard</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif; margin:20px;}
+    table{border-collapse:collapse; width:100%}
+    th,td{border:1px solid #e5e7eb; padding:8px; text-align:left}
+    th{background:#f3f4f6}
+    .badge{display:inline-block; padding:2px 8px; border-radius:12px; font-size:12px; color:#fff}
+    .badge-success{background:#16a34a}
+    .badge-info{background:#0ea5e9}
+    a.btn-link{display:inline-block;margin-bottom:10px}
+    a{padding:4px 8px; border:1px solid #d1d5db; border-radius:6px; text-decoration:none}
+  </style>
+</head>
+<body>
+  <h1>QA Dashboard</h1>
+  <p><a class="btn-link" href="/">Home</a></p>
 
-  <h3>Heats</h3>
-  <table border="1" cellpadding="6" cellspacing="0">
-    <tr><th>Heat</th><th>Type</th><th>Out (kg)</th><th>QA</th><th>Action</th></tr>
-    {% for h in heats %}
-    <tr>
-      <td>{{h.heat_no}}</td>
-      <td>{{heat_grades[h.id]}}</td>
-      <td>{{"%.1f"|format(h.actual_output)}}</td>
-      <td>{{h.qa_status}}</td>
-      <td><a href="/qa/heat/{{h.id}}">QA</a></td>
-    </tr>
-    {% endfor %}
+  <h2>Heats</h2>
+  <table>
+    <thead><tr><th>Heat</th><th>Type</th><th>Output (kg)</th><th>QA</th><th>Actions</th></tr></thead>
+    <tbody>
+      {% for h in heats %}
+        <tr>
+          <td>{{ h.heat_no }}</td>
+          <td>
+            {% set g = heat_grades.get(h.id) %}
+            {% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>
+            {% else %}<span class="badge badge-success">KRIP</span>{% endif %}
+          </td>
+          <td>{{ '%.1f' % (h.actual_output or 0) }}</td>
+          <td>{{ h.qa_status }}</td>
+          <td><a href="/qa/heat/{{ h.id }}">QA</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
   </table>
 
-  <h3>Lots</h3>
-  <table border="1" cellpadding="6" cellspacing="0">
-    <tr><th>Lot</th><th>Grade</th><th>Weight</th><th>QA</th><th>Status</th><th>Action</th></tr>
-    {% for l in lots %}
-    <tr>
-      <td>{{l.lot_no}}</td>
-      <td>{{l.grade}}</td>
-      <td>{{"%.1f"|format(l.weight)}}</td>
-      <td>{{l.qa_status}}</td>
-      <td>{{l.status}}</td>
-      <td><a href="/qa/lot/{{l.id}}">QA</a></td>
-    </tr>
-    {% endfor %}
+  <h2 style="margin-top:24px">Lots</h2>
+  <table>
+    <thead><tr><th>Lot</th><th>Grade</th><th>Weight</th><th>QA</th><th>Actions</th></tr></thead>
+    <tbody>
+      {% for lot in lots %}
+        <tr>
+          <td>{{ lot.lot_no }}</td>
+          <td>{{ lot.grade }}</td>
+          <td>{{ '%.1f' % (lot.weight or 0) }}</td>
+          <td>{{ lot.qa_status }}</td>
+          <td>
+            <a href="/qa/lot/{{ lot.id }}">QA</a>
+            <a href="/traceability/lot/{{ lot.id }}">Trace</a>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
   </table>
-</div>
-</body></html>
+</body>
+</html>
