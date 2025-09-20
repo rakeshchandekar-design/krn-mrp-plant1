@@ -1,10 +1,21 @@
-<!doctype html><html><body>
-{% include "_base_top.html" %}
-<div style="padding:16px">
-  <h2>Dashboard</h2>
-  <div>GRNs Today: <b>{{kpi.grn_today}}</b></div>
-  <div>Heats Today: <b>{{kpi.heats_today}}</b></div>
-  <div>Lots Today: <b>{{kpi.lots_today}}</b></div>
-  <div>Approved Lots Ready: <b>{{kpi.ready}}</b></div>
-</div>
-</body></html>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>KRN – Home</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;margin:24px}
+    a.btn{display:inline-block;margin:6px 8px 6px 0;padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none}
+  </style>
+</head>
+<body>
+  <h1>KRN Alloys Pvt. Ltd</h1>
+  <p>Choose a section:</p>
+  <p>
+    <a class="btn" href="/grn">Stores (GRN)</a>
+    <a class="btn" href="/melting">Melting</a>
+    <a class="btn" href="/atomization">Atomization</a>
+    <a class="btn" href="/qa">QA</a>
+  </p>
+</body>
+</html>
