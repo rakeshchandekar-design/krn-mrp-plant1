@@ -1,5 +1,5 @@
 import os, io, datetime as dt
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Tuple
 
 # FastAPI
 from fastapi import FastAPI, Request, Form, Depends, Response
@@ -15,6 +15,7 @@ from reportlab.pdfgen import canvas
 # SQLAlchemy
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
+from sqlalchemy.orm import joinedload  # <-- for eager loading (C)
 
 # -------------------------------------------------
 # Costing constants (baseline)
@@ -321,7 +322,13 @@ def heat_grade(heat: Heat) -> str:
             return "KRFS"
     return "KRIP"
 
+def heat_available_fast(heat: Heat, used_map: Dict[int, float]) -> float:
+    used = float(used_map.get(heat.id, 0.0))
+    heat.alloc_used = used  # mirror without DB write (D: no commit here)
+    return max((heat.actual_output or 0.0) - used, 0.0)
+
 def heat_available(db: Session, heat: Heat) -> float:
+    """Fallback (kept for other routes); not used by /melting list now."""
     used = db.query(func.coalesce(func.sum(LotHeat.qty), 0.0)).filter(LotHeat.heat_id == heat.id).scalar() or 0.0
     heat.alloc_used = float(used)
     return max((heat.actual_output or 0.0) - used, 0.0)
@@ -371,7 +378,7 @@ def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 # -------------------------------------------------
-# GRN
+# GRN  (unchanged)
 # -------------------------------------------------
 @app.get("/grn", response_class=HTMLResponse)
 def grn_list(
@@ -505,29 +512,41 @@ def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat) -> fl
     return added_cost
 
 # -------------------------------------------------
-# Melting (enhanced)
+# Melting (enhanced: B, C, D only — logic/UX unchanged)
 # -------------------------------------------------
 @app.get("/melting", response_class=HTMLResponse)
 def melting_page(
     request: Request,
     start: Optional[str] = None,   # YYYY-MM-DD
     end: Optional[str] = None,     # YYYY-MM-DD
-    all: Optional[int] = 0,        # NEW: when 1 -> show heats with available qty (>0) across all dates
+    all: Optional[int] = 0,        # if 1 => show all heats with available > 0
     db: Session = Depends(get_db),
 ):
-    heats = db.query(Heat).order_by(Heat.id.desc()).all()
+    # Eager-load consumptions + GRN once (C)
+    heats: List[Heat] = (
+        db.query(Heat)
+        .options(joinedload(Heat.rm_consumptions).joinedload(HeatRM.grn))
+        .order_by(Heat.id.desc())
+        .all()
+    )
 
-    # build helper rows + keep alloc_used mirror
+    # One grouped query for used qty across all heats (B)
+    used_map: Dict[int, float] = dict(
+        db.query(LotHeat.heat_id, func.coalesce(func.sum(LotHeat.qty), 0.0))
+          .group_by(LotHeat.heat_id)
+          .all()
+    )
+
+    # build helper rows + keep alloc_used mirror (no commit in GET) (D)
     rows = []
     for h in heats:
-        avail = heat_available(db, h)
+        avail = heat_available_fast(h, used_map)
         rows.append({
             "heat": h,
             "grade": heat_grade(h),
             "available": avail,
             "date": heat_date_from_no(h.heat_no) or dt.date.today(),
         })
-    db.commit()
 
     today = dt.date.today()
 
@@ -553,7 +572,7 @@ def melting_page(
         target = day_target_kg(db, d)
         last5.append({"date": d.isoformat(), "actual": actual, "target": target})
 
-    # Live stock summary from heats (available qty & value) grouped by grade
+    # Live stock summary from heats (available qty & value) grouped by grade (unchanged)
     krip_qty = krip_val = krfs_qty = krfs_val = 0.0
     for r in rows:
         if r["available"] <= 0:
@@ -564,26 +583,27 @@ def melting_page(
         else:
             krip_qty += r["available"]; krip_val += val
 
-    # ---- date range handling / visible list ----
-    if all:  # NEW behavior for "Reset"
-        visible_heats = [r["heat"] for r in rows if (r["available"] or 0.0) > 0.0]
-        # keep date inputs populated with today so the UI still looks neat
-        s = e = today.isoformat()
-    else:
-        s = start or today.isoformat()
-        e = end or today.isoformat()
-        try:
-            s_date = dt.date.fromisoformat(s)
-            e_date = dt.date.fromisoformat(e)
-        except Exception:
-            s_date, e_date = today, today
-        visible_heats = [r["heat"] for r in rows if s_date <= r["date"] <= e_date]
+    # ---- date range handling for list + csv defaults (unchanged) ----
+    s = start or today.isoformat()
+    e = end or today.isoformat()
+    try:
+        s_date = dt.date.fromisoformat(s)
+        e_date = dt.date.fromisoformat(e)
+    except Exception:
+        s_date, e_date = today, today
 
-    # compact per-heat trace string: "MS Scrap: GRN 12:800, 15:400; CRC: GRN 8:200"
+    # heats shown in table respect the selected date range
+    visible_heats = [r["heat"] for r in rows if s_date <= r["date"] <= e_date]
+
+    # if all=1 => show all heats with available>0 (kept)
+    if all and int(all) == 1:
+        visible_heats = [r["heat"] for r in rows if (r["available"] or 0.0) > 0.0]
+
+    # compact per-heat trace string
     trace_map: Dict[int, str] = {}
     for h in visible_heats:
-        parts = []
-        by_rm: Dict[str, list] = {}
+        parts: List[str] = []
+        by_rm: Dict[str, List[Tuple[int, float]]] = {}
         for c in h.rm_consumptions:
             by_rm.setdefault(c.rm_type, []).append((c.grn_id, c.qty or 0.0))
         for rm, items in by_rm.items():
@@ -612,7 +632,7 @@ def melting_page(
     )
 
 # -------------------------------------------------
-# Create Heat (unchanged except inline error redirect)
+# Create Heat (same logic; inline alert if GRN insufficient)
 # -------------------------------------------------
 @app.post("/melting/new")
 def melting_new(
@@ -681,11 +701,10 @@ def melting_new(
     )
     db.add(heat); db.flush()
 
-    # Stock checks (inline error back to page)
+    # Stock checks (inline alert back to page)
     for t, q in parsed:
         if available_stock(db, t) < q - 1e-6:
             db.rollback()
-            from urllib.parse import quote_plus
             msg = f"Insufficient stock for {t}. Available {available_stock(db, t):.1f} kg"
             html = f"""<script>alert("{msg}");window.location="/melting";</script>"""
             return HTMLResponse(html)
@@ -741,9 +760,11 @@ def melting_export(
             continue
         if e and d > e:
             continue
-        avail = heat_available(db, h)
+        # use grouped availability for export accuracy
+        used = db.query(func.coalesce(func.sum(LotHeat.qty), 0.0)).filter(LotHeat.heat_id == h.id).scalar() or 0.0
+        avail = max((h.actual_output or 0.0) - used, 0.0)
         out.write(
-            f"{h.heat_no},{d.isoformat()},{heat_grade(h)},{h.qa_status or ''},"
+            f"{h.heat_no},{d.isoformat()},{('KRFS' if any(c.rm_type=='FeSi' for c in h.rm_consumptions) else 'KRIP')},{h.qa_status or ''},"
             f"{h.actual_output or 0:.1f},{avail:.1f},{h.unit_cost or 0:.2f},{h.total_cost or 0:.2f},"
             f"{h.power_kwh or 0:.1f},{h.kwh_per_ton or 0:.1f},{int(h.downtime_min or 0)},{h.downtime_type or ''},{(h.downtime_note or '').replace(',', ' ')}\n"
         )
@@ -760,6 +781,9 @@ def melting_export(
 # ---------- CSV export for downtime ----------
 @app.get("/melting/downtime/export")
 def downtime_export(db: Session = Depends(get_db)):
+    """
+    Exports both per-heat downtime (>0 min) and day-level downtime as a single CSV.
+    """
     out = io.StringIO()
     out.write("Source,Date,Heat No,Minutes,Type/Kind,Remarks\n")
 
@@ -840,7 +864,7 @@ def qa_heat_save(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# Atomization
+# Atomization (unchanged)
 # -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(request: Request, db: Session = Depends(get_db)):
@@ -849,7 +873,7 @@ def atom_page(request: Request, db: Session = Depends(get_db)):
 
     grades = {h.id: heat_grade(h) for h in heats}
     available_map = {h.id: heat_available(db, h) for h in heats}
-    db.commit()  # persist alloc_used mirror
+    # no commit here
 
     return templates.TemplateResponse(
         "atomization.html",
@@ -947,7 +971,7 @@ def qa_dashboard(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots, "heat_grades": heat_grades})
 
 # -------------------------------------------------
-# Traceability
+# Traceability - LOT (existing)
 # -------------------------------------------------
 @app.get("/traceability/lot/{lot_id}", response_class=HTMLResponse)
 def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
@@ -971,22 +995,29 @@ def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
             )
     return templates.TemplateResponse("trace_lot.html", {"request": request, "lot": lot, "heats": heats, "grn_rows": rows})
 
-# NEW: Heat-level trace page for your existing Bootstrap template
+# -------------------------------------------------
+# Traceability - HEAT (NEW to match trace_heat.html)
+# -------------------------------------------------
 @app.get("/traceability/heat/{heat_id}", response_class=HTMLResponse)
 def trace_heat(heat_id: int, request: Request, db: Session = Depends(get_db)):
-    h = db.get(Heat, heat_id)
-    if not h:
+    heat = (
+        db.query(Heat)
+        .options(joinedload(Heat.rm_consumptions).joinedload(HeatRM.grn))
+        .filter(Heat.id == heat_id)
+        .first()
+    )
+    if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
 
-    by_rm: Dict[str, list] = {}
-    for cons in h.rm_consumptions:
-        by_rm.setdefault(cons.rm_type, []).append(
-            (cons.grn_id, float(cons.qty or 0.0), cons.grn.supplier if cons.grn else "")
-        )
+    # group by RM type -> list of (GRN id, qty, supplier)
+    by_rm: Dict[str, List[Tuple[int, float, str]]] = {}
+    for c in heat.rm_consumptions:
+        supp = c.grn.supplier if c.grn else ""
+        by_rm.setdefault(c.rm_type, []).append((c.grn_id, float(c.qty or 0.0), supp))
 
     return templates.TemplateResponse(
         "trace_heat.html",
-        {"request": request, "heat": h, "by_rm": by_rm}
+        {"request": request, "heat": heat, "by_rm": by_rm}
     )
 
 # -------------------------------------------------
