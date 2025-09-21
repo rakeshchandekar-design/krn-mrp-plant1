@@ -5,29 +5,42 @@
   <title>Melting</title>
   <style>
     body{font-family:system-ui,Arial,sans-serif;margin:20px;}
+    /* Brand bar */
     .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-    .brand .name{font-weight:800;font-size:28px;line-height:48px;margin:0}
+    .brand .name{font-weight:800;font-size:20px;line-height:48px;margin:0}
     .brand img{height:48px}
 
+    /* Layout */
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
-    .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px}
-    .card h3{margin:0 0 8px 0;font-size:16px}
-    .muted{color:#6b7280;font-size:12px}
+    .grid-1{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:12px}
 
-    .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px}
+    .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px}
+    .card h3{margin:0 0 8px 0;font-size:14px}
+    .card h2{margin:0 0 8px 0;font-size:18px}
+
+    .muted{color:#6b7280;font-size:12px}
+    .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px;flex-wrap:wrap}
     input,select{padding:4px 6px}
+    .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
+    .btn.secondary{background:#374151}
+    .btn.ghost{background:#e5e7eb;color:#111827}
+    a.btn-link{display:inline-block;margin-left:8px}
+
     table{border-collapse:collapse;width:100%}
-    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left;vertical-align:top}
+    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
     th{background:#f3f4f6}
     .right{text-align:right}
+
     .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
     .badge-success{background:#16a34a}
     .badge-info{background:#0ea5e9}
-    .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
-    a.btn-link{display:inline-block;margin-left:8px}
-    .req::after{content:" *";color:#b91c1c;font-weight:700}
+
+    /* small modal for Trace */
+    dialog{border:none;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.2);padding:16px}
+    dialog::backdrop{background:rgba(0,0,0,.3)}
   </style>
   <script>
+    // CSV export for heats
     function exportCSV(){
       const s=document.getElementById('start').value;
       const e=document.getElementById('end').value;
@@ -35,16 +48,31 @@
       u.searchParams.set('start', s); u.searchParams.set('end', e);
       window.location.href=u.toString();
     }
+
+    // Downtime CSV (day-level + per-heat)
+    function exportDowntimeCSV(){
+      const u=new URL('/melting/downtime/export', window.location.origin);
+      window.location.href=u.toString();
+    }
+
+    // Navigate with date range
     function fetchRange(){
       const s=document.getElementById('start').value;
       const e=document.getElementById('end').value;
-      const u=new URL('/melting', window.location.origin);
-      u.searchParams.set('start', s); u.searchParams.set('end', e);
-      window.location.href=u.toString();
+      location.href = `/melting?start=${s}&end=${e}`;
     }
+    // Today shortcut
+    function onlyToday(){
+      const t=document.getElementById('todayIso').value;
+      document.getElementById('start').value=t;
+      document.getElementById('end').value=t;
+      fetchRange();
+    }
+    // Reset range (back to full list)
     function resetRange(){
-      window.location.href="/melting";
+      location.href='/melting';
     }
+
     // Downtime UI rule: when minutes > 0, type & remarks become required; otherwise disabled
     function syncDowntime(){
       const m=document.getElementById('dt_min');
@@ -59,6 +87,16 @@
     document.addEventListener('DOMContentLoaded',function(){
       const m=document.getElementById('dt_min');
       if(m){ m.addEventListener('input', syncDowntime); syncDowntime(); }
+
+      // open trace modal from buttons
+      document.body.addEventListener('click', (e)=>{
+        const btn=e.target.closest('[data-trace]');
+        if(!btn) return;
+        const dlg=document.getElementById('traceDlg');
+        const body=document.getElementById('traceBody');
+        body.textContent = btn.getAttribute('data-trace') || '-';
+        dlg.showModal();
+      });
     });
   </script>
 </head>
@@ -72,18 +110,54 @@
   <h1>Melting</h1>
   <p><a class="btn-link" href="/">Home</a></p>
 
+  <!-- KPIs & 5-day: KPIs stacked on the left, production table on the right -->
   <div class="grid">
     <div class="card">
-      <h3>Power KPI (Today)</h3>
-      <table>
-        <thead><tr><th>Average kWh/ton</th><th>Gap vs Target ({{ '%.0f' % (power_target or 0) }} kWh/ton)</th></tr></thead>
-        <tbody>
-          <tr>
-            <td class="right">{{ '%.1f' % (today_kwhpt or 0) }}</td>
-            <td class="right">{{ '%.1f' % ((today_kwhpt or 0) - (power_target or 0)) }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <h2>KPIs (Today)</h2>
+
+      <!-- Power -->
+      <div class="card" style="margin-bottom:8px">
+        <h3>Power KPI (Today)</h3>
+        <table>
+          <thead><tr><th>Average kWh/ton</th><th>Gap vs Target ({{ '%.0f' % power_target }} kWh/ton)</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="right">{{ '%.1f' % (today_kwhpt or 0) }}</td>
+              <td class="right">{{ '%.1f' % ((today_kwhpt or 0) - power_target) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Yield -->
+      <div class="card" style="margin-bottom:8px">
+        <h3>Yield (Today)</h3>
+        <table>
+          <thead><tr><th>Actual %</th><th class="right">Target %</th><th class="right">Gap %</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="right">{{ '%.1f' % (yield_today or 0) }}</td>
+              <td class="right">97.0</td>
+              <td class="right">{{ '%.1f' % ((yield_today or 0) - 97.0) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Efficiency -->
+      <div class="card">
+        <h3>Output Efficiency (Today)</h3>
+        <table>
+          <thead><tr><th>Actual %</th><th class="right">Target %</th><th class="right">Gap %</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="right">{{ '%.1f' % (eff_today or 0) }}</td>
+              <td class="right">100.0</td>
+              <td class="right">{{ '%.1f' % ((eff_today or 0) - 100.0) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div class="card">
@@ -104,47 +178,8 @@
     </div>
   </div>
 
-  <div class="grid" style="grid-template-columns:1fr 1fr;">
-    <div class="card">
-      <h3>Yield (Today)</h3>
-      <table>
-        <thead><tr><th>Actual %</th><th>Target %</th><th>Gap %</th></tr></thead>
-        <tbody>
-          <tr>
-            <td class="right">{{ '%.1f' % (yield_today or 0) }}</td>
-            <td class="right">{{ '%.1f' % 97.0 }}</td>
-            <td class="right">{{ '%.1f' % ((yield_today or 0) - 97.0) }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="card">
-      <h3>Output Efficiency (Today)</h3>
-      <table>
-        <thead><tr><th>Actual %</th><th>Target %</th><th>Gap %</th></tr></thead>
-        <tbody>
-          <tr>
-            <td class="right">{{ '%.1f' % (eff_today or 0) }}</td>
-            <td class="right">100.0</td>
-            <td class="right">{{ '%.1f' % ((eff_today or 0) - 100.0) }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="toolbar">
-    <span>Today</span>
-    <input id="start" type="date" value="{{ start or today_iso }}">
-    <span>To</span>
-    <input id="end" type="date" value="{{ end or today_iso }}">
-    <button class="btn" onclick="fetchRange()">Fetch</button>
-    <button class="btn" onclick="exportCSV()">Download CSV</button>
-    <button class="btn" onclick="resetRange()">Reset</button>
-  </div>
-
-  <div class="grid" style="grid-template-columns:1fr;">
+  <!-- Live Stock -->
+  <div class="grid-1">
     <div class="card">
       <h3>Live Stock – Heats Available</h3>
       <table style="width:auto">
@@ -153,36 +188,45 @@
           <tr><td>KRIP</td><td class="right">{{ '%.1f' % (stock.krip_qty or 0) }}</td><td class="right">{{ '%.2f' % (stock.krip_val or 0) }}</td></tr>
           <tr><td>KRFS</td><td class="right">{{ '%.1f' % (stock.krfs_qty or 0) }}</td><td class="right">{{ '%.2f' % (stock.krfs_val or 0) }}</td></tr>
         </tbody>
+        <tfoot>
+          <tr>
+            <th>Total</th>
+            <th class="right">{{ '%.1f' % ((stock.krip_qty or 0)+(stock.krfs_qty or 0)) }}</th>
+            <th class="right">{{ '%.2f' % ((stock.krip_val or 0)+(stock.krfs_val or 0)) }}</th>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </div>
 
+  <!-- New Heat -->
   <div class="card">
     <h2 style="margin:0 0 8px 0;">New Heat</h2>
     <form method="post" action="/melting/new">
       <div style="display:flex;gap:12px;flex-wrap:wrap;">
         <div><label>Notes</label><input type="text" name="notes"></div>
-        <div><label class="req">Slag Qty (kg)</label><input type="number" step="0.1" min="0" name="slag_qty" required></div>
-        <div><label class="req">Power Units Consumed (kWh)</label><input type="number" step="0.1" min="0.1" name="power_kwh" required></div>
+        <!-- mandatory numeric; user must type even 0 -->
+        <div><label>Slag Qty (kg) <span style="color:#ef4444">*</span></label><input type="number" step="0.1" min="0" name="slag_qty" required></div>
+        <!-- mandatory numeric; must be > 0 (server validates) -->
+        <div><label>Power Units Consumed (kWh) <span style="color:#ef4444">*</span></label><input type="number" step="0.1" min="0.1" name="power_kwh" required></div>
       </div>
 
       <h3>Raw Materials (up to 4 lines)</h3>
-      <div>
-        {% for i in [1,2,3,4] %}
-        <div style="display:flex;gap:6px;margin:6px 0;align-items:center;">
-          <label style="min-width:78px;{{ 'font-weight:700' if i<=2 else '' }}">{{ i<=2 and 'RM Line '+i|string or 'RM Line '+i|string }}{% if i<=2 %} <span class="req"></span>{% endif %}</label>
-          <select name="rm_type_{{ i }}" style="min-width:130px;">
-            <option value="">-- RM Type --</option>
-            {% for t in rm_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
-          </select>
-          <input type="number" step="0.1" min="0" name="rm_qty_{{ i }}" placeholder="Qty (kg)" style="width:140px;">
-        </div>
-        {% endfor %}
+      <div class="muted">RM Line 1 <span style="color:#ef4444">*</span> and RM Line 2 <span style="color:#ef4444">*</span> are mandatory. Others are optional.</div>
+      {% for i in [1,2,3,4] %}
+      <div style="display:flex;gap:6px;margin:6px 0;">
+        <select name="rm_type_{{ i }}">
+          <option value="">-- RM Type --</option>
+          {% for t in rm_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+        </select>
+        <input type="number" step="0.1" min="0" name="rm_qty_{{ i }}" placeholder="Qty (kg)">
+        {% if i<=2 %}<div class="muted"><span style="color:#ef4444">*</span></div>{% endif %}
       </div>
+      {% endfor %}
 
       <h3>Downtime (this heat)</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <div><label class="req">Minutes</label><input id="dt_min" type="number" min="0" step="1" name="downtime_min" required></div>
+        <div><label>Minutes <span style="color:#ef4444">*</span></label><input id="dt_min" type="number" min="0" step="1" name="downtime_min" required></div>
         <div>
           <label>Type</label>
           <select id="dt_type" name="downtime_type" disabled>
@@ -202,7 +246,23 @@
     </form>
   </div>
 
-  <div class="sec" style="margin-top:18px">
+  <!-- Date range toolbar MOVED here, just above the Heats table -->
+  <div class="toolbar">
+    <span>Today</span>
+    <input id="start" type="date" value="{{ start or today_iso }}">
+    <span>To</span>
+    <input id="end" type="date" value="{{ end or today_iso }}">
+    <button class="btn" onclick="fetchRange()">Fetch</button>
+    <button class="btn secondary" onclick="onlyToday()">Today</button>
+    <button class="btn ghost" onclick="resetRange()">Reset</button>
+    <button class="btn" onclick="exportCSV()">Download CSV</button>
+    <button class="btn secondary" onclick="exportDowntimeCSV()">Downtime CSV</button>
+    <a class="btn-link" href="/melting/downtime">Open downtime page</a>
+    <input type="hidden" id="todayIso" value="{{ today_iso }}">
+  </div>
+
+  <!-- Heats -->
+  <div class="sec" style="margin-top:8px">
     <h2>Heats</h2>
     <table>
       <thead>
@@ -230,12 +290,23 @@
           <td class="right">{{ '%.2f' % (h.unit_cost or 0) }}</td>
           <td class="right">{{ '%.1f' % ( ((h.actual_output or 0.0) / max((h.total_inputs or 0.0), 1e-9)) * 100.0 ) }}</td>
           <td>{{ h.qa_status }}</td>
-          <td>{{ trace_map.get(h.id, '-') }}</td>
+          <td>
+            <button class="btn ghost" type="button" data-trace="{{ trace_map.get(h.id) or '-' }}">View</button>
+          </td>
           <td><a href="/qa/heat/{{ h.id }}">QA</a></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+
+  <!-- trace modal -->
+  <dialog id="traceDlg">
+    <h3 style="margin:0 0 8px 0">Raw Material Trace</h3>
+    <div id="traceBody" style="white-space:pre-wrap"></div>
+    <div style="text-align:right;margin-top:12px">
+      <button class="btn ghost" onclick="this.closest('dialog').close()">Close</button>
+    </div>
+  </dialog>
 </body>
 </html>
