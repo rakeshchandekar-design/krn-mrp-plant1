@@ -9,12 +9,23 @@
     input,select{padding:4px 6px}
     .btn{margin-top:12px;padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none}
     a{margin-left:8px}
+    .row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    img.logo{height:42px}
+    .hint{font-size:12px;color:#6b7280}
   </style>
 </head>
 <body>
+  <div class="row">
+    <div><b>KRN Alloys Pvt. Ltd</b></div>
+    <img class="logo" src="/static/KRN_Logo.png" alt="KRN">
+  </div>
+
   <h1>New GRN</h1>
   <form method="post" action="/grn/new">
-    <label>Date</label><input type="date" name="date" required>
+    <label>Date</label>
+    <input type="date" name="date" required min="{{min_date}}" max="{{max_date}}">
+    <div class="hint">Allowed: today to 4 days back (no future date)</div>
+
     <label>Supplier</label><input type="text" name="supplier" required>
     <label>RM Type</label>
     <select name="rm_type" required>
@@ -23,8 +34,8 @@
         <option value="{{ t }}">{{ t }}</option>
       {% endfor %}
     </select>
-    <label>Qty (kg)</label><input type="number" step="0.1" name="qty" required>
-    <label>Price (₹/kg)</label><input type="number" step="0.01" name="price" required>
+    <label>Qty (kg)</label><input type="number" step="0.1" min="0.1" name="qty" required>
+    <label>Price (₹/kg)</label><input type="number" step="0.01" min="0" name="price" required>
     <div><button class="btn" type="submit">Save GRN</button> <a href="/grn">Cancel</a></div>
   </form>
 </body>
