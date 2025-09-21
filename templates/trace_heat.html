@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Trace – {{ heat.heat_no }}</title>
+  <link rel="stylesheet" href="/static/bootstrap.min.css">
+</head>
+<body class="p-3">
+  <div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h5 class="mb-0">Heat {{ heat.heat_no }} – Trace</h5>
+      <a class="btn btn-outline-secondary btn-sm" href="/melting">Back</a>
+    </div>
+
+    {% if by_rm %}
+      {% for rm, items in by_rm.items() %}
+        <div class="card mb-2">
+          <div class="card-header py-2"><strong>{{ rm }}</strong></div>
+          <div class="card-body p-2">
+            <table class="table table-sm mb-0">
+              <thead>
+                <tr><th>GRN ID</th><th>Supplier</th><th class="text-end">Qty (kg)</th></tr>
+              </thead>
+              <tbody>
+                {% for gid, qty, supp in items %}
+                  <tr>
+                    <td>{{ gid }}</td>
+                    <td>{{ supp }}</td>
+                    <td class="text-end">{{ '%.1f'|format(qty) }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="alert alert-info">No raw material consumptions recorded for this heat.</div>
+    {% endif %}
+  </div>
+</body>
+</html>
