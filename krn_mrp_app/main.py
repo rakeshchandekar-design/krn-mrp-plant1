@@ -505,7 +505,7 @@ def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat) -> fl
     return added_cost
 
 # -------------------------------------------------
-# Melting (enhanced)  <-- only this handler changed per your patch
+# Melting (enhanced)
 # -------------------------------------------------
 @app.get("/melting", response_class=HTMLResponse)
 def melting_page(
@@ -608,7 +608,7 @@ def melting_page(
     )
 
 # -------------------------------------------------
-# Create Heat (unchanged)
+# Create Heat (unchanged except inline error redirect)
 # -------------------------------------------------
 @app.post("/melting/new")
 def melting_new(
@@ -677,14 +677,15 @@ def melting_new(
     )
     db.add(heat); db.flush()
 
-    # Stock checks
+    # Stock checks (inline error back to page)
     for t, q in parsed:
         if available_stock(db, t) < q - 1e-6:
             db.rollback()
-            return PlainTextResponse(
-                f"Insufficient stock for {t}. Available {available_stock(db, t):.1f} kg",
-                status_code=400
-            )
+            from urllib.parse import quote_plus
+            msg = f"Insufficient stock for {t}. Available {available_stock(db, t):.1f} kg"
+            # return a tiny HTML that alerts and returns to the melting page
+            html = f"""<script>alert("{msg}");window.location="/melting";</script>"""
+            return HTMLResponse(html)
 
     # Consume FIFO + accumulate RM cost
     total_inputs = 0.0
