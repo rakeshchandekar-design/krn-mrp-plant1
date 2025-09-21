@@ -291,10 +291,8 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-# ✨ Make Python builtins available inside Jinja templates (fixes 'max is undefined')
-templates.env.globals.update(
-    max=max, min=min, round=round, int=int, float=float
-)
+# expose python builtins to Jinja (prevents 'max is undefined' etc.)
+templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
 
 # -------------------------------------------------
 # Startup
@@ -559,6 +557,19 @@ def melting_page(
         else:
             krip_qty += r["available"]; krip_val += val
 
+    # Extra KPIs for today
+    today_inputs = 0.0
+    today_outputs = 0.0
+    for r in rows:
+        if r["date"] == today:
+            h = r["heat"]
+            today_inputs  += (h.total_inputs or 0.0)
+            today_outputs += (h.actual_output or 0.0)
+    today_yield_pct = (today_outputs / today_inputs * 100.0) if today_inputs > 0 else 0.0
+    yield_target_pct = 97.0  # 3% loss
+    today_target_kg = day_target_kg(db, today)
+    today_eff_pct = (today_outputs / today_target_kg * 100.0) if today_target_kg > 0 else 0.0
+
     s = start or today.isoformat()
     e = end or today.isoformat()
 
@@ -567,8 +578,7 @@ def melting_page(
         {
             "request": request,
             "rm_types": RM_TYPES,
-            # template expects these:
-            "pending": [r["heat"] for r in rows],  # template filters by QA/available as needed
+            "pending": [r["heat"] for r in rows],
             "heat_grades": {r["heat"].id: r["grade"] for r in rows},
             "today_kwhpt": today_kwhpt,
             "last5": last5,
@@ -577,6 +587,12 @@ def melting_page(
             "start": s,
             "end": e,
             "power_target": POWER_TARGET_KWH_PER_TON,
+            "kpis": {
+                "yield_actual": today_yield_pct,
+                "yield_target": yield_target_pct,
+                "eff_actual": today_eff_pct,
+                "eff_target": 100.0,
+            },
         },
     )
 
@@ -625,14 +641,12 @@ def melting_new(
         return PlainTextResponse("Power Units Consumed (kWh) must be > 0.", status_code=400)
     if downtime_min is None or downtime_min < 0:
         return PlainTextResponse("Downtime minutes must be 0 or more.", status_code=400)
-    # Enforce downtime detail when downtime > 0
     if int(downtime_min) > 0:
         if not (downtime_type and str(downtime_type).strip()):
             return PlainTextResponse("Downtime type is required when downtime > 0.", status_code=400)
         if not (downtime_note and str(downtime_note).strip()):
             return PlainTextResponse("Downtime remarks are required when downtime > 0.", status_code=400)
     else:
-        # If downtime == 0, clear type/note to keep data clean
         downtime_type = None
         downtime_note = ""
 
@@ -922,7 +936,7 @@ def downtime_page(request: Request, db: Session = Depends(get_db)):
     today = dt.date.today()
     last = db.query(Downtime).order_by(Downtime.date.desc(), Downtime.id.desc()).limit(50).all()
     return templates.TemplateResponse(
-        "downtime.html",  # create only if you want a page; safe to ignore
+        "downtime.html",
         {"request": request, "today": today.isoformat(), "rows": last}
     )
 
@@ -946,18 +960,15 @@ def downtime_add(
 def draw_header(c: canvas.Canvas, title: str):
     width, height = A4
     logo_w = 4 * cm
-    logo_h = 3 * cm  # fix explicit height so we can match the text size visually
+    logo_h = 3 * cm
     logo_x = 1.5 * cm
     logo_y = height - 3 * cm
     logo_path = os.path.join(os.path.dirname(__file__), "..", "static", "KRN_Logo.png")
     if os.path.exists(logo_path):
         c.drawImage(logo_path, logo_x, logo_y, width=logo_w, height=logo_h, preserveAspectRatio=True, mask="auto")
 
-    # Make company name roughly match the visual height of the logo
-    name_font_size = 36
-    c.setFont("Helvetica-Bold", name_font_size)
+    c.setFont("Helvetica-Bold", 36)
     c.drawString(7 * cm, height - 2.0 * cm, "KRN Alloys Pvt Ltd")
-
     c.setFont("Helvetica-Bold", 12)
     c.drawString(7 * cm, height - 2.7 * cm, title)
     c.line(1.5 * cm, height - 3.3 * cm, width - 1.5 * cm, height - 3.3 * cm)
