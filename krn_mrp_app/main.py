@@ -371,7 +371,7 @@ def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 # -------------------------------------------------
-# GRN  (unchanged)
+# GRN
 # -------------------------------------------------
 @app.get("/grn", response_class=HTMLResponse)
 def grn_list(
@@ -512,6 +512,7 @@ def melting_page(
     request: Request,
     start: Optional[str] = None,   # YYYY-MM-DD
     end: Optional[str] = None,     # YYYY-MM-DD
+    all: Optional[int] = 0,        # NEW: when 1 -> show heats with available qty (>0) across all dates
     db: Session = Depends(get_db),
 ):
     heats = db.query(Heat).order_by(Heat.id.desc()).all()
@@ -563,17 +564,20 @@ def melting_page(
         else:
             krip_qty += r["available"]; krip_val += val
 
-    # ---- date range handling for list + csv defaults ----
-    s = start or today.isoformat()
-    e = end or today.isoformat()
-    try:
-        s_date = dt.date.fromisoformat(s)
-        e_date = dt.date.fromisoformat(e)
-    except Exception:
-        s_date, e_date = today, today
-
-    # heats shown in table respect the selected date range
-    visible_heats = [r["heat"] for r in rows if s_date <= r["date"] <= e_date]
+    # ---- date range handling / visible list ----
+    if all:  # NEW behavior for "Reset"
+        visible_heats = [r["heat"] for r in rows if (r["available"] or 0.0) > 0.0]
+        # keep date inputs populated with today so the UI still looks neat
+        s = e = today.isoformat()
+    else:
+        s = start or today.isoformat()
+        e = end or today.isoformat()
+        try:
+            s_date = dt.date.fromisoformat(s)
+            e_date = dt.date.fromisoformat(e)
+        except Exception:
+            s_date, e_date = today, today
+        visible_heats = [r["heat"] for r in rows if s_date <= r["date"] <= e_date]
 
     # compact per-heat trace string: "MS Scrap: GRN 12:800, 15:400; CRC: GRN 8:200"
     trace_map: Dict[int, str] = {}
@@ -592,7 +596,7 @@ def melting_page(
         {
             "request": request,
             "rm_types": RM_TYPES,
-            "pending": visible_heats,                     # <— filtered list for table
+            "pending": visible_heats,                     # filtered list for table
             "heat_grades": {r["heat"].id: r["grade"] for r in rows},
             "today_kwhpt": today_kwhpt,
             "yield_today": yield_today,
@@ -603,7 +607,7 @@ def melting_page(
             "start": s,
             "end": e,
             "power_target": POWER_TARGET_KWH_PER_TON,
-            "trace_map": trace_map,                       # <— for new Trace column
+            "trace_map": trace_map,
         },
     )
 
@@ -683,7 +687,6 @@ def melting_new(
             db.rollback()
             from urllib.parse import quote_plus
             msg = f"Insufficient stock for {t}. Available {available_stock(db, t):.1f} kg"
-            # return a tiny HTML that alerts and returns to the melting page
             html = f"""<script>alert("{msg}");window.location="/melting";</script>"""
             return HTMLResponse(html)
 
@@ -754,12 +757,9 @@ def melting_export(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
-# ---------- CSV export for downtime (NEW) ----------
+# ---------- CSV export for downtime ----------
 @app.get("/melting/downtime/export")
 def downtime_export(db: Session = Depends(get_db)):
-    """
-    Exports both per-heat downtime (>0 min) and day-level downtime as a single CSV.
-    """
     out = io.StringIO()
     out.write("Source,Date,Heat No,Minutes,Type/Kind,Remarks\n")
 
@@ -840,7 +840,7 @@ def qa_heat_save(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# Atomization (unchanged)
+# Atomization
 # -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(request: Request, db: Session = Depends(get_db)):
@@ -970,6 +970,24 @@ def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
                 )
             )
     return templates.TemplateResponse("trace_lot.html", {"request": request, "lot": lot, "heats": heats, "grn_rows": rows})
+
+# NEW: Heat-level trace page for your existing Bootstrap template
+@app.get("/traceability/heat/{heat_id}", response_class=HTMLResponse)
+def trace_heat(heat_id: int, request: Request, db: Session = Depends(get_db)):
+    h = db.get(Heat, heat_id)
+    if not h:
+        return PlainTextResponse("Heat not found", status_code=404)
+
+    by_rm: Dict[str, list] = {}
+    for cons in h.rm_consumptions:
+        by_rm.setdefault(cons.rm_type, []).append(
+            (cons.grn_id, float(cons.qty or 0.0), cons.grn.supplier if cons.grn else "")
+        )
+
+    return templates.TemplateResponse(
+        "trace_heat.html",
+        {"request": request, "heat": h, "by_rm": by_rm}
+    )
 
 # -------------------------------------------------
 # Optional: simple endpoints for day-level downtime entries
