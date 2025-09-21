@@ -5,21 +5,19 @@
   <title>Melting</title>
   <style>
     body{font-family:system-ui,Arial,sans-serif;margin:20px;}
-    /* Brand bar */
     .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-    .brand .name{font-weight:800;font-size:2.25rem;line-height:1.1;margin:0}
+    .brand .name{font-weight:800;font-size:28px;line-height:48px;margin:0}
     .brand img{height:48px}
 
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
     .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px}
     .card h3{margin:0 0 8px 0;font-size:16px}
-    .muted{color:#374151;font-size:0.95rem}   /* more readable helper text */
-    .tiny-muted{color:#6b7280;font-size:12px}
+    .muted{color:#6b7280;font-size:12px}
 
     .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px}
     input,select{padding:4px 6px}
     table{border-collapse:collapse;width:100%}
-    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
+    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left;vertical-align:top}
     th{background:#f3f4f6}
     .right{text-align:right}
     .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
@@ -27,9 +25,26 @@
     .badge-info{background:#0ea5e9}
     .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
     a.btn-link{display:inline-block;margin-left:8px}
-    .req{color:#c00} /* red star for required fields */
+    .req::after{content:" *";color:#b91c1c;font-weight:700}
   </style>
   <script>
+    function exportCSV(){
+      const s=document.getElementById('start').value;
+      const e=document.getElementById('end').value;
+      const u=new URL('/melting/export', window.location.origin);
+      u.searchParams.set('start', s); u.searchParams.set('end', e);
+      window.location.href=u.toString();
+    }
+    function fetchRange(){
+      const s=document.getElementById('start').value;
+      const e=document.getElementById('end').value;
+      const u=new URL('/melting', window.location.origin);
+      u.searchParams.set('start', s); u.searchParams.set('end', e);
+      window.location.href=u.toString();
+    }
+    function resetRange(){
+      window.location.href="/melting";
+    }
     // Downtime UI rule: when minutes > 0, type & remarks become required; otherwise disabled
     function syncDowntime(){
       const m=document.getElementById('dt_min');
@@ -60,9 +75,8 @@
   <div class="grid">
     <div class="card">
       <h3>Power KPI (Today)</h3>
-      <div class="muted">Target: {{ '%.0f' % (power_target or 0) }} kWh/ton</div>
       <table>
-        <thead><tr><th>Average kWh/ton</th><th>Gap vs Target</th></tr></thead>
+        <thead><tr><th>Average kWh/ton</th><th>Gap vs Target ({{ '%.0f' % (power_target or 0) }} kWh/ton)</th></tr></thead>
         <tbody>
           <tr>
             <td class="right">{{ '%.1f' % (today_kwhpt or 0) }}</td>
@@ -70,36 +84,6 @@
           </tr>
         </tbody>
       </table>
-
-      <!-- Extra KPIs under power -->
-      <div class="card" style="margin-top:12px">
-        <h3>Yield (Today)</h3>
-        <table>
-          <thead><tr><th>Actual %</th><th>Target %</th><th>Gap %</th></tr></thead>
-          <tbody>
-            <tr>
-              <td class="right">{{ '%.1f' % (kpis.yield_actual or 0) }}</td>
-              <td class="right">{{ '%.1f' % (kpis.yield_target or 0) }}</td>
-              <td class="right">{{ '%.1f' % ((kpis.yield_target or 0) - (kpis.yield_actual or 0)) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="card" style="margin-top:12px">
-        <h3>Output Efficiency (Today)</h3>
-        <table>
-          <thead><tr><th>Actual %</th><th>Target %</th><th>Gap %</th></tr></thead>
-          <tbody>
-            <tr>
-              <td class="right">{{ '%.1f' % (kpis.eff_actual or 0) }}</td>
-              <td class="right">{{ '%.1f' % (kpis.eff_target or 0) }}</td>
-              <td class="right">{{ '%.1f' % ((kpis.eff_target or 0) - (kpis.eff_actual or 0)) }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="tiny-muted">Efficiency uses today’s downtime-adjusted target.</div>
-      </div>
     </div>
 
     <div class="card">
@@ -117,19 +101,48 @@
           {% endfor %}
         </tbody>
       </table>
-      <div class="muted">Daily target is adjusted for logged downtime.</div>
     </div>
   </div>
 
-  <!-- Date range: real GET form -->
-  <form action="/melting" method="get" class="toolbar">
+  <div class="grid" style="grid-template-columns:1fr 1fr;">
+    <div class="card">
+      <h3>Yield (Today)</h3>
+      <table>
+        <thead><tr><th>Actual %</th><th>Target %</th><th>Gap %</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="right">{{ '%.1f' % (yield_today or 0) }}</td>
+            <td class="right">{{ '%.1f' % 97.0 }}</td>
+            <td class="right">{{ '%.1f' % ((yield_today or 0) - 97.0) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Output Efficiency (Today)</h3>
+      <table>
+        <thead><tr><th>Actual %</th><th>Target %</th><th>Gap %</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="right">{{ '%.1f' % (eff_today or 0) }}</td>
+            <td class="right">100.0</td>
+            <td class="right">{{ '%.1f' % ((eff_today or 0) - 100.0) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="toolbar">
     <span>Today</span>
-    <input id="start" name="start" type="date" value="{{ start or today_iso }}" required>
+    <input id="start" type="date" value="{{ start or today_iso }}">
     <span>To</span>
-    <input id="end" name="end" type="date" value="{{ end or today_iso }}" required>
-    <button class="btn" type="submit">Fetch</button>
-    <a class="btn" href="/melting/export?start={{ start }}&end={{ end }}">Download CSV</a>
-  </form>
+    <input id="end" type="date" value="{{ end or today_iso }}">
+    <button class="btn" onclick="fetchRange()">Fetch</button>
+    <button class="btn" onclick="exportCSV()">Download CSV</button>
+    <button class="btn" onclick="resetRange()">Reset</button>
+  </div>
 
   <div class="grid" style="grid-template-columns:1fr;">
     <div class="card">
@@ -141,7 +154,6 @@
           <tr><td>KRFS</td><td class="right">{{ '%.1f' % (stock.krfs_qty or 0) }}</td><td class="right">{{ '%.2f' % (stock.krfs_val or 0) }}</td></tr>
         </tbody>
       </table>
-      <div class="muted">Live stock = Heat output − Atomization allocations (all QA statuses).</div>
     </div>
   </div>
 
@@ -150,39 +162,27 @@
     <form method="post" action="/melting/new">
       <div style="display:flex;gap:12px;flex-wrap:wrap;">
         <div><label>Notes</label><input type="text" name="notes"></div>
-
-        <!-- REQUIRED numeric, 0 allowed, BLANK by default -->
-        <div>
-          <label>Slag Qty (kg) <span class="req">*</span></label>
-          <input type="number" step="0.1" min="0" name="slag_qty" placeholder="0.0" required>
-        </div>
-
-        <!-- REQUIRED numeric, must be > 0 (server enforces), BLANK default -->
-        <div>
-          <label>Power Units Consumed (kWh) <span class="req">*</span></label>
-          <input type="number" step="0.1" min="0" name="power_kwh" placeholder="0.0" required>
-        </div>
+        <div><label class="req">Slag Qty (kg)</label><input type="number" step="0.1" min="0" name="slag_qty" required></div>
+        <div><label class="req">Power Units Consumed (kWh)</label><input type="number" step="0.1" min="0.1" name="power_kwh" required></div>
       </div>
 
       <h3>Raw Materials (up to 4 lines)</h3>
-      <div class="muted">Enter at least <b>2</b> RM lines (server enforces). The other lines are optional.</div>
-      {% for i in [1,2,3,4] %}
-      <div style="display:flex;gap:6px;margin:6px 0;">
-        <select name="rm_type_{{ i }}">
-          <option value="">-- RM Type --</option>
-          {% for t in rm_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
-        </select>
-        <input type="number" step="0.1" min="0" name="rm_qty_{{ i }}" placeholder="Qty (kg)">
+      <div>
+        {% for i in [1,2,3,4] %}
+        <div style="display:flex;gap:6px;margin:6px 0;align-items:center;">
+          <label style="min-width:78px;{{ 'font-weight:700' if i<=2 else '' }}">{{ i<=2 and 'RM Line '+i|string or 'RM Line '+i|string }}{% if i<=2 %} <span class="req"></span>{% endif %}</label>
+          <select name="rm_type_{{ i }}" style="min-width:130px;">
+            <option value="">-- RM Type --</option>
+            {% for t in rm_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+          </select>
+          <input type="number" step="0.1" min="0" name="rm_qty_{{ i }}" placeholder="Qty (kg)" style="width:140px;">
+        </div>
+        {% endfor %}
       </div>
-      {% endfor %}
 
       <h3>Downtime (this heat)</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <!-- REQUIRED numeric, 0 allowed, BLANK default -->
-        <div>
-          <label>Minutes <span class="req">*</span></label>
-          <input id="dt_min" type="number" min="0" step="1" name="downtime_min" placeholder="0" required>
-        </div>
+        <div><label class="req">Minutes</label><input id="dt_min" type="number" min="0" step="1" name="downtime_min" required></div>
         <div>
           <label>Type</label>
           <select id="dt_type" name="downtime_type" disabled>
@@ -214,6 +214,7 @@
           <th class="right">Cost/kg (₹)</th>
           <th class="right">Yield %</th>
           <th>QA</th>
+          <th>Trace (RM → GRN:qty)</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -229,6 +230,7 @@
           <td class="right">{{ '%.2f' % (h.unit_cost or 0) }}</td>
           <td class="right">{{ '%.1f' % ( ((h.actual_output or 0.0) / max((h.total_inputs or 0.0), 1e-9)) * 100.0 ) }}</td>
           <td>{{ h.qa_status }}</td>
+          <td>{{ trace_map.get(h.id, '-') }}</td>
           <td><a href="/qa/heat/{{ h.id }}">QA</a></td>
         </tr>
         {% endfor %}
