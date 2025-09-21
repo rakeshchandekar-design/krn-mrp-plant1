@@ -291,6 +291,11 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
+# ✨ Make Python builtins available inside Jinja templates (fixes 'max is undefined')
+templates.env.globals.update(
+    max=max, min=min, round=round, int=int, float=float
+)
+
 # -------------------------------------------------
 # Startup
 # -------------------------------------------------
@@ -949,7 +954,6 @@ def draw_header(c: canvas.Canvas, title: str):
         c.drawImage(logo_path, logo_x, logo_y, width=logo_w, height=logo_h, preserveAspectRatio=True, mask="auto")
 
     # Make company name roughly match the visual height of the logo
-    # 48 px on web ≈ 36pt; here we choose a bold 36pt for parity.
     name_font_size = 36
     c.setFont("Helvetica-Bold", name_font_size)
     c.drawString(7 * cm, height - 2.0 * cm, "KRN Alloys Pvt Ltd")
