@@ -5,15 +5,16 @@
   <title>Melting</title>
   <style>
     body{font-family:system-ui,Arial,sans-serif;margin:20px;}
-    /* Brand bar: matches GRN page – name height equals logo height (48px) */
+    /* Brand bar */
     .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-    .brand .name{font-weight:800;font-size:20px;line-height:48px;margin:0}
+    .brand .name{font-weight:800;font-size:2.25rem;line-height:1.1;margin:0}
     .brand img{height:48px}
 
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
     .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px}
-    .card h3{margin:0 0 8px 0;font-size:14px}
-    .muted{color:#6b7280;font-size:12px}
+    .card h3{margin:0 0 8px 0;font-size:16px}
+    .muted{color:#374151;font-size:0.95rem}   /* more readable helper text */
+    .tiny-muted{color:#6b7280;font-size:12px}
 
     .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px}
     input,select{padding:4px 6px}
@@ -26,15 +27,9 @@
     .badge-info{background:#0ea5e9}
     .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
     a.btn-link{display:inline-block;margin-left:8px}
+    .req{color:#c00} /* red star for required fields */
   </style>
   <script>
-    function exportCSV(){
-      const s=document.getElementById('start').value;
-      const e=document.getElementById('end').value;
-      const u=new URL('/melting/export', window.location.origin);
-      u.searchParams.set('start', s); u.searchParams.set('end', e);
-      window.location.href=u.toString();
-    }
     // Downtime UI rule: when minutes > 0, type & remarks become required; otherwise disabled
     function syncDowntime(){
       const m=document.getElementById('dt_min');
@@ -65,16 +60,46 @@
   <div class="grid">
     <div class="card">
       <h3>Power KPI (Today)</h3>
-      <div class="muted">Target: 560 kWh/ton</div>
+      <div class="muted">Target: {{ '%.0f' % (power_target or 0) }} kWh/ton</div>
       <table>
         <thead><tr><th>Average kWh/ton</th><th>Gap vs Target</th></tr></thead>
         <tbody>
           <tr>
             <td class="right">{{ '%.1f' % (today_kwhpt or 0) }}</td>
-            <td class="right">{{ '%.1f' % ((today_kwhpt or 0) - 560) }}</td>
+            <td class="right">{{ '%.1f' % ((today_kwhpt or 0) - (power_target or 0)) }}</td>
           </tr>
         </tbody>
       </table>
+
+      <!-- Extra KPIs under power -->
+      <div class="card" style="margin-top:12px">
+        <h3>Yield (Today)</h3>
+        <table>
+          <thead><tr><th>Actual %</th><th>Target %</th><th>Gap %</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="right">{{ '%.1f' % (kpis.yield_actual or 0) }}</td>
+              <td class="right">{{ '%.1f' % (kpis.yield_target or 0) }}</td>
+              <td class="right">{{ '%.1f' % ((kpis.yield_target or 0) - (kpis.yield_actual or 0)) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>Output Efficiency (Today)</h3>
+        <table>
+          <thead><tr><th>Actual %</th><th>Target %</th><th>Gap %</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="right">{{ '%.1f' % (kpis.eff_actual or 0) }}</td>
+              <td class="right">{{ '%.1f' % (kpis.eff_target or 0) }}</td>
+              <td class="right">{{ '%.1f' % ((kpis.eff_target or 0) - (kpis.eff_actual or 0)) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="tiny-muted">Efficiency uses today’s downtime-adjusted target.</div>
+      </div>
     </div>
 
     <div class="card">
@@ -96,14 +121,15 @@
     </div>
   </div>
 
-  <div class="toolbar">
+  <!-- Date range: real GET form -->
+  <form action="/melting" method="get" class="toolbar">
     <span>Today</span>
-    <input id="start" type="date" value="{{ start or today_iso }}">
+    <input id="start" name="start" type="date" value="{{ start or today_iso }}" required>
     <span>To</span>
-    <input id="end" type="date" value="{{ end or today_iso }}">
-    <button class="btn" onclick="location.href=`/melting?start=${start.value}&end=${end.value}`">Fetch</button>
-    <button class="btn" onclick="exportCSV()">Download CSV</button>
-  </div>
+    <input id="end" name="end" type="date" value="{{ end or today_iso }}" required>
+    <button class="btn" type="submit">Fetch</button>
+    <a class="btn" href="/melting/export?start={{ start }}&end={{ end }}">Download CSV</a>
+  </form>
 
   <div class="grid" style="grid-template-columns:1fr;">
     <div class="card">
@@ -124,10 +150,18 @@
     <form method="post" action="/melting/new">
       <div style="display:flex;gap:12px;flex-wrap:wrap;">
         <div><label>Notes</label><input type="text" name="notes"></div>
-        <!-- mandatory numeric; 0 allowed -->
-        <div><label>Slag Qty (kg)</label><input type="number" step="0.1" min="0" name="slag_qty" required value="0.0"></div>
-        <!-- mandatory numeric; must be > 0 (server validates) -->
-        <div><label>Power Units Consumed (kWh)</label><input type="number" step="0.1" min="0.1" name="power_kwh" required></div>
+
+        <!-- REQUIRED numeric, 0 allowed, BLANK by default -->
+        <div>
+          <label>Slag Qty (kg) <span class="req">*</span></label>
+          <input type="number" step="0.1" min="0" name="slag_qty" placeholder="0.0" required>
+        </div>
+
+        <!-- REQUIRED numeric, must be > 0 (server enforces), BLANK default -->
+        <div>
+          <label>Power Units Consumed (kWh) <span class="req">*</span></label>
+          <input type="number" step="0.1" min="0" name="power_kwh" placeholder="0.0" required>
+        </div>
       </div>
 
       <h3>Raw Materials (up to 4 lines)</h3>
@@ -144,8 +178,11 @@
 
       <h3>Downtime (this heat)</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <!-- mandatory numeric; 0 allowed -->
-        <div><label>Minutes</label><input id="dt_min" type="number" min="0" step="1" name="downtime_min" required value="0"></div>
+        <!-- REQUIRED numeric, 0 allowed, BLANK default -->
+        <div>
+          <label>Minutes <span class="req">*</span></label>
+          <input id="dt_min" type="number" min="0" step="1" name="downtime_min" placeholder="0" required>
+        </div>
         <div>
           <label>Type</label>
           <select id="dt_type" name="downtime_type" disabled>
