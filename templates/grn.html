@@ -9,26 +9,79 @@
     th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
     th{background:#f3f4f6}
     a.btn{display:inline-block;margin:6px 8px 6px 0;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;text-decoration:none}
+    .row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    .pill{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:9999px;padding:4px 10px;font-size:12px;margin:2px 6px 2px 0;display:inline-block}
+    .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px;margin:10px 0}
+    img.logo{height:42px}
+    .right{float:right}
+    form.inline>*{margin-right:8px}
   </style>
 </head>
 <body>
+
+  <div class="row">
+    <div><b>KRN Alloys Pvt. Ltd</b></div>
+    <img class="logo" src="/static/KRN_Logo.png" alt="KRN">
+  </div>
+
   <h1>Stores – GRN</h1>
-  <p><a class="btn" href="/grn/new">New GRN</a> <a class="btn" href="/">Home</a></p>
+  <p>
+    <a class="btn" href="/grn/new">New GRN</a>
+    <a class="btn" href="/">Home</a>
+  </p>
+
+  <!-- Live stock summary per RM -->
+  <div class="card">
+    <b>Current RM availability (live):</b><br>
+    <div style="margin-top:6px;">
+      {% for row in rm_summary %}
+        <span class="pill">{{row.rm_type}} — {{ '%.1f' % (row.available or 0) }} kg, ₹{{ '%.2f' % (row.cost or 0) }}</span>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Report controls -->
+  <form class="card inline" method="get" action="/grn">
+    <label>Mode
+      <select name="report">
+        <option value="0" {% if not report %}selected{% endif %}>Normal (hide zero-remaining)</option>
+        <option value="1" {% if report %}selected{% endif %}>Report (use dates)</option>
+      </select>
+    </label>
+    <label>Start <input type="date" name="start" value="{{start}}"></label>
+    <label>End <input type="date" name="end" value="{{end}}"></label>
+    <button class="btn" type="submit">Fetch</button>
+    <a class="btn" href="/grn?report=1&start={{ (now().date()).isoformat() }}&end={{ (now().date()).isoformat() }}">Today</a>
+  </form>
 
   <table>
     <thead>
-      <tr><th>ID</th><th>Date</th><th>Supplier</th><th>RM Type</th><th>Qty (kg)</th><th>Remaining (kg)</th><th>Price (₹/kg)</th></tr>
+      <tr>
+        <th>GRN No</th>
+        <th>Date</th>
+        <th>Supplier</th>
+        <th>RM Type</th>
+        <th>Qty (kg)</th>
+        <th>Price (₹/kg)</th>
+        <th>Total Price (₹)</th>
+        <th>Remaining (kg)</th>
+        <th>Remaining Cost (₹)</th>
+      </tr>
     </thead>
     <tbody>
       {% for g in grns %}
+      {% set total_price = (g.qty or 0) * (g.price or 0) %}
+      {% set remain_cost = (g.remaining_qty or 0) * (g.price or 0) %}
       <tr>
-        <td>{{ g.id }}</td>
+        <td>{{ g.grn_no or ('GRN-' ~ g.id) }}</td>
         <td>{{ g.date }}</td>
         <td>{{ g.supplier }}</td>
         <td>{{ g.rm_type }}</td>
         <td>{{ '%.1f' % (g.qty or 0) }}</td>
-        <td>{{ '%.1f' % (g.remaining_qty or 0) }}</td>
         <td>{{ '%.2f' % (g.price or 0) }}</td>
+        <td>{{ '%.2f' % total_price }}</td>
+        <td>{{ '%.1f' % (g.remaining_qty or 0) }}</td>
+        <td>{{ '%.2f' % remain_cost }}</td>
       </tr>
       {% endfor %}
     </tbody>
