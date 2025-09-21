@@ -95,6 +95,13 @@ def migrate_schema(engine):
             else:
                 conn.execute(text("ALTER TABLE lot_heat ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION DEFAULT 0"))
 
+        # GRN human-readable number (GRN-YYYYMMDD-###)
+        if not _table_has_column(conn, "grn", "grn_no"):
+            if str(engine.url).startswith("sqlite"):
+                conn.execute(text("ALTER TABLE grn ADD COLUMN grn_no TEXT"))
+            else:
+                conn.execute(text("ALTER TABLE grn ADD COLUMN IF NOT EXISTS grn_no TEXT UNIQUE"))
+
 # -------------------------------------------------
 # Constants
 # -------------------------------------------------
@@ -109,6 +116,7 @@ def rm_price_defaults():
 class GRN(Base):
     __tablename__ = "grn"
     id = Column(Integer, primary_key=True)
+    grn_no = Column(String, unique=True, index=True)  # NEW readable number
     date = Column(Date, nullable=False)
     supplier = Column(String, nullable=False)
     rm_type = Column(String, nullable=False)
@@ -257,6 +265,12 @@ def heat_available(db: Session, heat: Heat) -> float:
     heat.alloc_used = float(used)
     return max((heat.actual_output or 0.0) - used, 0.0)
 
+def next_grn_no(db: Session, on_date: dt.date) -> str:
+    """Human number: GRN-YYYYMMDD-###"""
+    ymd = on_date.strftime("%Y%m%d")
+    count = (db.query(func.count(GRN.id)).filter(GRN.grn_no.like(f"GRN-{ymd}-%")).scalar() or 0) + 1
+    return f"GRN-{ymd}-{count:03d}"
+
 # -------------------------------------------------
 # Health + Setup + Home
 # -------------------------------------------------
@@ -275,24 +289,78 @@ def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 # -------------------------------------------------
-# GRN
+# GRN  (improved)
 # -------------------------------------------------
 @app.get("/grn", response_class=HTMLResponse)
-def grn_list(request: Request, db: Session = Depends(get_db)):
-    grns = db.query(GRN).order_by(GRN.id.desc()).all()
-    return templates.TemplateResponse("grn.html", {"request": request, "grns": grns, "prices": rm_price_defaults()})
+def grn_list(
+    request: Request,
+    report: Optional[int] = 0,               # 0=normal (hide zero-remaining), 1=report mode
+    start: Optional[str] = None,             # YYYY-MM-DD (inclusive)
+    end: Optional[str] = None,               # YYYY-MM-DD (inclusive)
+    db: Session = Depends(get_db),
+):
+    q = db.query(GRN)
+    if report:
+        if start:
+            q = q.filter(GRN.date >= dt.date.fromisoformat(start))
+        if end:
+            q = q.filter(GRN.date <= dt.date.fromisoformat(end))
+    else:
+        q = q.filter(GRN.remaining_qty > 0)
+    grns = q.order_by(GRN.id.desc()).all()
+
+    # live stock summary (available & remaining cost) across all RM types
+    live = db.query(GRN).filter(GRN.remaining_qty > 0).all()
+    rm_summary = []
+    for rm in RM_TYPES:
+        subset = [r for r in live if r.rm_type == rm]
+        avail = sum(r.remaining_qty for r in subset)
+        cost = sum((r.remaining_qty or 0.0) * (r.price or 0.0) for r in subset)
+        rm_summary.append({"rm_type": rm, "available": avail, "cost": cost})
+
+    return templates.TemplateResponse(
+        "grn.html",
+        {
+            "request": request,
+            "grns": grns,
+            "prices": rm_price_defaults(),
+            "report": report,
+            "start": start or "",
+            "end": end or "",
+            "rm_summary": rm_summary,
+        },
+    )
 
 @app.get("/grn/new", response_class=HTMLResponse)
 def grn_new(request: Request):
-    return templates.TemplateResponse("grn_new.html", {"request": request, "rm_types": RM_TYPES})
+    today = dt.date.today()
+    min_date = (today - dt.timedelta(days=4)).isoformat()
+    max_date = today.isoformat()
+    return templates.TemplateResponse(
+        "grn_new.html",
+        {"request": request, "rm_types": RM_TYPES, "min_date": min_date, "max_date": max_date},
+    )
 
 @app.post("/grn/new")
 def grn_new_post(
     date: str = Form(...), supplier: str = Form(...), rm_type: str = Form(...),
     qty: float = Form(...), price: float = Form(...), db: Session = Depends(get_db)
 ):
-    g = GRN(date=dt.date.fromisoformat(date), supplier=supplier, rm_type=rm_type,
-            qty=qty, remaining_qty=qty, price=price)
+    # validate date: today to 4 days back only; no future
+    today = dt.date.today()
+    d = dt.date.fromisoformat(date)
+    if d > today or d < (today - dt.timedelta(days=4)):
+        return PlainTextResponse("Date must be today or within the last 4 days.", status_code=400)
+
+    g = GRN(
+        grn_no=next_grn_no(db, d),
+        date=d,
+        supplier=supplier,
+        rm_type=rm_type,
+        qty=qty,
+        remaining_qty=qty,
+        price=price,
+    )
     db.add(g); db.commit()
     return RedirectResponse("/grn", status_code=303)
 
