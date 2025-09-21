@@ -5,6 +5,12 @@
   <title>Melting</title>
   <style>
     body{font-family:system-ui,Arial,sans-serif; margin:20px;}
+
+    /* Brand bar: match GRN */
+    .brand{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px 0}
+    .brand .name{font-weight:800;font-size:20px;line-height:48px;margin:0}
+    .brand img{height:48px}
+
     .sec{margin-bottom:24px}
     table{border-collapse:collapse; width:100%}
     th,td{border:1px solid #e5e7eb; padding:8px; text-align:left}
@@ -12,24 +18,53 @@
     .badge{display:inline-block; padding:2px 8px; border-radius:12px; font-size:12px; color:#fff}
     .badge-success{background:#16a34a}
     .badge-info{background:#0ea5e9}
+    .badge-warn{background:#f59e0b}
+    .badge-danger{background:#ef4444}
     input,select{padding:4px 6px}
-    .btn{padding:8px 14px; border-radius:8px; background:#111827; color:#fff; border:none}
-    a.btn-link{display:inline-block;margin-left:8px}
+    .btn{padding:8px 14px; border-radius:8px; background:#111827; color:#fff; border:none; cursor:pointer}
+    a.btn-link, a.btn{display:inline-block;margin-left:8px}
+    .hint{font-size:12px;color:#6b7280;margin:6px 0}
+    .row{margin:4px 0}
+    .right{text-align:right}
+    .controls{margin:8px 0 16px}
+    .controls input{padding:4px 6px}
   </style>
+  <script>
+    function goToday(){
+      const d=new Date(); const iso=d.toISOString().slice(0,10);
+      const u=new URL(window.location.href);
+      u.searchParams.set('report','1'); u.searchParams.set('start', iso); u.searchParams.set('end', iso);
+      window.location.href=u.toString();
+    }
+    function exportCSV(){
+      const s=document.getElementById('start')?.value || '{{ today_iso }}';
+      const e=document.getElementById('end')?.value   || '{{ today_iso }}';
+      const u=new URL('/melting/export', window.location.origin);
+      u.searchParams.set('start', s); u.searchParams.set('end', e);
+      window.location.href=u.toString();
+    }
+  </script>
 </head>
 <body>
+  <!-- Branding -->
+  <div class="brand">
+    <p class="name">KRN Alloys Pvt. Ltd</p>
+    <img src="/static/KRN_Logo.png" alt="KRN">
+  </div>
+
   <h1>Melting</h1>
   <p><a class="btn-link" href="/">Home</a></p>
 
   <div class="sec">
     <h2>New Heat</h2>
     <form method="post" action="/melting/new">
-      <div><label>Notes</label><input type="text" name="notes"></div>
-      <div><label>Slag Qty (kg)</label><input type="number" step="0.1" name="slag_qty" value="0.0"></div>
+      <div class="row"><label>Notes</label><input type="text" name="notes"></div>
+      <div class="row"><label>Slag Qty (kg)</label><input type="number" step="0.1" name="slag_qty" value="0.0"></div>
 
       <h3>Raw Materials (up to 4 lines)</h3>
+      <div class="hint">Fill <b>at least any 2</b> RM lines. The remaining lines are optional.</div>
       {% for i in [1,2,3,4] %}
-        <div>
+        <div class="row">
           <select name="rm_type_{{ i }}">
             <option value="">-- RM Type --</option>
             {% for t in rm_types %}
@@ -41,28 +76,76 @@
       {% endfor %}
       <p><button class="btn" type="submit">Create Heat</button></p>
     </form>
+
+    <!-- NEW: Available stock summary by heat grade -->
+    <h3>Available Melt Stock (Unallocated)</h3>
+    <table style="width:auto">
+      <thead>
+        <tr><th>Grade</th><th class="right">Available (kg)</th><th class="right">Value (₹)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>KRIP</td><td class="right">{{ '%.1f' % (summary.krip_kg or 0) }}</td><td class="right">{{ '%.2f' % (summary.krip_val or 0) }}</td></tr>
+        <tr><td>KRFS</td><td class="right">{{ '%.1f' % (summary.krfs_kg or 0) }}</td><td class="right">{{ '%.2f' % (summary.krfs_val or 0) }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- NEW: simple report controls -->
+  <div class="controls">
+    <a class="btn" href="javascript:void(0)" onclick="goToday()">Today</a>
+    <form class="inline-form" method="get" action="/melting" style="display:inline-block;margin-left:8px">
+      <input type="hidden" name="report" value="1">
+      <label>From</label>
+      <input id="start" type="date" name="start" value="{{ start or today_iso }}">
+      <label>To</label>
+      <input id="end" type="date" name="end" value="{{ end or today_iso }}">
+      <button class="btn" type="submit">Fetch</button>
+      <a class="btn" href="javascript:void(0)" onclick="exportCSV()">Download CSV</a>
+    </form>
   </div>
 
   <div class="sec">
     <h2>Heats</h2>
     <table>
-      <thead><tr><th>Heat</th><th>Type</th><th>Output (kg)</th><th>QA</th><th>Actions</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Heat</th>
+          <th>Date</th>
+          <th>Type</th>
+          <th class="right">Output (kg)</th>
+          <th class="right">Available (kg)</th>
+          <th class="right">Unit Cost (₹/kg)</th>
+          <th>Total Cost (₹)</th>
+          <th>QA</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
       <tbody>
-        {% for h in pending %}
+        {% for row in heats_view %}
           <tr>
-            <td>{{ h.heat_no }}</td>
+            <td>{{ row.heat.heat_no }}</td>
+            <td>{{ row.date }}</td>
             <td>
-              {% set g = heat_grades.get(h.id) %}
-              {% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>
+              {% if row.grade == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>
               {% else %}<span class="badge badge-success">KRIP</span>{% endif %}
             </td>
-            <td>{{ '%.1f' % (h.actual_output or 0) }}</td>
-            <td>{{ h.qa_status }}</td>
-            <td><a href="/qa/heat/{{ h.id }}">QA</a></td>
+            <td class="right">{{ '%.1f' % (row.heat.actual_output or 0) }}</td>
+            <td class="right">{{ '%.1f' % (row.available or 0) }}</td>
+            <td class="right">{{ '%.2f' % (row.heat.unit_cost or 0) }}</td>
+            <td class="right">{{ '%.2f' % (row.heat.total_cost or 0) }}</td>
+            <td>
+              {% if row.heat.qa_status == 'PENDING' %}<span class="badge badge-warn">PENDING</span>
+              {% elif row.heat.qa_status == 'REJECTED' %}<span class="badge badge-danger">REJECTED</span>
+              {% else %}APPROVED{% endif %}
+            </td>
+            <td><a href="/qa/heat/{{ row.heat.id }}">QA</a></td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
+    {% if not heats_view %}
+      <p class="hint">No heats in this view.</p>
+    {% endif %}
   </div>
 </body>
 </html>
