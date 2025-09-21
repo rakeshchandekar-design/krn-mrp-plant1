@@ -1,4 +1,3 @@
-
 import os, io, datetime as dt
 from typing import List, Optional, Dict
 
@@ -290,7 +289,7 @@ def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 # -------------------------------------------------
-# GRN  (improved & passes today->template)
+# GRN  (unchanged)
 # -------------------------------------------------
 @app.get("/grn", response_class=HTMLResponse)
 def grn_list(
@@ -426,17 +425,82 @@ def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat) -> fl
     if remaining > 1e-6:
         raise ValueError(f"Insufficient {rm_type} stock by {remaining:.1f} kg")
     return added_cost
-    
+
 # -------------------------------------------------
-# Melting
+# Melting (enhanced)
 # -------------------------------------------------
+def _heat_date_from_no(heat_no: str) -> Optional[dt.date]:
+    try:
+        return dt.datetime.strptime(heat_no.split("-")[0], "%Y%m%d").date()
+    except Exception:
+        return None
+
 @app.get("/melting", response_class=HTMLResponse)
-def melting_page(request: Request, db: Session = Depends(get_db)):
+def melting_page(
+    request: Request,
+    report: Optional[int] = 0,        # 0 = normal view, 1 = date-range report
+    start: Optional[str] = None,      # YYYY-MM-DD
+    end: Optional[str] = None,        # YYYY-MM-DD
+    db: Session = Depends(get_db),
+):
     heats = db.query(Heat).order_by(Heat.id.desc()).all()
-    grades = {h.id: heat_grade(h) for h in heats}
+
+    rows = []
+    for h in heats:
+        avail = heat_available(db, h)  # also updates alloc_used mirror
+        rows.append({
+            "heat": h,
+            "grade": heat_grade(h),
+            "available": avail,
+            "date": _heat_date_from_no(h.heat_no) or dt.date.today(),
+        })
+    db.commit()  # persist alloc_used mirror
+
+    # view filtering
+    today = dt.date.today()
+    filtered = rows
+    if report:
+        if start:
+            s = dt.date.fromisoformat(start)
+            filtered = [r for r in filtered if r["date"] >= s]
+        if end:
+            e = dt.date.fromisoformat(end)
+            filtered = [r for r in filtered if r["date"] <= e]
+        heats_view = filtered
+    else:
+        heats_view = []
+        for r in filtered:
+            qa = (r["heat"].qa_status or "PENDING").upper()
+            if qa in ("PENDING", "HOLD", "REJECTED"):
+                heats_view.append(r)
+            elif qa == "APPROVED" and (r["available"] or 0) > 0:
+                heats_view.append(r)
+
+    # summary of available approved by grade & value (value uses unit_cost)
+    krip_kg = krip_val = krfs_kg = krfs_val = 0.0
+    for r in rows:
+        h = r["heat"]
+        if (h.qa_status == "APPROVED") and (r["available"] or 0) > 0:
+            if r["grade"] == "KRFS":
+                krfs_kg += r["available"] or 0.0
+                krfs_val += (r["available"] or 0.0) * (h.unit_cost or 0.0)
+            else:
+                krip_kg += r["available"] or 0.0
+                krip_val += (r["available"] or 0.0) * (h.unit_cost or 0.0)
+
     return templates.TemplateResponse(
         "melting.html",
-        {"request": request, "rm_types": RM_TYPES, "pending": heats, "heat_grades": grades}
+        {
+            "request": request,
+            "rm_types": RM_TYPES,
+            "pending": heats,  # kept for backward compatibility
+            "heats_view": heats_view if not report else filtered,
+            "heat_grades": {r["heat"].id: r["grade"] for r in rows},
+            "summary": {"krip_kg": krip_kg, "krip_val": krip_val, "krfs_kg": krfs_kg, "krfs_val": krfs_val},
+            "start": start or today.isoformat(),
+            "end": end or today.isoformat(),
+            "today_iso": today.isoformat(),
+        },
     )
 
 @app.post("/melting/new")
@@ -453,8 +517,9 @@ def melting_new(
     lines = [(t, float(q)) for t, q in [(rm_type_1, rm_qty_1), (rm_type_2, rm_qty_2),
                                         (rm_type_3, rm_qty_3), (rm_type_4, rm_qty_4)]
              if t and q and q > 0]
-    if not lines:
-        return PlainTextResponse("At least one RM line is required.", status_code=400)
+    # Require at least two RM lines
+    if len(lines) < 2:
+        return PlainTextResponse("Please enter at least two RM lines.", status_code=400)
 
     # Create heat number
     today = dt.date.today().strftime("%Y%m%d")
@@ -502,6 +567,40 @@ def melting_new(
     db.commit()
     return RedirectResponse("/melting", status_code=303)
 
+# ---------- CSV export for melting report ----------
+@app.get("/melting/export")
+def melting_export(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    heats = db.query(Heat).order_by(Heat.id.asc()).all()
+    s = dt.date.fromisoformat(start) if start else None
+    e = dt.date.fromisoformat(end) if end else None
+
+    out = io.StringIO()
+    out.write("Heat No,Date,Grade,QA,Output kg,Available kg,Unit Cost,Total Cost\n")
+    for h in heats:
+        d = _heat_date_from_no(h.heat_no) or dt.date.today()
+        if s and d < s:
+            continue
+        if e and d > e:
+            continue
+        avail = heat_available(db, h)
+        out.write(
+            f"{h.heat_no},{d.isoformat()},{heat_grade(h)},{h.qa_status or ''},"
+            f"{h.actual_output or 0:.1f},{avail:.1f},{h.unit_cost or 0:.2f},{h.total_cost or 0:.2f}\n"
+        )
+    data = out.getvalue().encode("utf-8")
+    filename = f"melting_report_{(start or '').replace('-', '')}_{(end or '').replace('-', '')}.csv"
+    if not filename.strip("_").strip():
+        filename = "melting_report.csv"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
 # -------------------------------------------------
 # QA redirect + Heat QA
 # -------------------------------------------------
@@ -531,8 +630,7 @@ def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
                 "S": (chem.s or ""),
                 "P": (chem.p or ""),
                 "Cu": (chem.cu or ""),
-                "Ni": (chem.ni or ""),
-                "Mn": (chem.mn or ""),
+                "Ni": (chem.ni or ""),                "Mn": (chem.mn or ""),
                 "Fe": (chem.fe or ""),
             },
             "grade": heat_grade(heat),
@@ -659,91 +757,6 @@ async def atom_new(
     db.add(lc)
 
     db.commit()
-    return RedirectResponse("/atomization", status_code=303)
-
-# -------------------------------------------------
-# QA Lot (safe forms with +212 field names)
-# -------------------------------------------------
-@app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
-def qa_lot_form(lot_id: int, request: Request, db: Session = Depends(get_db)):
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
-
-    created = False
-    if not lot.chemistry:
-        lot.chemistry = LotChem(lot=lot); db.add(lot.chemistry); created = True
-    if not lot.phys:
-        lot.phys = LotPhys(lot=lot); db.add(lot.phys); created = True
-    if not lot.psd:
-        lot.psd = LotPSD(lot=lot); db.add(lot.psd); created = True
-    if created:
-        db.commit()
-        db.refresh(lot)
-
-    psd_map = {
-        "+212": lot.psd.p212 or "", "+180": lot.psd.p180 or "",
-        "-180+150": lot.psd.n180p150 or "", "-150+75": lot.psd.n150p75 or "",
-        "-75+45": lot.psd.n75p45 or "", "-45": lot.psd.n45 or ""
-    }
-
-    chem_map = {
-        "C": lot.chemistry.c or "", "Si": lot.chemistry.si or "",
-        "S": lot.chemistry.s or "", "P": lot.chemistry.p or "",
-        "Cu": lot.chemistry.cu or "", "Ni": lot.chemistry.ni or "",
-        "Mn": lot.chemistry.mn or "", "Fe": lot.chemistry.fe or "",
-    }
-
-    phys_map = {"ad": lot.phys.ad or "", "flow": lot.phys.flow or ""}
-
-    return templates.TemplateResponse(
-        "qa_lot.html",
-        {"request": request, "lot": lot, "chem": chem_map, "phys": phys_map, "psd": psd_map, "grade": lot.grade}
-    )
-
-@app.post("/qa/lot/{lot_id}")
-async def qa_lot_save(
-    lot_id: int,
-    request: Request,
-    decision: str = Form("APPROVED"),
-    remarks: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
-
-    form = await request.form()
-
-    # Chemistry
-    chem = lot.chemistry or LotChem(lot=lot)
-    chem.c  = form.get("C", "")
-    chem.si = form.get("Si", "")
-    chem.s  = form.get("S", "")
-    chem.p  = form.get("P", "")
-    chem.cu = form.get("Cu", "")
-    chem.ni = form.get("Ni", "")
-    chem.mn = form.get("Mn", "")
-    chem.fe = form.get("Fe", "")
-
-    # Physical
-    phys = lot.phys or LotPhys(lot=lot)
-    phys.ad   = form.get("ad", "")
-    phys.flow = form.get("flow", "")
-
-    # PSD (field names like '+212')
-    psd = lot.psd or LotPSD(lot=lot)
-    psd.p212      = form.get("+212", "")
-    psd.p180      = form.get("+180", "")
-    psd.n180p150  = form.get("-180+150", "")
-    psd.n150p75   = form.get("-150+75", "")
-    psd.n75p45    = form.get("-75+45", "")
-    psd.n45       = form.get("-45", "")
-
-    lot.qa_status = decision
-    lot.qa_remarks = remarks
-
-    db.add_all([chem, phys, psd, lot]); db.commit()
     return RedirectResponse("/atomization", status_code=303)
 
 # -------------------------------------------------
