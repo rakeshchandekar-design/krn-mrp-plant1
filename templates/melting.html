@@ -4,143 +4,170 @@
   <meta charset="utf-8">
   <title>Melting</title>
   <style>
-    body{font-family:system-ui,Arial,sans-serif; margin:20px;}
-    .sec{margin-bottom:24px}
-    table{border-collapse:collapse; width:100%}
-    th,td{border:1px solid #e5e7eb; padding:8px; text-align:left}
+    body{font-family:system-ui,Arial,sans-serif;margin:20px;}
+    /* Brand bar: matches GRN page */
+    .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .brand .name{font-weight:800;font-size:20px;line-height:48px}
+    .brand img{height:48px}
+
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
+    .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px}
+    .card h3{margin:0 0 8px 0;font-size:14px}
+    .muted{color:#6b7280;font-size:12px}
+
+    .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px}
+    input,select{padding:4px 6px}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
     th{background:#f3f4f6}
-    .badge{display:inline-block; padding:2px 8px; border-radius:12px; font-size:12px; color:#fff}
+    .right{text-align:right}
+    .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
     .badge-success{background:#16a34a}
     .badge-info{background:#0ea5e9}
-    input,select{padding:4px 6px}
-    .btn{padding:8px 14px; border-radius:8px; background:#111827; color:#fff; border:none; cursor:pointer}
+    .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
     a.btn-link{display:inline-block;margin-left:8px}
-    /* NEW: header toolbar */
-    .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0 16px}
-    .toolbar input{padding:4px 6px}
-    .toolbar .btn{background:#fff;color:#111827;border:1px solid #d1d5db}
-    /* NEW: compact two-column summary */
-    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-    .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px}
-    .small{font-size:12px;color:#6b7280}
-    .right{text-align:right}
   </style>
   <script>
-    function goToday(){
-      const d=new Date(); const iso=d.toISOString().slice(0,10);
-      const u=new URL(window.location.href);
-      u.searchParams.set('report','1');
-      u.searchParams.set('start', iso);
-      u.searchParams.set('end', iso);
-      window.location.href=u.toString();
-    }
     function exportCSV(){
-      const s=document.getElementById('start').value || '{{ start or today_iso }}';
-      const e=document.getElementById('end').value   || '{{ end or today_iso }}';
+      const s=document.getElementById('start').value;
+      const e=document.getElementById('end').value;
       const u=new URL('/melting/export', window.location.origin);
-      if(s) u.searchParams.set('start', s);
-      if(e) u.searchParams.set('end', e);
+      u.searchParams.set('start', s); u.searchParams.set('end', e);
       window.location.href=u.toString();
     }
   </script>
 </head>
 <body>
+  <!-- Brand row -->
+  <div class="brand">
+    <div class="name">KRN Alloys Pvt. Ltd</div>
+    <img src="/static/KRN_Logo.png" alt="KRN">
+  </div>
+
   <h1>Melting</h1>
   <p><a class="btn-link" href="/">Home</a></p>
 
-  <!-- NEW: Top summary row -->
-  <div class="grid2 sec">
+  <div class="grid">
     <div class="card">
-      <b>Power KPI (Today)</b>
-      <div class="small">Target: {{ '%.0f' % (power_summary.target_kwh_per_ton or 0) }} kWh/ton</div>
-      <table style="width:auto;margin-top:8px">
-        <tr><th>Average kWh/ton</th><th>Gap vs Target</th></tr>
-        {% set today_avg = power_summary.today_avg_kwh_per_ton or 0 %}
-        <tr>
-          <td class="right">{{ '%.1f' % today_avg }}</td>
-          <td class="right">{{ '%.1f' % (today_avg - (power_summary.target_kwh_per_ton or 0)) }}</td>
-        </tr>
+      <h3>Power KPI (Today)</h3>
+      <div class="muted">Target: 560 kWh/ton</div>
+      <table>
+        <thead><tr><th>Average kWh/ton</th><th>Gap vs Target</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="right">{{ '%.1f' % (today_kwhpt or 0) }}</td>
+            <td class="right">{{ '%.1f' % ((today_kwhpt or 0) - 560) }}</td>
+          </tr>
+        </tbody>
       </table>
     </div>
 
     <div class="card">
-      <b>Production – Last 5 Days</b>
-      <table style="margin-top:8px">
+      <h3>Production – Last 5 Days</h3>
+      <table>
         <thead><tr><th>Date</th><th class="right">Actual (kg)</th><th class="right">Target (kg)</th><th class="right">Eff.%</th></tr></thead>
         <tbody>
-          {% for r in prod_summary %}
-            <tr>
-              <td>{{ r.date }}</td>
-              <td class="right">{{ '%.0f' % (r.actual or 0) }}</td>
-              <td class="right">{{ '%.0f' % (r.target or 0) }}</td>
-              <td class="right">{{ '%.1f' % (r.eff or 0) }}</td>
-            </tr>
+          {% for d in last5 %}
+          <tr>
+            <td>{{ d.date }}</td>
+            <td class="right">{{ '%.0f' % (d.actual or 0) }}</td>
+            <td class="right">{{ '%.0f' % (d.target or 0) }}</td>
+            <td class="right">{{ '%.1f' % ( (100.0 * (d.actual or 0) / (d.target or 1)) ) }}</td>
+          </tr>
           {% endfor %}
         </tbody>
       </table>
-      <div class="small">Daily target is adjusted for logged downtime.</div>
+      <div class="muted">Daily target is adjusted for logged downtime.</div>
     </div>
   </div>
 
-  <!-- NEW: Report toolbar (today + date range + CSV) -->
   <div class="toolbar">
-    <button class="btn" type="button" onclick="goToday()">Today</button>
-    <form method="get" action="/melting" style="display:inline-flex;gap:8px;align-items:center">
-      <input type="hidden" name="report" value="1">
-      <label>From</label>
-      <input id="start" type="date" name="start" value="{{ start or today_iso }}">
-      <label>To</label>
-      <input id="end" type="date" name="end" value="{{ end or today_iso }}">
-      <button class="btn" type="submit">Fetch</button>
-      <button class="btn" type="button" onclick="exportCSV()">Download CSV</button>
-    </form>
+    <span>Today</span>
+    <input id="start" type="date" value="{{ start or today_iso }}">
+    <span>To</span>
+    <input id="end" type="date" value="{{ end or today_iso }}">
+    <button class="btn" onclick="location.href=`/melting?start=${start.value}&end=${end.value}`">Fetch</button>
+    <button class="btn" onclick="exportCSV()">Download CSV</button>
   </div>
 
-  <div class="sec">
-    <h2>New Heat</h2>
-    <form method="post" action="/melting/new">
-      <div><label>Notes</label><input type="text" name="notes"></div>
-      <div><label>Slag Qty (kg)</label><input type="number" step="0.1" name="slag_qty" value="0.0"></div>
+  <div class="grid" style="grid-template-columns:1fr;">
+    <div class="card">
+      <h3>Live Stock – Heats Available</h3>
+      <table style="width:auto">
+        <thead><tr><th>Type</th><th class="right">Available (kg)</th><th class="right">Value (₹)</th></tr></thead>
+        <tbody>
+          <tr><td>KRIP</td><td class="right">{{ '%.1f' % (stock.krip_qty or 0) }}</td><td class="right">{{ '%.2f' % (stock.krip_val or 0) }}</td></tr>
+          <tr><td>KRFS</td><td class="right">{{ '%.1f' % (stock.krfs_qty or 0) }}</td><td class="right">{{ '%.2f' % (stock.krfs_val or 0) }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 
-      <!-- NEW: optional power input -->
-      <div><label>Power (kWh) <span class="small">(optional)</span></label>
-        <input type="number" step="0.1" name="power_kwh" placeholder="e.g., 1650.0">
+  <div class="card">
+    <h2 style="margin:0 0 8px 0;">New Heat</h2>
+    <form method="post" action="/melting/new">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <div><label>Notes</label><input type="text" name="notes"></div>
+        <div><label>Slag Qty (kg)</label><input type="number" step="0.1" name="slag_qty" required value="0.0"></div>
+        <div><label>Power Units Consumed (kWh)</label><input type="number" step="0.1" name="power_kwh" required></div>
       </div>
 
       <h3>Raw Materials (up to 4 lines)</h3>
-      <div class="small">Enter <b>at least 2</b> RM lines (server enforces). The other lines are optional.</div>
+      <div class="muted">Enter at least <b>2</b> RM lines (server enforces). The other lines are optional.</div>
       {% for i in [1,2,3,4] %}
-        <div>
-          <select name="rm_type_{{ i }}">
-            <option value="">-- RM Type --</option>
-            {% for t in rm_types %}
-              <option value="{{ t }}">{{ t }}</option>
-            {% endfor %}
-          </select>
-          <input type="number" step="0.1" name="rm_qty_{{ i }}" placeholder="Qty (kg)">
-        </div>
+      <div style="display:flex;gap:6px;margin:6px 0;">
+        <select name="rm_type_{{ i }}">
+          <option value="">-- RM Type --</option>
+          {% for t in rm_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+        </select>
+        <input type="number" step="0.1" name="rm_qty_{{ i }}" placeholder="Qty (kg)">
+      </div>
       {% endfor %}
+
+      <h3>Downtime (this heat)</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div><label>Minutes</label><input type="number" min="0" step="1" name="downtime_min" required value="0"></div>
+        <div>
+          <label>Type</label>
+          <select name="downtime_type">
+            <option value="production">Production</option>
+            <option value="maintenance">Maintenance</option>
+            <option value="power">Power</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:240px;"><label>Remarks</label><input type="text" name="downtime_note" placeholder="optional"></div>
+      </div>
+
       <p><button class="btn" type="submit">Create Heat</button></p>
     </form>
   </div>
 
-  <div class="sec">
+  <div class="sec" style="margin-top:18px">
     <h2>Heats</h2>
     <table>
-      <thead><tr><th>Heat</th><th>Type</th><th>Output (kg)</th><th>QA</th><th>Actions</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Heat</th>
+          <th>Type</th>
+          <th class="right">Output (kg)</th>
+          <th class="right">kWh/ton</th>
+          <th>QA</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
       <tbody>
         {% for h in pending %}
-          <tr>
-            <td>{{ h.heat_no }}</td>
-            <td>
-              {% set g = heat_grades.get(h.id) %}
-              {% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>
-              {% else %}<span class="badge badge-success">KRIP</span>{% endif %}
-            </td>
-            <td>{{ '%.1f' % (h.actual_output or 0) }}</td>
-            <td>{{ h.qa_status }}</td>
-            <td><a href="/qa/heat/{{ h.id }}">QA</a></td>
-          </tr>
+        {% set g = heat_grades.get(h.id) %}
+        {% set kwhpt = ( (h.power_kwh or 0) > 0 and (h.actual_output or 0) > 0 ) and ( (h.power_kwh / h.actual_output) * 1000 ) or 0 %}
+        <tr>
+          <td>{{ h.heat_no }}</td>
+          <td>{% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
+          <td class="right">{{ '%.1f' % (h.actual_output or 0) }}</td>
+          <td class="right">{{ '%.1f' % kwhpt }}</td>
+          <td>{{ h.qa_status }}</td>
+          <td><a href="/qa/heat/{{ h.id }}">QA</a></td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>
