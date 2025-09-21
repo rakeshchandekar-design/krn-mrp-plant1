@@ -263,7 +263,7 @@ class LotPSD(Base):
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     p212 = Column(String); p180 = Column(String); n180p150 = Column(String)
-    n150p75 = Column(String); n75p45 = Column/String); n45 = Column(String)
+    n150p75 = Column(String); n75p45 = Column(String); n45 = Column(String)
     lot = relationship("Lot", back_populates="psd")
 
 # Optional day-level downtime table
