@@ -505,7 +505,7 @@ def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat) -> fl
     return added_cost
 
 # -------------------------------------------------
-# Melting (enhanced)
+# Melting (enhanced)  <-- only this handler changed per your patch
 # -------------------------------------------------
 @app.get("/melting", response_class=HTMLResponse)
 def melting_page(
@@ -538,7 +538,13 @@ def melting_page(
             kwhpt_vals.append((h.power_kwh / h.actual_output) * 1000.0)
     today_kwhpt = (sum(kwhpt_vals) / len(kwhpt_vals)) if kwhpt_vals else 0.0
 
-    # Last 5 days (including today): actual, target adjusted by per-heat downtime (+ optional day downtime)
+    # Yield & efficiency (today)
+    tot_out_today = sum((r["heat"].actual_output or 0.0) for r in rows if r["date"] == today)
+    tot_in_today  = sum((r["heat"].total_inputs  or 0.0) for r in rows if r["date"] == today)
+    yield_today = (100.0 * tot_out_today / tot_in_today) if tot_in_today > 0 else 0.0
+    eff_today   = (100.0 * tot_out_today / DAILY_CAPACITY_KG) if DAILY_CAPACITY_KG > 0 else 0.0
+
+    # Last 5 days: actual, target adjusted by per-heat + day downtime
     last5 = []
     for i in range(4, -1, -1):
         d = today - dt.timedelta(days=i)
@@ -557,47 +563,53 @@ def melting_page(
         else:
             krip_qty += r["available"]; krip_val += val
 
-    # Extra KPIs for today
-    today_inputs = 0.0
-    today_outputs = 0.0
-    for r in rows:
-        if r["date"] == today:
-            h = r["heat"]
-            today_inputs  += (h.total_inputs or 0.0)
-            today_outputs += (h.actual_output or 0.0)
-    today_yield_pct = (today_outputs / today_inputs * 100.0) if today_inputs > 0 else 0.0
-    yield_target_pct = 97.0  # 3% loss
-    today_target_kg = day_target_kg(db, today)
-    today_eff_pct = (today_outputs / today_target_kg * 100.0) if today_target_kg > 0 else 0.0
-
+    # ---- date range handling for list + csv defaults ----
     s = start or today.isoformat()
     e = end or today.isoformat()
+    try:
+        s_date = dt.date.fromisoformat(s)
+        e_date = dt.date.fromisoformat(e)
+    except Exception:
+        s_date, e_date = today, today
+
+    # heats shown in table respect the selected date range
+    visible_heats = [r["heat"] for r in rows if s_date <= r["date"] <= e_date]
+
+    # compact per-heat trace string: "MS Scrap: GRN 12:800, 15:400; CRC: GRN 8:200"
+    trace_map: Dict[int, str] = {}
+    for h in visible_heats:
+        parts = []
+        by_rm: Dict[str, list] = {}
+        for c in h.rm_consumptions:
+            by_rm.setdefault(c.rm_type, []).append((c.grn_id, c.qty or 0.0))
+        for rm, items in by_rm.items():
+            items_txt = ", ".join([f"GRN {gid}:{qty:.0f}" for gid, qty in items])
+            parts.append(f"{rm}: {items_txt}")
+        trace_map[h.id] = "; ".join(parts) if parts else "-"
 
     return templates.TemplateResponse(
         "melting.html",
         {
             "request": request,
             "rm_types": RM_TYPES,
-            "pending": [r["heat"] for r in rows],
+            "pending": visible_heats,                     # <— filtered list for table
             "heat_grades": {r["heat"].id: r["grade"] for r in rows},
             "today_kwhpt": today_kwhpt,
+            "yield_today": yield_today,
+            "eff_today": eff_today,
             "last5": last5,
             "stock": {"krip_qty": krip_qty, "krip_val": krip_val, "krfs_qty": krfs_qty, "krfs_val": krfs_val},
             "today_iso": today.isoformat(),
             "start": s,
             "end": e,
             "power_target": POWER_TARGET_KWH_PER_TON,
-            "kpis": {
-                "yield_actual": today_yield_pct,
-                "yield_target": yield_target_pct,
-                "eff_actual": today_eff_pct,
-                "eff_target": 100.0,
-            },
+            "trace_map": trace_map,                       # <— for new Trace column
         },
     )
 
-# Create Heat: 2 RM lines mandatory; slag required (0 allowed); power required >0; per-heat downtime required (0 allowed)
-# If downtime == 0 -> type & note cleared; If downtime > 0 -> type & note required.
+# -------------------------------------------------
+# Create Heat (unchanged)
+# -------------------------------------------------
 @app.post("/melting/new")
 def melting_new(
     request: Request,
