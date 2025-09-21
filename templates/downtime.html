@@ -1,0 +1,99 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Downtime</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;margin:20px}
+    .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .brand .name{font-weight:800;font-size:20px;line-height:48px;margin:0}
+    .brand img{height:40px}
+    .card{border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:14px}
+    .card h2,.card h3{margin:0 0 8px 0}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    label{display:block;font-size:12px;color:#6b7280;margin-bottom:2px}
+    input,select{padding:6px 8px}
+    .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
+    .btn.ghost{background:#e5e7eb;color:#111827}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
+    th{background:#f3f4f6}
+    .right{text-align:right}
+  </style>
+  <script>
+    // default sensibly: if minutes > 0, require kind & remarks
+    function syncReq(){
+      const m=document.getElementById('m'); const k=document.getElementById('k'); const r=document.getElementById('r');
+      const on=(parseInt(m.value||'0',10)>0); k.required=on; r.required=on;
+    }
+    document.addEventListener('DOMContentLoaded',()=> {
+      const m=document.getElementById('m'); if(m){ m.addEventListener('input', syncReq); syncReq(); }
+    });
+  </script>
+</head>
+<body>
+  <div class="brand">
+    <div class="name">KRN Alloys Pvt. Ltd</div>
+    <img src="/static/KRN_Logo.png" alt="KRN">
+  </div>
+
+  <h1>Downtime</h1>
+  <p><a class="btn ghost" href="/melting">← Back to Melting</a></p>
+
+  <!-- Add downtime -->
+  <div class="card">
+    <h2>Add day-level downtime</h2>
+    <form method="post" action="/melting/downtime">
+      <div class="row">
+        <div>
+          <label>Date</label>
+          <input type="date" name="date" value="{{ today }}" required>
+        </div>
+        <div>
+          <label>Minutes</label>
+          <input id="m" type="number" name="minutes" min="0" step="1" value="0" required>
+        </div>
+        <div>
+          <label>Kind</label>
+          <select id="k" name="kind">
+            <option value="PRODUCTION">Production</option>
+            <option value="MAINTENANCE">Maintenance</option>
+            <option value="POWER">Power</option>
+            <option value="OTHER">Other</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:240px">
+          <label>Remarks</label>
+          <input id="r" type="text" name="remarks" placeholder="optional">
+        </div>
+      </div>
+      <p><button class="btn" type="submit">Save</button></p>
+    </form>
+  </div>
+
+  <!-- Recent entries -->
+  <div class="card">
+    <h3>Recent entries</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th class="right">Minutes</th>
+          <th>Kind</th>
+          <th>Remarks</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.date.isoformat() }}</td>
+          <td class="right">{{ r.minutes }}</td>
+          <td>{{ r.kind or '' }}</td>
+          <td>{{ r.remarks or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
