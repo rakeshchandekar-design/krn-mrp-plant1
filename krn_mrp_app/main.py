@@ -263,7 +263,7 @@ class LotPSD(Base):
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     p212 = Column(String); p180 = Column(String); n180p150 = Column(String)
-    n150p75 = Column(String); n75p45 = Column(String); n45 = Column(String)
+    n150p75 = Column(String); n75p45 = Column/String); n45 = Column(String)
     lot = relationship("Lot", back_populates="psd")
 
 # Optional day-level downtime table
@@ -751,6 +751,36 @@ def melting_export(
         io.BytesIO(data),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+# ---------- CSV export for downtime (NEW) ----------
+@app.get("/melting/downtime/export")
+def downtime_export(db: Session = Depends(get_db)):
+    """
+    Exports both per-heat downtime (>0 min) and day-level downtime as a single CSV.
+    """
+    out = io.StringIO()
+    out.write("Source,Date,Heat No,Minutes,Type/Kind,Remarks\n")
+
+    # Per-heat downtime
+    heats = db.query(Heat).order_by(Heat.id.asc()).all()
+    for h in heats:
+        mins = int(h.downtime_min or 0)
+        if mins <= 0:
+            continue
+        d = heat_date_from_no(h.heat_no) or dt.date.today()
+        out.write(f"HEAT,{d.isoformat()},{h.heat_no},{mins},{h.downtime_type or ''},{(h.downtime_note or '').replace(',', ' ')}\n")
+
+    # Day-level downtime
+    days = db.query(Downtime).order_by(Downtime.date.asc(), Downtime.id.asc()).all()
+    for r in days:
+        out.write(f"DAY,{r.date.isoformat()},,{int(r.minutes or 0)},{r.kind or ''},{(r.remarks or '').replace(',', ' ')}\n")
+
+    data = out.getvalue().encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="downtime_export.csv"'}
     )
 
 # -------------------------------------------------
