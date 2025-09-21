@@ -571,10 +571,12 @@ def melting_page(
             "today_iso": today.isoformat(),
             "start": s,
             "end": e,
+            "power_target": POWER_TARGET_KWH_PER_TON,
         },
     )
 
 # Create Heat: 2 RM lines mandatory; slag required (0 allowed); power required >0; per-heat downtime required (0 allowed)
+# If downtime == 0 -> type & note cleared; If downtime > 0 -> type & note required.
 @app.post("/melting/new")
 def melting_new(
     request: Request,
@@ -618,6 +620,16 @@ def melting_new(
         return PlainTextResponse("Power Units Consumed (kWh) must be > 0.", status_code=400)
     if downtime_min is None or downtime_min < 0:
         return PlainTextResponse("Downtime minutes must be 0 or more.", status_code=400)
+    # Enforce downtime detail when downtime > 0
+    if int(downtime_min) > 0:
+        if not (downtime_type and str(downtime_type).strip()):
+            return PlainTextResponse("Downtime type is required when downtime > 0.", status_code=400)
+        if not (downtime_note and str(downtime_note).strip()):
+            return PlainTextResponse("Downtime remarks are required when downtime > 0.", status_code=400)
+    else:
+        # If downtime == 0, clear type/note to keep data clean
+        downtime_type = None
+        downtime_note = ""
 
     # Create heat number
     today = dt.date.today().strftime("%Y%m%d")
@@ -928,11 +940,22 @@ def downtime_add(
 # -------------------------------------------------
 def draw_header(c: canvas.Canvas, title: str):
     width, height = A4
+    logo_w = 4 * cm
+    logo_h = 3 * cm  # fix explicit height so we can match the text size visually
+    logo_x = 1.5 * cm
+    logo_y = height - 3 * cm
     logo_path = os.path.join(os.path.dirname(__file__), "..", "static", "KRN_Logo.png")
     if os.path.exists(logo_path):
-        c.drawImage(logo_path, 1.5 * cm, height - 3 * cm, width=4 * cm, preserveAspectRatio=True, mask="auto")
-    c.setFont("Helvetica-Bold", 14); c.drawString(7 * cm, height - 2 * cm, "KRN Alloys Pvt Ltd")
-    c.setFont("Helvetica-Bold", 12); c.drawString(7 * cm, height - 2.7 * cm, title)
+        c.drawImage(logo_path, logo_x, logo_y, width=logo_w, height=logo_h, preserveAspectRatio=True, mask="auto")
+
+    # Make company name roughly match the visual height of the logo
+    # 48 px on web ≈ 36pt; here we choose a bold 36pt for parity.
+    name_font_size = 36
+    c.setFont("Helvetica-Bold", name_font_size)
+    c.drawString(7 * cm, height - 2.0 * cm, "KRN Alloys Pvt Ltd")
+
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(7 * cm, height - 2.7 * cm, title)
     c.line(1.5 * cm, height - 3.3 * cm, width - 1.5 * cm, height - 3.3 * cm)
 
 @app.get("/pdf/lot/{lot_id}")
