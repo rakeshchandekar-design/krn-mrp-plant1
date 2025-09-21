@@ -24,6 +24,10 @@ MELT_COST_PER_KG_KRFS = 8.0
 ATOMIZATION_COST_PER_KG = 5.0
 SURCHARGE_PER_KG = 2.0
 
+# Melting capacity & power targets
+DAILY_CAPACITY_KG = 7000.0          # 24h capacity
+POWER_TARGET_KWH_PER_TON = 560.0    # target kWh/ton
+
 # -------------------------------------------------
 # Database config
 # -------------------------------------------------
@@ -73,6 +77,14 @@ def migrate_schema(engine):
                 else:
                     conn.execute(text(f"ALTER TABLE heat ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
 
+        # Power tracking on heat
+        for col in ["power_kwh", "kwh_per_ton"]:
+            if not _table_has_column(conn, "heat", col):
+                if str(engine.url).startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE heat ADD COLUMN {col} REAL DEFAULT 0"))
+                else:
+                    conn.execute(text(f"ALTER TABLE heat ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
+
         # Track how much of a heat is allocated into lots (mirror for dashboards)
         if not _table_has_column(conn, "heat", "alloc_used"):
             if str(engine.url).startswith("sqlite"):
@@ -101,6 +113,25 @@ def migrate_schema(engine):
                 conn.execute(text("ALTER TABLE grn ADD COLUMN grn_no TEXT"))
             else:
                 conn.execute(text("ALTER TABLE grn ADD COLUMN IF NOT EXISTS grn_no TEXT UNIQUE"))
+
+        # Downtime table (date + minutes + type + remarks)
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS downtime (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              date DATE NOT NULL,
+              minutes INTEGER NOT NULL DEFAULT 0,
+              kind TEXT,
+              remarks TEXT
+            )
+        """)) if str(engine.url).startswith("sqlite") else conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS downtime(
+              id SERIAL PRIMARY KEY,
+              date DATE NOT NULL,
+              minutes INT NOT NULL DEFAULT 0,
+              kind TEXT,
+              remarks TEXT
+            )
+        """))
 
 # -------------------------------------------------
 # Constants
@@ -141,6 +172,10 @@ class Heat(Base):
     process_cost = Column(Float, default=0.0)
     total_cost = Column(Float, default=0.0)
     unit_cost = Column(Float, default=0.0)
+
+    # power
+    power_kwh = Column(Float, default=0.0)    # user-entered kWh for the heat
+    kwh_per_ton = Column(Float, default=0.0)  # computed = power_kwh / (actual_output/1000)
 
     # partial allocations (mirror of allocated qty in lots)
     alloc_used = Column(Float, default=0.0)
@@ -217,6 +252,15 @@ class LotPSD(Base):
     n150p75 = Column(String); n75p45 = Column(String); n45 = Column(String)
     lot = relationship("Lot", back_populates="psd")
 
+# Simple Downtime model via Core table (created in migrate_schema)
+class Downtime(Base):
+    __tablename__ = "downtime"
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False)
+    minutes = Column(Integer, default=0)
+    kind = Column(String)
+    remarks = Column(String)
+
 # -------------------------------------------------
 # App + Templates (robust paths)
 # -------------------------------------------------
@@ -234,7 +278,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 # -------------------------------------------------
-# Startup: auto-migrate so /atomization can't 500 on deploy
+# Startup
 # -------------------------------------------------
 @app.on_event("startup")
 def _startup_migrate():
@@ -266,10 +310,23 @@ def heat_available(db: Session, heat: Heat) -> float:
     return max((heat.actual_output or 0.0) - used, 0.0)
 
 def next_grn_no(db: Session, on_date: dt.date) -> str:
-    """Human number: GRN-YYYYMMDD-###"""
     ymd = on_date.strftime("%Y%m%d")
     count = (db.query(func.count(GRN.id)).filter(GRN.grn_no.like(f"GRN-{ymd}-%")).scalar() or 0) + 1
     return f"GRN-{ymd}-{count:03d}"
+
+def heat_date_from_no(heat_no: str) -> Optional[dt.date]:
+    try:
+        return dt.datetime.strptime(heat_no.split("-")[0], "%Y%m%d").date()
+    except Exception:
+        return None
+
+def day_available_minutes(db: Session, day: dt.date) -> int:
+    mins = db.query(func.coalesce(func.sum(Downtime.minutes), 0)).filter(Downtime.date == day).scalar() or 0
+    mins = int(mins)
+    return max(1440 - mins, 0)
+
+def day_target_kg(db: Session, day: dt.date) -> float:
+    return DAILY_CAPACITY_KG * (day_available_minutes(db, day) / 1440.0)
 
 # -------------------------------------------------
 # Health + Setup + Home
@@ -294,9 +351,9 @@ def home(request: Request):
 @app.get("/grn", response_class=HTMLResponse)
 def grn_list(
     request: Request,
-    report: Optional[int] = 0,               # 0=normal (hide zero-remaining), 1=report mode
-    start: Optional[str] = None,             # YYYY-MM-DD (inclusive)
-    end: Optional[str] = None,               # YYYY-MM-DD (inclusive)
+    report: Optional[int] = 0,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     q = db.query(GRN)
@@ -309,7 +366,6 @@ def grn_list(
         q = q.filter(GRN.remaining_qty > 0)
     grns = q.order_by(GRN.id.desc()).all()
 
-    # live stock summary (available & remaining cost) across all RM types
     live = db.query(GRN).filter(GRN.remaining_qty > 0).all()
     rm_summary = []
     for rm in RM_TYPES:
@@ -318,9 +374,7 @@ def grn_list(
         cost = sum((r.remaining_qty or 0.0) * (r.price or 0.0) for r in subset)
         rm_summary.append({"rm_type": rm, "available": avail, "cost": cost})
 
-    # supply today's date so the template doesn't try to use Jinja now()
     today = dt.date.today()
-
     return templates.TemplateResponse(
         "grn.html",
         {
@@ -351,7 +405,6 @@ def grn_new_post(
     date: str = Form(...), supplier: str = Form(...), rm_type: str = Form(...),
     qty: float = Form(...), price: float = Form(...), db: Session = Depends(get_db)
 ):
-    # validate date: today to 4 days back only; no future
     today = dt.date.today()
     d = dt.date.fromisoformat(date)
     if d > today or d < (today - dt.timedelta(days=4)):
@@ -429,12 +482,6 @@ def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat) -> fl
 # -------------------------------------------------
 # Melting (enhanced)
 # -------------------------------------------------
-def _heat_date_from_no(heat_no: str) -> Optional[dt.date]:
-    try:
-        return dt.datetime.strptime(heat_no.split("-")[0], "%Y%m%d").date()
-    except Exception:
-        return None
-
 @app.get("/melting", response_class=HTMLResponse)
 def melting_page(
     request: Request,
@@ -452,12 +499,13 @@ def melting_page(
             "heat": h,
             "grade": heat_grade(h),
             "available": avail,
-            "date": _heat_date_from_no(h.heat_no) or dt.date.today(),
+            "date": heat_date_from_no(h.heat_no) or dt.date.today(),
         })
     db.commit()  # persist alloc_used mirror
 
-    # view filtering
     today = dt.date.today()
+
+    # normal view: show PENDING/HOLD/REJECTED + APPROVED with >0 available
     filtered = rows
     if report:
         if start:
@@ -476,60 +524,90 @@ def melting_page(
             elif qa == "APPROVED" and (r["available"] or 0) > 0:
                 heats_view.append(r)
 
-    # summary of available approved by grade & value (value uses unit_cost)
-    krip_kg = krip_val = krfs_kg = krfs_val = 0.0
-    for r in rows:
-        h = r["heat"]
-        if (h.qa_status == "APPROVED") and (r["available"] or 0) > 0:
-            if r["grade"] == "KRFS":
-                krfs_kg += r["available"] or 0.0
-                krfs_val += (r["available"] or 0.0) * (h.unit_cost or 0.0)
-            else:
-                krip_kg += r["available"] or 0.0
-                krip_val += (r["available"] or 0.0) * (h.unit_cost or 0.0)
+    # ---- Power summary (today) ----
+    todays = [r["heat"] for r in rows if r["date"] == today and (r["heat"].actual_output or 0) > 0]
+    kwh_ton_list = []
+    for h in todays:
+        if (h.power_kwh or 0) > 0 and (h.actual_output or 0) > 0:
+            val = (h.power_kwh or 0.0) / max((h.actual_output or 0.0) / 1000.0, 1e-9)
+            kwh_ton_list.append(val)
+    today_kwh_per_ton = (sum(kwh_ton_list) / len(kwh_ton_list)) if kwh_ton_list else 0.0
+
+    # ---- Last 5 days production/target/efficiency ----
+    last5_days = [today - dt.timedelta(days=i) for i in range(0, 5)][::-1]
+    prod_rows = []
+    for d in last5_days:
+        actual = sum((r["heat"].actual_output or 0.0) for r in rows if r["date"] == d)
+        target = day_target_kg(db, d)
+        eff = (actual / target * 100.0) if target > 0 else 0.0
+        prod_rows.append({"date": d.isoformat(), "actual": actual, "target": target, "eff": eff})
 
     return templates.TemplateResponse(
         "melting.html",
         {
             "request": request,
             "rm_types": RM_TYPES,
-            "pending": heats,  # kept for backward compatibility
-            "heats_view": heats_view if not report else filtered,
+            "pending": [r["heat"] for r in heats_view],    # compatibility with current template loop
+            "heats_view": heats_view,                      # if you want the richer dict
             "heat_grades": {r["heat"].id: r["grade"] for r in rows},
-            "summary": {"krip_kg": krip_kg, "krip_val": krip_val, "krfs_kg": krfs_kg, "krfs_val": krfs_val},
             "start": start or today.isoformat(),
             "end": end or today.isoformat(),
             "today_iso": today.isoformat(),
+            "power_summary": {
+                "today_avg_kwh_per_ton": today_kwh_per_ton,
+                "target_kwh_per_ton": POWER_TARGET_KWH_PER_TON,
+            },
+            "prod_summary": prod_rows,
         },
     )
 
+# ----- Create Heat (fix: only 2 RM lines mandatory; rest optional) + power capture -----
 @app.post("/melting/new")
 def melting_new(
     request: Request,
     notes: Optional[str] = Form(None),
-    slag_qty: float = Form(0.0),  # keep optional as baseline
+    slag_qty: float = Form(0.0),
+
+    # Accept RM qtys as strings so empty fields don't 400; we'll parse safely
+    rm_type_1: Optional[str] = Form(None), rm_qty_1: Optional[str] = Form(None),
+    rm_type_2: Optional[str] = Form(None), rm_qty_2: Optional[str] = Form(None),
+    rm_type_3: Optional[str] = Form(None), rm_qty_3: Optional[str] = Form(None),
+    rm_type_4: Optional[str] = Form(None), rm_qty_4: Optional[str] = Form(None),
+
+    # New: power logging for the heat (optional)
+    power_kwh: Optional[float] = Form(0.0),
+
     db: Session = Depends(get_db),
-    rm_type_1: Optional[str] = Form(None), rm_qty_1: Optional[float] = Form(None),
-    rm_type_2: Optional[str] = Form(None), rm_qty_2: Optional[float] = Form(None),
-    rm_type_3: Optional[str] = Form(None), rm_qty_3: Optional[float] = Form(None),
-    rm_type_4: Optional[str] = Form(None), rm_qty_4: Optional[float] = Form(None),
 ):
-    lines = [(t, float(q)) for t, q in [(rm_type_1, rm_qty_1), (rm_type_2, rm_qty_2),
-                                        (rm_type_3, rm_qty_3), (rm_type_4, rm_qty_4)]
-             if t and q and q > 0]
-    # Require at least two RM lines
-    if len(lines) < 2:
+    def _to_float(x: Optional[str]) -> Optional[float]:
+        try:
+            if x is None: return None
+            s = str(x).strip()
+            if s == "": return None
+            return float(s)
+        except:
+            return None
+
+    parsed = []
+    for t, q in [(rm_type_1, _to_float(rm_qty_1)),
+                 (rm_type_2, _to_float(rm_qty_2)),
+                 (rm_type_3, _to_float(rm_qty_3)),
+                 (rm_type_4, _to_float(rm_qty_4))]:
+        if t and q and q > 0:
+            parsed.append((t, q))
+
+    if len(parsed) < 2:
         return PlainTextResponse("Please enter at least two RM lines.", status_code=400)
 
     # Create heat number
     today = dt.date.today().strftime("%Y%m%d")
     seq = (db.query(func.count(Heat.id)).filter(Heat.heat_no.like(f"{today}-%")).scalar() or 0) + 1
     heat_no = f"{today}-{seq:03d}"
-    heat = Heat(heat_no=heat_no, notes=notes or "", slag_qty=slag_qty)
+    heat = Heat(heat_no=heat_no, notes=notes or "", slag_qty=slag_qty, power_kwh=float(power_kwh or 0))
     db.add(heat); db.flush()
 
     # Check stock first
-    for t, q in lines:
+    for t, q in parsed:
         if available_stock(db, t) < q - 1e-6:
             db.rollback()
             return PlainTextResponse(
@@ -541,7 +619,7 @@ def melting_new(
     total_inputs = 0.0
     total_rm_cost = 0.0
     used_fesi = False
-    for t, q in lines:
+    for t, q in parsed:
         if t == "FeSi":
             used_fesi = True
         total_rm_cost += consume_fifo(db, t, q, heat)
@@ -564,6 +642,12 @@ def melting_new(
         heat.total_cost = total_rm_cost
         heat.unit_cost = 0.0
 
+    # Power KPI
+    if (heat.actual_output or 0) > 0:
+        heat.kwh_per_ton = (heat.power_kwh or 0.0) / max((heat.actual_output or 0.0) / 1000.0, 1e-9)
+    else:
+        heat.kwh_per_ton = 0.0
+
     db.commit()
     return RedirectResponse("/melting", status_code=303)
 
@@ -579,9 +663,9 @@ def melting_export(
     e = dt.date.fromisoformat(end) if end else None
 
     out = io.StringIO()
-    out.write("Heat No,Date,Grade,QA,Output kg,Available kg,Unit Cost,Total Cost\n")
+    out.write("Heat No,Date,Grade,QA,Output kg,Available kg,Unit Cost,Total Cost,Power kWh,kWh per ton\n")
     for h in heats:
-        d = _heat_date_from_no(h.heat_no) or dt.date.today()
+        d = heat_date_from_no(h.heat_no) or dt.date.today()
         if s and d < s:
             continue
         if e and d > e:
@@ -589,7 +673,8 @@ def melting_export(
         avail = heat_available(db, h)
         out.write(
             f"{h.heat_no},{d.isoformat()},{heat_grade(h)},{h.qa_status or ''},"
-            f"{h.actual_output or 0:.1f},{avail:.1f},{h.unit_cost or 0:.2f},{h.total_cost or 0:.2f}\n"
+            f"{h.actual_output or 0:.1f},{avail:.1f},{h.unit_cost or 0:.2f},{h.total_cost or 0:.2f},"
+            f"{h.power_kwh or 0:.1f},{h.kwh_per_ton or 0:.1f}\n"
         )
     data = out.getvalue().encode("utf-8")
     filename = f"melting_report_{(start or '').replace('-', '')}_{(end or '').replace('-', '')}.csv"
@@ -630,7 +715,8 @@ def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
                 "S": (chem.s or ""),
                 "P": (chem.p or ""),
                 "Cu": (chem.cu or ""),
-                "Ni": (chem.ni or ""),                "Mn": (chem.mn or ""),
+                "Ni": (chem.ni or ""),
+                "Mn": (chem.mn or ""),
                 "Fe": (chem.fe or ""),
             },
             "grade": heat_grade(heat),
@@ -656,7 +742,7 @@ def qa_heat_save(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# Atomization (partial allocation kept, baseline UI)
+# Atomization (unchanged)
 # -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(request: Request, db: Session = Depends(get_db)):
@@ -680,7 +766,6 @@ async def atom_new(
 ):
     form = await request.form()
 
-    # collect allocations typed as alloc_{HEAT_ID}
     allocs: Dict[int, float] = {}
     for key, val in form.items():
         if key.startswith("alloc_"):
@@ -699,25 +784,21 @@ async def atom_new(
     if not heats:
         return PlainTextResponse("Selected heats not found", status_code=404)
 
-    # validate available for each heat
     for h in heats:
         avail = heat_available(db, h)
         take = allocs.get(h.id, 0.0)
         if take > avail + 1e-6:
             return PlainTextResponse(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.", status_code=400)
 
-    # determine grade: KRFS if ANY contributing heat used FeSi
     any_fesi = any(heat_grade(h) == "KRFS" for h in heats)
     grade = "KRFS" if any_fesi else "KRIP"
 
-    # Create lot number
     today = dt.date.today().strftime("%Y%m%d")
     seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"KR%{today}%")).scalar() or 0) + 1
     lot_no = f"{grade}-{today}-{seq:03d}"
     lot = Lot(lot_no=lot_no, weight=lot_weight, grade=grade)
     db.add(lot); db.flush()
 
-    # link heats with allocated qty & bump alloc_used
     total_alloc = 0.0
     for h in heats:
         qty = allocs.get(h.id, 0.0)
@@ -727,7 +808,6 @@ async def atom_new(
         h.alloc_used = (h.alloc_used or 0.0) + qty
         total_alloc += qty
 
-    # cost: weighted by **allocated** qty using the heat unit cost
     weighted_cost = 0.0
     for h in heats:
         qty = allocs.get(h.id, 0.0)
@@ -738,7 +818,6 @@ async def atom_new(
     lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
     lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
 
-    # chemistry prefilling: weighted average by allocated qty (only numeric fields)
     sums = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
     for h in heats:
         q = allocs.get(h.id, 0.0)
@@ -793,6 +872,32 @@ def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
                 )
             )
     return templates.TemplateResponse("trace_lot.html", {"request": request, "lot": lot, "heats": heats, "grn_rows": rows})
+
+# -------------------------------------------------
+# Downtime simple endpoints (optional UI hook)
+# -------------------------------------------------
+@app.get("/melting/downtime", response_class=HTMLResponse)
+def downtime_page(request: Request, db: Session = Depends(get_db)):
+    today = dt.date.today()
+    last = db.query(Downtime).order_by(Downtime.date.desc(), Downtime.id.desc()).limit(50).all()
+    return templates.TemplateResponse(
+        "downtime.html",  # create a tiny form template if you want; or ignore this page
+        {"request": request, "today": today.isoformat(), "rows": last}
+    )
+
+@app.post("/melting/downtime")
+def downtime_add(
+    date: str = Form(...),
+    minutes: int = Form(...),
+    kind: str = Form("PRODUCTION"),
+    remarks: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    d = dt.date.fromisoformat(date)
+    minutes = max(int(minutes), 0)
+    db.add(Downtime(date=d, minutes=minutes, kind=kind, remarks=remarks))
+    db.commit()
+    return RedirectResponse("/melting/downtime", status_code=303)
 
 # -------------------------------------------------
 # PDF (no cost in PDF)
