@@ -116,7 +116,7 @@ def rm_price_defaults():
 class GRN(Base):
     __tablename__ = "grn"
     id = Column(Integer, primary_key=True)
-    grn_no = Column(String, unique=True, index=True)  # NEW readable number
+    grn_no = Column(String, unique=True, index=True)  # readable number
     date = Column(Date, nullable=False)
     supplier = Column(String, nullable=False)
     rm_type = Column(String, nullable=False)
@@ -289,7 +289,7 @@ def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 # -------------------------------------------------
-# GRN  (improved)
+# GRN  (improved & passes today->template)
 # -------------------------------------------------
 @app.get("/grn", response_class=HTMLResponse)
 def grn_list(
@@ -318,6 +318,9 @@ def grn_list(
         cost = sum((r.remaining_qty or 0.0) * (r.price or 0.0) for r in subset)
         rm_summary.append({"rm_type": rm, "available": avail, "cost": cost})
 
+    # supply today's date so the template doesn't try to use Jinja now()
+    today = dt.date.today()
+
     return templates.TemplateResponse(
         "grn.html",
         {
@@ -328,6 +331,8 @@ def grn_list(
             "start": start or "",
             "end": end or "",
             "rm_summary": rm_summary,
+            "today": today,
+            "today_iso": today.isoformat(),
         },
     )
 
