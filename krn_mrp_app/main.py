@@ -1,8 +1,9 @@
+
 import os, io, datetime as dt
 from typing import List, Optional, Dict
 
 # FastAPI
-from fastapi import FastAPI, Request, Form, Depends
+from fastapi import FastAPI, Request, Form, Depends, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -369,6 +370,39 @@ def grn_new_post(
     db.add(g); db.commit()
     return RedirectResponse("/grn", status_code=303)
 
+# ---------- CSV export for report range ----------
+@app.get("/grn/export")
+def grn_export(
+    start: str,
+    end: str,
+    db: Session = Depends(get_db),
+):
+    s = dt.date.fromisoformat(start)
+    e = dt.date.fromisoformat(end)
+    rows = (
+        db.query(GRN)
+        .filter(GRN.date >= s, GRN.date <= e)
+        .order_by(GRN.id.asc())
+        .all()
+    )
+    out = io.StringIO()
+    out.write("GRN No,Date,Supplier,RM Type,Qty (kg),Price (Rs/kg),Total Price,Remaining (kg),Remaining Cost\n")
+    for r in rows:
+        total_price = (r.qty or 0.0) * (r.price or 0.0)
+        remaining_cost = (r.remaining_qty or 0.0) * (r.price or 0.0)
+        out.write(
+            f"{r.grn_no or ''},{r.date},{r.supplier},{r.rm_type},"
+            f"{(r.qty or 0.0):.1f},{(r.price or 0.0):.2f},{total_price:.2f},"
+            f"{(r.remaining_qty or 0.0):.1f},{remaining_cost:.2f}\n"
+        )
+    data = out.getvalue().encode("utf-8")
+    filename = f"grn_report_{start}_to_{end}.csv"
+    return Response(
+        content=data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
 # -------------------------------------------------
 # Stock helpers (FIFO)
 # -------------------------------------------------
@@ -392,7 +426,7 @@ def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat) -> fl
     if remaining > 1e-6:
         raise ValueError(f"Insufficient {rm_type} stock by {remaining:.1f} kg")
     return added_cost
-
+    
 # -------------------------------------------------
 # Melting
 # -------------------------------------------------
