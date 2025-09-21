@@ -4,55 +4,125 @@
   <meta charset="utf-8">
   <title>Stores – GRN</title>
   <style>
-    body{font-family:system-ui,Arial,sans-serif;margin:20px}
+    body{font-family:system-ui,Arial,sans-serif;margin:26px}
+    .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .brand h1{font-size:40px;margin:0;font-weight:800}
+    .brand img{height:40px}
+    a.btn, button.btn{display:inline-block;margin:8px 8px 16px 0;padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;background:#fff;cursor:pointer}
+    .inline-form{display:inline-block;margin-left:8px}
+    .inline-form input{padding:4px 6px}
     table{border-collapse:collapse;width:100%}
     th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
     th{background:#f3f4f6}
-    a.btn, button.btn{display:inline-block;margin:6px 8px 6px 0;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;text-decoration:none;background:#fff;cursor:pointer}
-    .inline-form{display:inline-block;margin-left:8px}
-    .inline-form input{padding:4px 6px}
+    .right{text-align:right}
+    .muted{color:#6b7280}
+    .summary{margin:6px 0 18px}
+    .summary h3{margin:6px 0 8px}
+    .summary table{width:auto}
   </style>
+  <script>
+    function goToday(){
+      const d=new Date(); const iso=d.toISOString().slice(0,10);
+      const u=new URL(window.location.href);
+      u.searchParams.set('report','1');
+      u.searchParams.set('start', iso);
+      u.searchParams.set('end', iso);
+      window.location.href=u.toString();
+    }
+    function exportCSV(){
+      const s=document.getElementById('start').value || '{{ today_iso }}';
+      const e=document.getElementById('end').value   || '{{ today_iso }}';
+      const u=new URL('/grn/export', window.location.origin);
+      u.searchParams.set('start', s);
+      u.searchParams.set('end', e);
+      window.location.href=u.toString();
+    }
+  </script>
 </head>
 <body>
-  <h1>Stores – GRN</h1>
+  <!-- Branding -->
+  <div class="brand">
+    <h1>Stores – GRN</h1>
+    <img src="/static/KRN_Logo.png" alt="KRN">
+  </div>
 
+  <!-- Primary actions -->
   <p>
     <a class="btn" href="/grn/new">New GRN</a>
     <a class="btn" href="/">Home</a>
+    <a class="btn" href="javascript:void(0)" onclick="goToday()">Today</a>
 
-    <!-- Simple report helpers that DO NOT use Jinja now() -->
-    <a class="btn" href="/grn?report=1&start={{ today_iso }}&end={{ today_iso }}">Today</a>
-
+    <!-- Date range filter (report mode) -->
     <form class="inline-form" method="get" action="/grn">
       <input type="hidden" name="report" value="1">
       <label>From</label>
-      <input type="date" name="start" value="{{ today_iso }}">
+      <input id="start" type="date" name="start" value="{{ start or today_iso }}">
       <label>To</label>
-      <input type="date" name="end" value="{{ today_iso }}">
+      <input id="end" type="date" name="end" value="{{ end or today_iso }}">
       <button class="btn" type="submit">Fetch</button>
+      <button class="btn" type="button" onclick="exportCSV()">Download CSV</button>
     </form>
   </p>
 
+  <!-- Live stock summary -->
+  <div class="summary">
+    <h3>Live Stock (Remaining &gt; 0)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>RM Type</th>
+          <th class="right">Available (kg)</th>
+          <th class="right">Remaining Cost (₹)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rm_summary %}
+          <tr>
+            <td>{{ row.rm_type }}</td>
+            <td class="right">{{ '%.1f' % (row.available or 0) }}</td>
+            <td class="right">{{ '%.2f' % (row.cost or 0) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- GRN table -->
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Date</th><th>Supplier</th><th>RM Type</th>
-        <th>Qty (kg)</th><th>Remaining (kg)</th><th>Price (₹/kg)</th>
+        <th>GRN No</th>
+        <th>Date</th>
+        <th>Supplier</th>
+        <th>RM Type</th>
+        <th class="right">Qty (kg)</th>
+        <th class="right">Price (₹/kg)</th>
+        <th class="right">Total Price (₹)</th>
+        <th class="right">Remaining (kg)</th>
+        <th class="right">Remaining Cost (₹)</th>
       </tr>
     </thead>
     <tbody>
       {% for g in grns %}
+      {% set total_price = (g.qty or 0.0) * (g.price or 0.0) %}
+      {% set remaining_cost = (g.remaining_qty or 0.0) * (g.price or 0.0) %}
       <tr>
-        <td>{{ g.id }}</td>
+        <td>{{ g.grn_no or ('GRN-'+ (g.date|string).replace('-','') + '-' + (g.id|string)) }}</td>
         <td>{{ g.date }}</td>
         <td>{{ g.supplier }}</td>
         <td>{{ g.rm_type }}</td>
-        <td>{{ '%.1f' % (g.qty or 0) }}</td>
-        <td>{{ '%.1f' % (g.remaining_qty or 0) }}</td>
-        <td>{{ '%.2f' % (g.price or 0) }}</td>
+        <td class="right">{{ '%.1f' % (g.qty or 0) }}</td>
+        <td class="right">{{ '%.2f' % (g.price or 0) }}</td>
+        <td class="right">{{ '%.2f' % total_price }}</td>
+        <td class="right">{{ '%.1f' % (g.remaining_qty or 0) }}</td>
+        <td class="right">{{ '%.2f' % remaining_cost }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+
+  {% if not grns %}
+    <p class="muted">No GRNs match this view.</p>
+  {% endif %}
 </body>
 </html>
