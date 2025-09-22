@@ -938,6 +938,14 @@ def atom_page(
         else:
             stock["KRIP_qty"] += qty; stock["KRIP_val"] += val
 
+    # ✅ Define lots_stock alias here (template expects it)
+    lots_stock = {
+        "krip_qty": stock.get("KRIP_qty", 0.0),
+        "krip_val": stock.get("KRIP_val", 0.0),
+        "krfs_qty": stock.get("KRFS_qty", 0.0),
+        "krfs_val": stock.get("KRFS_val", 0.0),
+    }
+
     # Date range defaults for the toolbar above Lots table
     s = start or today.isoformat()
     e = end or today.isoformat()
