@@ -5,6 +5,14 @@ from urllib.parse import quote
 # FastAPI
 from fastapi import FastAPI, Request, Form, Depends, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import HTMLResponse
+def _alert_redirect(msg: str, url: str = "/atomization") -> HTMLResponse:
+    safe = (msg or "").replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+    html = f'''<script>
+      alert("{safe}");
+      window.location.href = "{url}";
+    </script>'''
+    return HTMLResponse(html)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -1017,30 +1025,30 @@ async def atom_new(
                     pass
 
         if not allocs:
-            return _redir_err("Enter allocation for at least one heat.")
+            return _alert_redirect("Enter allocation for at least one heat.")
 
         # ---- Fetch heats that were allocated ----
         heats = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
         if not heats:
-            return _redir_err("Selected heats not found.")
+            return _alert_redirect("Selected heats not found.")
 
-        # ---- Check same-family (no KRIP/KRFS mixing) ----
+        # ---- Same-family rule (no KRIP & KRFS mixing) ----
         grades = {("KRFS" if heat_grade(h) == "KRFS" else "KRIP") for h in heats}
         if len(grades) > 1:
-            return _redir_err("Mixing KRIP and KRFS in the same lot is not allowed.")
+            return _alert_redirect("Mixing KRIP and KRFS in the same lot is not allowed.")
 
         # ---- Per-heat available check ----
         for h in heats:
             avail = heat_available(db, h)
             take = allocs.get(h.id, 0.0)
             if take > avail + 1e-6:
-                return _redir_err(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.")
+                return _alert_redirect(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.")
 
-        # ---- Total must equal lot weight (with a tiny tolerance) ----
+        # ---- Total must equal lot weight (tiny tolerance) ----
         total_alloc = sum(allocs.values())
-        tol = 0.05   # 50 grams tolerance avoids float rounding annoyances
+        tol = 0.05  # ~50 g to avoid float rounding issues
         if abs(total_alloc - float(lot_weight or 0.0)) > tol:
-            return _redir_err(
+            return _alert_redirect(
                 f"Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg)."
             )
 
@@ -1053,27 +1061,21 @@ async def atom_new(
         seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"KR%{today}%")).scalar() or 0) + 1
         lot_no = f"{grade}-{today}-{seq:03d}"
 
-        # ---- Create lot (no DB writes before this point) ----
+        # ---- Create lot ----
         lot = Lot(lot_no=lot_no, weight=float(lot_weight or 0.0), grade=grade)
-        db.add(lot); db.flush()
+        db.add(lot)
+        db.flush()
 
-        # ---- Link allocations ----
-        for h in heats:
-            qty = allocs.get(h.id, 0.0)
-            if qty <= 0:
-                continue
-            db.add(LotHeat(lot_id=lot.id, heat_id=h.id, qty=qty))
-            # keep mirror used qty up to date for dashboards
-            h.alloc_used = float(h.alloc_used or 0.0) + qty
-
-        # ---- Costing: weighted heat unit_cost + atom + surcharge ----
-        weighted_cost = 0.0
+        # ---- Link allocations & update mirror usage ----
         for h in heats:
             q = allocs.get(h.id, 0.0)
             if q > 0:
-                weighted_cost += (h.unit_cost or 0.0) * q
-        avg_heat_unit_cost = (weighted_cost / total_alloc) if total_alloc > 1e-9 else 0.0
+                db.add(LotHeat(lot_id=lot.id, heat_id=h.id, qty=q))
+                h.alloc_used = float(h.alloc_used or 0.0) + q
 
+        # ---- Costing: weighted avg heat cost + atom + surcharge ----
+        weighted_cost = sum((h.unit_cost or 0.0) * allocs.get(h.id, 0.0) for h in heats)
+        avg_heat_unit_cost = (weighted_cost / total_alloc) if total_alloc > 1e-9 else 0.0
         lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
         lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
 
@@ -1098,8 +1100,8 @@ async def atom_new(
 
     except Exception as e:
         db.rollback()
-        # show a short, safe message so you’re never stuck on a spinner
-        return _redir_err(f"Unexpected error while creating lot: {type(e).__name__}")
+        return _alert_redirect(f"Unexpected error while creating lot: {type(e).__name__}")
+
 
 
 
