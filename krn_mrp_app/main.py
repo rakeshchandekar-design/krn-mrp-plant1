@@ -1572,16 +1572,21 @@ def rap_allocate(
     if not rap:
         return _alert_redirect("RAP lot not found.", url="/rap")
 
-    try:
+      try:
         d = dt.date.fromisoformat(date)
     except:
         return _alert_redirect("Invalid date.", url="/rap")
+
+    # Date rule: only today or the last 3 days, no future
+    today = dt.date.today()
+    if d > today or d < (today - dt.timedelta(days=3)):
+        return _alert_redirect("Date must be today or within the last 3 days.", url="/rap")
 
     qty = float(qty or 0.0)
     if qty <= 0:
         return _alert_redirect("Quantity must be > 0.", url="/rap")
 
-    # Refresh available from source of truth
+    # Underlying lot must be APPROVED
     lot = db.get(Lot, rap.lot_id)
     if not lot or (lot.qa_status or "") != "APPROVED":
         return _alert_redirect("Underlying lot is not APPROVED.", url="/rap")
@@ -1592,32 +1597,17 @@ def rap_allocate(
     if qty > avail + 1e-6:
         return _alert_redirect(f"Over-allocation. Available {avail:.1f} kg.", url="/rap")
 
-    # Insert movement (keep handle, flush to get id)
-    rec = RAPAlloc(
-        rap_lot_id=rap.id,
-        date=d,
-        kind=(kind if kind in ("DISPATCH", "PLANT2") else "DISPATCH"),
-        qty=qty,
-        remarks=remarks,
-        dest=(dest or ("Plant 2" if kind == "PLANT2" else "")),
-    )
-    db.add(rec)
-    db.flush()               # <-- get rec.id
-    alloc_id = rec.id
+    # Kind-specific rules
+    kind = (kind or "").upper()
+    if kind not in ("DISPATCH", "PLANT2"):
+        kind = "DISPATCH"
 
-    # Update RAPLot mirror
-    rap.available_qty = max(avail - qty, 0.0)
-    rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
-
-    db.add(rap)
-    db.commit()
-
-    # If dispatch, jump to the PDF note
-    if rec.kind == "DISPATCH":
-        return RedirectResponse(f"/rap/dispatch/{alloc_id}/pdf", status_code=303)
-
-    # Otherwise (PLANT2), back to RAP
-    return RedirectResponse("/rap", status_code=303)
+    if kind == "DISPATCH":
+        if not (dest and dest.strip()):
+            return _alert_redirect("Customer name is required for Dispatch.", url="/rap")
+    else:
+        # PLANT2 -> force the destination label, ignore whatever came
+        dest = "Plant 2"
 
 # ---------- CSV export for RAP ----------
 @app.get("/rap/export")
@@ -1790,6 +1780,10 @@ def rap_dispatch_pdf(alloc_id: int, db: Session = Depends(get_db)):
     c.setFont("Helvetica", 10)
     c.drawString(2 * cm, y, "Authorized Sign: ____________________________"); y -= 24
 
+        # --- QA Annexure for each lot in this dispatch ---
+    for item in dispatch.items:
+        draw_lot_qa_annexure(c, item.lot)
+
     c.showPage(); c.save()
     buf.seek(0)
     filename = f"Dispatch_{lot.lot_no}_{alloc.id}.pdf"
@@ -1818,6 +1812,56 @@ def draw_header(c: canvas.Canvas, title: str):
     c.setFont("Helvetica-Bold", 12)
     c.drawString(7 * cm, height - 2.7 * cm, title)
     c.line(1.5 * cm, height - 3.3 * cm, width - 1.5 * cm, height - 3.3 * cm)
+
+def draw_lot_qa_annexure(c: canvas.Canvas, lot: Lot, start_y: float = None):
+    """
+    Add QA annexure pages (Chemistry, Physical, PSD) for a given lot.
+    """
+    width, height = A4
+    y = start_y or (height - 4 * cm)
+
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(2 * cm, y, f"QA Certificate – Lot {lot.lot_no}"); y -= 20
+
+    # Chemistry
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(2 * cm, y, "Chemistry:"); y -= 16
+    c.setFont("Helvetica", 10)
+    if lot.chemistry:
+        for k, v in vars(lot.chemistry).items():
+            if k in ("id", "lot_id"): continue
+            c.drawString(2.5 * cm, y, f"{k.upper()}: {v or ''}"); y -= 12
+            if y < 3 * cm:
+                c.showPage(); draw_header(c, f"QA Certificate – {lot.lot_no}"); y = height - 4 * cm
+    else:
+        c.drawString(2.5 * cm, y, "No chemistry data"); y -= 16
+
+    # Physical
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(2 * cm, y, "Physical:"); y -= 16
+    c.setFont("Helvetica", 10)
+    if lot.phys:
+        for k, v in vars(lot.phys).items():
+            if k in ("id", "lot_id"): continue
+            c.drawString(2.5 * cm, y, f"{k.upper()}: {v or ''}"); y -= 12
+            if y < 3 * cm:
+                c.showPage(); draw_header(c, f"QA Certificate – {lot.lot_no}"); y = height - 4 * cm
+    else:
+        c.drawString(2.5 * cm, y, "No physical data"); y -= 16
+
+    # PSD
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(2 * cm, y, "Particle Size Distribution:"); y -= 16
+    c.setFont("Helvetica", 10)
+    if lot.psd:
+        for k, v in vars(lot.psd).items():
+            if k in ("id", "lot_id"): continue
+            c.drawString(2.5 * cm, y, f"{k.upper()}: {v or ''}"); y -= 12
+            if y < 3 * cm:
+                c.showPage(); draw_header(c, f"QA Certificate – {lot.lot_no}"); y = height - 4 * cm
+    else:
+        c.drawString(2.5 * cm, y, "No PSD data"); y -= 16
+
 
 @app.get("/pdf/lot/{lot_id}")
 def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
