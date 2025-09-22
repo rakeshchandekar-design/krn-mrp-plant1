@@ -962,6 +962,7 @@ def atom_page(
             "atom_last5": last5,
             "atom_capacity": DAILY_CAPACITY_ATOM_KG,
             "atom_stock": stock,
+            "lots_stock": lots_stock,
         }
     )
 
