@@ -5,6 +5,13 @@
   <title>Atomization</title>
   <style>
     body{font-family:system-ui,Arial,sans-serif;margin:20px;}
+    {% if error_msg %}
+  <div style="
+       background:#fee2e2; color:#991b1b; border:1px solid #fecaca;
+       padding:10px 12px; border-radius:8px; margin:8px 0 12px 0;">
+    <strong>Error:</strong> {{ error_msg }}
+  </div>
+{% endif %}
     .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
     .brand .name{font-weight:800;font-size:20px;line-height:48px;margin:0}
     .brand img{height:48px}
