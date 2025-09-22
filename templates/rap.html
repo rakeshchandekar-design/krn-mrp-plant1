@@ -1,0 +1,119 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RAP – Ready After Atomization</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;margin:20px;}
+    .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .brand .name{font-weight:600;font-size:26px;line-height:48px;margin:0}
+    .brand img{height:48px}
+
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
+    .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px}
+    .card h3{margin:0 0 8px 0;font-size:14px}
+    .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
+    .btn.ghost{background:#e5e7eb;color:#111827}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
+    th{background:#f3f4f6}
+    .right{text-align:right}
+    .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
+    .badge-success{background:#16a34a}
+    .badge-info{background:#0ea5e9}
+    .muted{color:#6b7280;font-size:12px}
+    .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px;flex-wrap:wrap}
+    input,select{padding:4px 6px}
+  </style>
+</head>
+<body>
+  <div class="brand">
+    <div class="name">KRN Alloys Pvt. Ltd</div>
+    <img src="/static/KRN_Logo.png" alt="KRN">
+  </div>
+
+  <h1>RAP – Ready After Atomization</h1>
+  <p>
+    <a class="btn ghost" href="/atomization">← Back to Atomization</a>
+    <a class="btn" href="/rap/export">Download CSV</a>
+  </p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>RAP KPIs</h3>
+      <table style="width:auto">
+        <thead><tr><th>Grade</th><th class="right">Available (kg)</th><th class="right">Value (₹)</th></tr></thead>
+        <tbody>
+          <tr><td>KRIP</td><td class="right">{{ '%.1f' % (kpi.KRIP_qty or 0) }}</td><td class="right">{{ '%.2f' % (kpi.KRIP_val or 0) }}</td></tr>
+          <tr><td>KRFS</td><td class="right">{{ '%.1f' % (kpi.KRFS_qty or 0) }}</td><td class="right">{{ '%.2f' % (kpi.KRFS_val or 0) }}</td></tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <th>Total</th>
+            <th class="right">{{ '%.1f' % ((kpi.KRIP_qty or 0)+(kpi.KRFS_qty or 0)) }}</th>
+            <th class="right">{{ '%.2f' % ((kpi.KRIP_val or 0)+(kpi.KRFS_val or 0)) }}</th>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="muted">RAP available = Approved lot weight − allocations (Dispatch/Plant 2).</div>
+    </div>
+
+    <div class="card">
+      <h3>Quick Allocate</h3>
+      <div class="muted">Use the Allocate buttons in the table below for per-lot movements.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px 0;">RAP Lots</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Lot</th>
+          <th>Grade</th>
+          <th class="right">Lot Weight (kg)</th>
+          <th class="right">Available in RAP (kg)</th>
+          <th class="right">Cost/kg (₹)</th>
+          <th>Allocate</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          {% set lot = r.lot %}
+          <tr>
+            <td>{{ lot.lot_no }}</td>
+            <td>
+              {% if (lot.grade or 'KRIP') == 'KRFS' %}
+                <span class="badge badge-info">KRFS</span>
+              {% else %}
+                <span class="badge badge-success">KRIP</span>
+              {% endif %}
+            </td>
+            <td class="right">{{ '%.1f' % (lot.weight or 0) }}</td>
+            <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
+            <td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>
+            <td>
+              <form method="post" action="/rap/allocate" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                <input type="hidden" name="rap_lot_id" value="{{ r.id }}">
+                <input type="date" name="date" value="{{ (lot.lot_no.split('-')[1][0:4] ~ '-' ~ lot.lot_no.split('-')[1][4:6] ~ '-' ~ lot.lot_no.split('-')[1][6:8]) if lot.lot_no else '' }}" required>
+                <select name="kind">
+                  <option value="DISPATCH">Dispatch</option>
+                  <option value="PLANT2">Plant 2</option>
+                </select>
+                <input type="number" step="0.1" min="0" max="{{ '%.1f' % (r.available_qty or 0) }}" name="qty" placeholder="Qty (kg)" required>
+                <input type="text" name="dest" placeholder="Customer / Plant 2">
+                <input type="text" name="remarks" placeholder="remarks">
+                <button class="btn" type="submit">Allocate</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if not rows %}
+      <p class="muted">No APPROVED lots are available in RAP.</p>
+    {% endif %}
+  </div>
+</body>
+</html>
