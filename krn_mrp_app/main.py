@@ -1546,17 +1546,39 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
         else:
             kpi["KRIP_qty"] += qty
             kpi["KRIP_val"] += val
+    from datetime import date
+
+# --- Monthly RAP KPI Trends ---
+today = date.today()
+month_start = today.replace(day=1)
+
+trend = (
+    db.query(RAPAlloc.kind, Lot.grade, func.sum(RAPAlloc.qty))
+    .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
+    .join(Lot, RAPLot.lot_id == Lot.id)
+    .filter(RAPAlloc.date >= month_start)
+    .group_by(RAPAlloc.kind, Lot.grade)
+    .all()
+)
+
+kpi_trends = {
+    "DISPATCH": {"KRIP": 0, "KRFS": 0},
+    "PLANT2": {"KRIP": 0, "KRFS": 0},
+}
+for kind, grade, qty in trend:
+    kpi_trends[kind][grade or "KRIP"] = float(qty or 0)
 
     # Render
     return templates.TemplateResponse(
-        "rap.html",
-        {
-            "request": request,
-            "rows": rap_rows,        # what rap.html iterates
-            "kpi": kpi,              # what rap.html uses for KPI table
-            "today": today.isoformat()
-        }
-    )
+    "rap.html",
+    {
+        "request": request,
+        "rows": rap_rows,
+        "kpi": kpi,
+        "kpi_trends": kpi_trends,
+        "today": today.isoformat()
+    }
+)
 
 @app.post("/rap/allocate")
 def rap_allocate(
