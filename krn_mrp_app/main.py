@@ -1000,90 +1000,106 @@ async def atom_new(
     lot_weight: float = Form(3000.0),
     db: Session = Depends(get_db)
 ):
-    form = await request.form()
+    try:
+        form = await request.form()
 
-    # Parse allocations
-    allocs: Dict[int, float] = {}
-    for key, val in form.items():
-        if key.startswith("alloc_"):
-            try:
-                hid = int(key.split("_", 1)[1])
-                qty = float(val or 0)
-                if qty > 0:
-                    allocs[hid] = qty
-            except:
-                pass
+        # ---- Parse allocations from form ----
+        allocs: Dict[int, float] = {}
+        for key, val in form.items():
+            if key.startswith("alloc_"):
+                try:
+                    hid = int(key.split("_", 1)[1])
+                    qty = float(val or 0)
+                    if qty > 0:
+                        allocs[hid] = qty
+                except Exception:
+                    pass
 
-    if not allocs:
-        return _redir_err("Enter allocation for at least one heat.")
-    
+        if not allocs:
+            return _redir_err("Enter allocation for at least one heat.")
 
-    heats = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
-    if not heats:
-        return _redir_err("Selected heats not found.")
+        # ---- Fetch heats that were allocated ----
+        heats = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
+        if not heats:
+            return _redir_err("Selected heats not found.")
 
-    # Per-heat availability check
-    for h in heats:
-        avail = heat_available(db, h)
-        take = allocs.get(h.id, 0.0)
-        if take > avail + 1e-6:
-            return_redir_err(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.")
-            
-    # Enforce single grade family (no mixing KRIP & KRFS in one lot)
-    g_list = [heat_grade(h) for h in heats]
-    if not all(g == g_list[0] for g in g_list):
-        return _redir_err("Mixing KRIP and KRFS in the same lot is not allowed.")
-        
-    # Total allocation must equal Lot Weight (±0.1 kg)
-    total_alloc = sum(allocs.values())
-    if abs(total_alloc - float(lot_weight or 0.0)) > 0.1:
-        return _redir_err(f"Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg).")
+        # ---- Check same-family (no KRIP/KRFS mixing) ----
+        grades = {("KRFS" if heat_grade(h) == "KRFS" else "KRIP") for h in heats}
+        if len(grades) > 1:
+            return _redir_err("Mixing KRIP and KRFS in the same lot is not allowed.")
 
-    grade = g_list[0]  # since all equal now
+        # ---- Per-heat available check ----
+        for h in heats:
+            avail = heat_available(db, h)
+            take = allocs.get(h.id, 0.0)
+            if take > avail + 1e-6:
+                return _redir_err(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.")
 
-    today = dt.date.today().strftime("%Y%m%d")
-    seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"KR%{today}%")).scalar() or 0) + 1
-    lot_no = f"{grade}-{today}-{seq:03d}"
-    lot = Lot(lot_no=lot_no, weight=float(lot_weight), grade=grade)
-    db.add(lot); db.flush()
+        # ---- Total must equal lot weight (with a tiny tolerance) ----
+        total_alloc = sum(allocs.values())
+        tol = 0.05   # 50 grams tolerance avoids float rounding annoyances
+        if abs(total_alloc - float(lot_weight or 0.0)) > tol:
+            return _redir_err(
+                f"Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg)."
+            )
 
-    # Create LotHeat rows and update mirror alloc_used
-    for h in heats:
-        qty = allocs.get(h.id, 0.0)
-        if qty <= 0:
-            continue
-        db.add(LotHeat(lot_id=lot.id, heat_id=h.id, qty=qty))
-        h.alloc_used = (h.alloc_used or 0.0) + qty
+        # ---- Determine lot grade (any KRFS -> KRFS) ----
+        any_fesi = any(heat_grade(h) == "KRFS" for h in heats)
+        grade = "KRFS" if any_fesi else "KRIP"
 
-    # Weighted average cost from heats
-    weighted_cost = 0.0
-    for h in heats:
-        qty = allocs.get(h.id, 0.0)
-        if qty > 0:
-            weighted_cost += (h.unit_cost or 0.0) * qty
-    avg_heat_unit_cost = (weighted_cost / total_alloc) if total_alloc > 0 else 0.0
+        # ---- Create lot number ----
+        today = dt.date.today().strftime("%Y%m%d")
+        seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"KR%{today}%")).scalar() or 0) + 1
+        lot_no = f"{grade}-{today}-{seq:03d}"
 
-    lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
-    lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
+        # ---- Create lot (no DB writes before this point) ----
+        lot = Lot(lot_no=lot_no, weight=float(lot_weight or 0.0), grade=grade)
+        db.add(lot); db.flush()
 
-    # Average chemistry
-    sums = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
-    for h in heats:
-        q = allocs.get(h.id, 0.0)
-        if q <= 0 or not h.chemistry:
-            continue
-        for k in list(sums.keys()):
-            try:
-                v = float(getattr(h.chemistry, k) or "")
-                sums[k] += v * q
-            except:
-                pass
-    avg = {k: (sums[k] / total_alloc) if total_alloc > 0 else None for k in sums.keys()}
-    lc = LotChem(lot=lot, **{k: (str(v) if v is not None else "") for k, v in avg.items()})
-    db.add(lc)
+        # ---- Link allocations ----
+        for h in heats:
+            qty = allocs.get(h.id, 0.0)
+            if qty <= 0:
+                continue
+            db.add(LotHeat(lot_id=lot.id, heat_id=h.id, qty=qty))
+            # keep mirror used qty up to date for dashboards
+            h.alloc_used = float(h.alloc_used or 0.0) + qty
 
-    db.commit()
-    return RedirectResponse("/atomization", status_code=303)
+        # ---- Costing: weighted heat unit_cost + atom + surcharge ----
+        weighted_cost = 0.0
+        for h in heats:
+            q = allocs.get(h.id, 0.0)
+            if q > 0:
+                weighted_cost += (h.unit_cost or 0.0) * q
+        avg_heat_unit_cost = (weighted_cost / total_alloc) if total_alloc > 1e-9 else 0.0
+
+        lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
+        lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
+
+        # ---- Chemistry average (unchanged) ----
+        sums = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
+        for h in heats:
+            q = allocs.get(h.id, 0.0)
+            if q <= 0 or not h.chemistry:
+                continue
+            for k in list(sums.keys()):
+                try:
+                    v = float(getattr(h.chemistry, k) or "")
+                    sums[k] += v * q
+                except Exception:
+                    pass
+        avg = {k: (sums[k] / total_alloc) if total_alloc > 1e-9 else None for k in sums.keys()}
+        lc = LotChem(lot=lot, **{k: (str(v) if v is not None else "") for k, v in avg.items()})
+        db.add(lc)
+
+        db.commit()
+        return RedirectResponse("/atomization", status_code=303)
+
+    except Exception as e:
+        db.rollback()
+        # show a short, safe message so you’re never stuck on a spinner
+        return _redir_err(f"Unexpected error while creating lot: {type(e).__name__}")
+
 
 
 # ---------- CSV export for atomization lots (NEW) ----------
