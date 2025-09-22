@@ -1563,14 +1563,14 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
         else:
             k["KRIP_qty"] += qty; k["KRIP_val"] += val
 
-    return templates.TemplateResponse(
-        "rap.html",
-        {
-            "request": request,
-            "rows": rap_rows,  # each has .lot and .available_qty
-            "kpi": k
-        }
-    )
+    # Map names to what rap.html expects
+kpi  = summary   # totals by grade
+rows = lots      # individual RAP lots
+
+return templates.TemplateResponse(
+    "rap.html",
+    {"request": request, "rows": rows, "kpi": kpi, "today": today.isoformat()}
+)
 
 @app.post("/rap/allocate")
 def rap_allocate(
