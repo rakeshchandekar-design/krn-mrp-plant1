@@ -909,7 +909,12 @@ def atom_page(
     db: Session = Depends(get_db)
 ):
     # Only APPROVED heats
-    heats_all = db.query(Heat).filter(Heat.qa_status == "APPROVED").order_by(Heat.id.desc()).all()
+    heats_all = (
+        db.query(Heat)
+        .filter(Heat.qa_status == "APPROVED")
+        .order_by(Heat.id.desc())
+        .all()
+    )
 
     # Availability + grade
     available_map = {h.id: heat_available(db, h) for h in heats_all}
@@ -935,15 +940,17 @@ def atom_page(
         target = atom_day_target_kg(db, d)
         last5.append({"date": d.isoformat(), "actual": actual, "target": target})
 
-    # Live stock of lots (simple: total lots by grade; no downstream deductions yet)
+    # Live stock of lots (simple: total lots by grade)
     stock = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
     for lot in lots:
         qty = lot.weight or 0.0
         val = qty * (lot.unit_cost or 0.0)
         if (lot.grade or "KRIP") == "KRFS":
-            stock["KRFS_qty"] += qty; stock["KRFS_val"] += val
+            stock["KRFS_qty"] += qty
+            stock["KRFS_val"] += val
         else:
-            stock["KRIP_qty"] += qty; stock["KRIP_val"] += val
+            stock["KRIP_qty"] += qty
+            stock["KRIP_val"] += val
 
     lots_stock = {
         "krip_qty": stock.get("KRIP_qty", 0.0),
@@ -956,12 +963,14 @@ def atom_page(
     s = start or today.isoformat()
     e = end or today.isoformat()
     try:
-        s_date = dt.date.fromisoformat(s); e_date = dt.date.fromisoformat(e)
+        s_date = dt.date.fromisoformat(s)
+        e_date = dt.date.fromisoformat(e)
     except Exception:
-        s_date, e_date = today, today
+        s_date, e_date = today, today  # kept for future use
 
-     err = request.query_params.get("err") 
-     
+    # NEW: read error banner text (if redirected with ?err=...)
+    err = request.query_params.get("err")
+
     return templates.TemplateResponse(
         "atomization.html",
         {
@@ -971,12 +980,14 @@ def atom_page(
             "heat_grades": grades,
             "available_map": available_map,
             "today_iso": today.isoformat(),
-            "start": s, "end": e,
+            "start": s,
+            "end": e,
             "atom_eff_today": eff_today,
             "atom_last5": last5,
             "atom_capacity": DAILY_CAPACITY_ATOM_KG,
             "atom_stock": stock,
             "lots_stock": lots_stock,
+            "error_msg": err,                   # <-- drives the inline banner
         }
     )
 
