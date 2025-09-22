@@ -1,5 +1,6 @@
 import os, io, datetime as dt
 from typing import Optional, Dict, List, Tuple
+from urllib.parse import quote
 
 # FastAPI
 from fastapi import FastAPI, Request, Form, Depends, Response
@@ -959,6 +960,8 @@ def atom_page(
     except Exception:
         s_date, e_date = today, today
 
+     err = request.query_params.get("err") 
+     
     return templates.TemplateResponse(
         "atomization.html",
         {
@@ -976,6 +979,9 @@ def atom_page(
             "lots_stock": lots_stock,
         }
     )
+
+def _redir_err(msg: str) -> RedirectResponse:
+    return RedirectResponse(f"/atomization?err={quote(msg)}", status_code=303)
 
 @app.post("/atomization/new")
 async def atom_new(
@@ -998,36 +1004,29 @@ async def atom_new(
                 pass
 
     if not allocs:
-        return HTMLResponse(
-            '<script>alert("Enter allocation for at least one heat.");history.back();</script>'
-        )
+        return _redir_err("Enter allocation for at least one heat.")
+    
 
     heats = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
     if not heats:
-        return HTMLResponse('<script>alert("Selected heats not found.");history.back();</script>')
+        return _redir_err("Selected heats not found.")
 
     # Per-heat availability check
     for h in heats:
         avail = heat_available(db, h)
         take = allocs.get(h.id, 0.0)
         if take > avail + 1e-6:
-            return HTMLResponse(
-                f'<script>alert("Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.");history.back();</script>'
-            )
-
+            return_redir_err(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.")
+            
     # Enforce single grade family (no mixing KRIP & KRFS in one lot)
     g_list = [heat_grade(h) for h in heats]
     if not all(g == g_list[0] for g in g_list):
-        return HTMLResponse(
-            '<script>alert("Mixing KRIP and KRFS in the same lot is not allowed.");history.back();</script>'
-        )
-
+        return _redir_err("Mixing KRIP and KRFS in the same lot is not allowed.")
+        
     # Total allocation must equal Lot Weight (±0.1 kg)
     total_alloc = sum(allocs.values())
     if abs(total_alloc - float(lot_weight or 0.0)) > 0.1:
-        return HTMLResponse(
-            f'<script>alert("Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg).");history.back();</script>'
-        )
+        return _redir_err(f"Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg).")
 
     grade = g_list[0]  # since all equal now
 
