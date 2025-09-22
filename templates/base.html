@@ -13,20 +13,20 @@
   </style>
 </head>
 <body>
-  <nav>
-    <div class="header-brand">
-      <img src="/static/KRN_Logo.png" alt="KRN" />
-      <h1>KRN Alloys Pvt Ltd – Plant 1</h1>
-    </div>
-    <div class="top-right">
-      <a href="/" {{ active('/') }}>Home</a>
-      <a href="/grn" {{ active('/grn') }}>Stores (GRN)</a>
-      <a href="/melting" {{ active('/melting') }}>Melting</a>
-      <a href="/atomization" {{ active('/atomization') }}>Atomization</a>
-      <a href="/qa" {{ active('/qa') }}>QA</a>
-      <a href="/rap">RAP</a>
-    </div>
-  </nav>
+<nav>
+  <div class="header-brand">
+    <img src="/static/KRN_Logo.png" alt="KRN" />
+    <h1>KRN Alloys Pvt Ltd – Plant 1</h1>
+  </div>
+  <div class="top-right">
+    <a href="/" {{ active('/') }}>Home</a>
+    <a href="/grn" {{ active('/grn') }}>Stores (GRN)</a>
+    <a href="/melting" {{ active('/melting') }}>Melting</a>
+    <a href="/atomization" {{ active('/atomization') }}>Atomization</a>
+    <a href="/rap" {{ active('/rap') }}>RAP</a>           <!-- 👈 add this -->
+    <a href="/qa" {{ active('/qa') }}>QA</a>
+  </div>
+</nav>
   {% block content %}{% endblock %}
 </body>
 </html>
