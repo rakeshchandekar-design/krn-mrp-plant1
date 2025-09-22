@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Atomization Downtime</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;margin:20px;}
+    .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px;margin-bottom:12px}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
+    th{background:#f3f4f6}
+    .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
+    .muted{color:#6b7280}
+  </style>
+</head>
+<body>
+  <h1>Atomization Downtime</h1>
+  <p><a href="/atomization" class="btn">Back to Atomization</a></p>
+
+  <div class="card">
+    <h3>Add Day-level Downtime</h3>
+    <form method="post" action="/atomization/downtime">
+      <label>Date</label>
+      <input type="date" name="date" value="{{ today }}">
+      <label>Minutes</label>
+      <input type="number" name="minutes" min="0" value="0">
+      <label>Kind</label>
+      <select name="kind">
+        <option>PRODUCTION</option>
+        <option>MAINTENANCE</option>
+        <option>POWER</option>
+        <option>OTHER</option>
+      </select>
+      <label>Remarks</label>
+      <input type="text" name="remarks" placeholder="remarks">
+      <p><button class="btn" type="submit">Add</button> <a class="btn muted" href="/atomization/downtime/export">Download CSV</a></p>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>Recent Atomization Downtime</h3>
+    <table>
+      <thead><tr><th>Date</th><th class="right">Minutes</th><th>Kind</th><th>Remarks</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.date }}</td>
+          <td class="right">{{ r.minutes }}</td>
+          <td>{{ r.kind }}</td>
+          <td>{{ r.remarks }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
