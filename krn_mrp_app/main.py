@@ -972,24 +972,25 @@ def atom_page(
     err = request.query_params.get("err")
 
     return templates.TemplateResponse(
-        "atomization.html",
-        {
-            "request": request,
-            "heats": heats,                     # filtered list (available > 0)
-            "lots": lots,
-            "heat_grades": grades,
-            "available_map": available_map,
-            "today_iso": today.isoformat(),
-            "start": s,
-            "end": e,
-            "atom_eff_today": eff_today,
-            "atom_last5": last5,
-            "atom_capacity": DAILY_CAPACITY_ATOM_KG,
-            "atom_stock": stock,
-            "lots_stock": lots_stock,
-            "error_msg": err,                   # <-- drives the inline banner
-        }
-    )
+    "atomization.html",
+    {
+        "request": request,
+        "heats": heats,
+        "lots": lots,
+        "heat_grades": grades,
+        "available_map": available_map,
+        "today_iso": today.isoformat(),
+        "start": s,
+        "end": e,
+        "atom_eff_today": eff_today,
+        "atom_last5": last5,
+        "atom_capacity": DAILY_CAPACITY_ATOM_KG,
+        "atom_stock": stock,
+        "lots_stock": lots_stock,
+        "error_msg": err,   # <-- DO NOT MISS THIS
+    }
+)
+
 
 def _redir_err(msg: str) -> RedirectResponse:
     return RedirectResponse(f"/atomization?err={quote(msg)}", status_code=303)
