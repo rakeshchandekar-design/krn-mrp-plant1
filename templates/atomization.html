@@ -2,83 +2,249 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Atomization – New Lot</title>
+  <title>Atomization</title>
   <style>
-    body{font-family:system-ui,Arial,sans-serif; margin:20px;}
-    table{border-collapse:collapse; width:100%;}
-    th,td{border:1px solid #e5e7eb; padding:8px; text-align:left;}
+    body{font-family:system-ui,Arial,sans-serif;margin:20px;}
+    .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .brand .name{font-weight:800;font-size:20px;line-height:48px;margin:0}
+    .brand img{height:48px}
+
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
+    .grid-1{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:12px}
+
+    .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px;margin-bottom:12px}
+    .card h2{margin:0 0 8px 0;font-size:18px}
+    .card h3{margin:0 0 8px 0;font-size:14px}
+
+    .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px;flex-wrap:wrap}
+    input,select{padding:4px 6px}
+    .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
+    .btn.secondary{background:#374151}
+    .btn.ghost{background:#e5e7eb;color:#111827}
+    a.btn-link{display:inline-block;margin-left:8px}
+
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
     th{background:#f3f4f6}
-    .badge{display:inline-block; padding:2px 8px; border-radius:12px; font-size:12px; color:#fff}
+    .right{text-align:right}
+
+    .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
     .badge-success{background:#16a34a}
     .badge-info{background:#0ea5e9}
-    .actions a{display:inline-block; margin-right:6px; padding:4px 8px; border:1px solid #d1d5db; border-radius:6px; text-decoration:none}
-    .btn{padding:8px 14px; border-radius:8px; background:#111827; color:#fff; text-decoration:none; border:none}
-    input[type=number]{width:120px}
-    a.btn-link{display:inline-block;margin-bottom:10px}
+    .muted{color:#6b7280;font-size:12px}
   </style>
+  <script>
+    // ---- navigation / filters (mirror Melting UX) ----
+    function fetchRange(){
+      const s=document.getElementById('start').value;
+      const e=document.getElementById('end').value;
+      location.href = `/atomization?start=${s}&end=${e}`;
+    }
+    function onlyToday(){
+      const t=document.getElementById('todayIso').value;
+      document.getElementById('start').value=t;
+      document.getElementById('end').value=t;
+      fetchRange();
+    }
+    // Reset = show all APPROVED heats with non-zero available
+    function resetRange(){
+      location.href = '/atomization?all=1';
+    }
+
+    // ---- CSVs ----
+    function exportLotsCSV(){
+      const s=document.getElementById('start').value;
+      const e=document.getElementById('end').value;
+      const u=new URL('/atomization/export', window.location.origin);
+      if(s) u.searchParams.set('start', s);
+      if(e) u.searchParams.set('end', e);
+      window.location.href=u.toString();
+    }
+    function exportDowntimeCSV(){
+      window.location.href='/atomization/downtime/export';
+    }
+
+    // ---- live allocation UI ----
+    function recalcTotals(){
+      const weight = parseFloat(document.getElementById('lot_weight').value || '0');
+      let sum = 0;
+      document.querySelectorAll('input[name^="alloc_"]').forEach(inp=>{
+        const v = parseFloat(inp.value || '0');
+        if(!isNaN(v)) sum += v;
+      });
+      const rem = weight - sum;
+      document.getElementById('alloc_total').textContent = (sum||0).toFixed(1);
+      document.getElementById('alloc_remaining').textContent = (rem||0).toFixed(1);
+    }
+    document.addEventListener('DOMContentLoaded',()=>{
+      const lw=document.getElementById('lot_weight');
+      if(lw) lw.addEventListener('input', recalcTotals);
+      document.querySelectorAll('input[name^="alloc_"]').forEach(inp=>{
+        inp.addEventListener('input', recalcTotals);
+      });
+      recalcTotals();
+    });
+  </script>
 </head>
 <body>
-  <h1>Atomization – New Lot</h1>
+  <!-- Brand -->
+  <div class="brand">
+    <div class="name">KRN Alloys Pvt. Ltd</div>
+    <img src="/static/KRN_Logo.png" alt="KRN">
+  </div>
+
+  <h1>Atomization</h1>
   <p><a class="btn-link" href="/">Home</a></p>
 
-  <form method="post" action="/atomization/new">
-    <label>Lot Weight (kg): </label>
-    <input type="number" step="0.1" name="lot_weight" value="3000" />
+  <!-- KPIs & 5-day (left/right) -->
+  <div class="grid">
+    <div class="card">
+      <h2>KPIs (Today)</h2>
 
-    <h2>Allocate Quantity From Approved Heats</h2>
-    <p>Enter the kg to take from each heat (you can split a heat across multiple lots).</p>
+      <div class="card" style="margin-bottom:8px">
+        <h3>Production Efficiency (Today)</h3>
+        <table>
+          <thead><tr><th>Actual Output (kg)</th><th class="right">Capacity (kg)</th><th class="right">Eff.%</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="right">{{ '%.0f' % (atom_today_out or 0) }}</td>
+              <td class="right">6000</td>
+              <td class="right">{{ '%.1f' % (atom_eff_today or 0) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="muted">Capacity considered: 6000 kg per 24h.</div>
+      </div>
+
+      <!-- Atomization downtime buttons under KPI -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn secondary" onclick="exportDowntimeCSV()">Downtime CSV</button>
+        <a class="btn ghost" href="/atomization/downtime">Open downtime page</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Production – Last 5 Days</h3>
+      <table>
+        <thead><tr><th>Date</th><th class="right">Actual (kg)</th><th class="right">Target (kg)</th><th class="right">Eff.%</th></tr></thead>
+        <tbody>
+          {% for d in atom_last5 %}
+          <tr>
+            <td>{{ d.date }}</td>
+            <td class="right">{{ '%.0f' % (d.actual or 0) }}</td>
+            <td class="right">{{ '%.0f' % (d.target or 0) }}</td>
+            <td class="right">{{ '%.1f' % ( (100.0 * (d.actual or 0) / (d.target or 1)) ) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Live Stock – Lots -->
+  <div class="grid-1">
+    <div class="card">
+      <h3>Live Stock – Lots Available</h3>
+      <table style="width:auto">
+        <thead><tr><th>Grade</th><th class="right">Qty (kg)</th><th class="right">Value (₹)</th></tr></thead>
+        <tbody>
+          <tr><td>KRIP</td><td class="right">{{ '%.1f' % (lots_stock.krip_qty or 0) }}</td><td class="right">{{ '%.2f' % (lots_stock.krip_val or 0) }}</td></tr>
+          <tr><td>KRFS</td><td class="right">{{ '%.1f' % (lots_stock.krfs_qty or 0) }}</td><td class="right">{{ '%.2f' % (lots_stock.krfs_val or 0) }}</td></tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <th>Total</th>
+            <th class="right">{{ '%.1f' % ((lots_stock.krip_qty or 0)+(lots_stock.krfs_qty or 0)) }}</th>
+            <th class="right">{{ '%.2f' % ((lots_stock.krip_val or 0)+(lots_stock.krfs_val or 0)) }}</th>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="muted">Note: “used/dispatch” offset is not tracked yet — shown values reflect current lots on hand.</div>
+    </div>
+  </div>
+
+  <!-- Allocation from Heats -->
+  <div class="card">
+    <h2>Create Lot (Allocate from Approved Heats)</h2>
+    <form method="post" action="/atomization/new">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <div>
+          <label>Lot Weight (kg)</label>
+          <input id="lot_weight" type="number" step="0.1" min="0.1" name="lot_weight" value="3000">
+        </div>
+        <div class="muted">Allocated: <strong id="alloc_total">0.0</strong> kg &nbsp; | &nbsp; Remaining: <strong id="alloc_remaining">0.0</strong> kg</div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Heat</th>
+            <th>Type</th>
+            <th class="right">Output (kg)</th>
+            <th class="right">Available (kg)</th>
+            <th class="right">Cost/kg (₹)</th>
+            <th class="right">kWh/ton</th>
+            <th>Trace</th>
+            <th class="right" style="width:160px">Allocate (kg)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in visible_heats %}
+          {% set g = heat_grades.get(h.id) %}
+          {% set kwhpt = ( (h.power_kwh or 0) > 0 and (h.actual_output or 0) > 0 ) and ( (h.power_kwh / h.actual_output) * 1000 ) or 0 %}
+          <tr>
+            <td>{{ h.heat_no }}</td>
+            <td>{% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
+            <td class="right">{{ '%.1f' % (h.actual_output or 0) }}</td>
+            <td class="right">{{ '%.1f' % (available_map.get(h.id) or 0) }}</td>
+            <td class="right">{{ '%.2f' % (h.unit_cost or 0) }}</td>
+            <td class="right">{{ '%.1f' % kwhpt }}</td>
+            <td><a class="btn ghost" href="/traceability/heat/{{ h.id }}">View</a></td>
+            <td class="right">
+              <input type="number" step="0.1" min="0" name="alloc_{{ h.id }}" placeholder="0.0" style="width:140px">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <p style="margin-top:10px"><button class="btn" type="submit">Create Lot</button></p>
+    </form>
+    <div class="muted">Any allocation issue (exceeding available) will show inline as an alert.</div>
+  </div>
+
+  <!-- Lots section with toolbar just above it -->
+  <div class="card">
+    <h3>Lots</h3>
+
+    <!-- toolbar above lots table -->
+    <div class="toolbar">
+      <span>From</span>
+      <input id="start" type="date" value="{{ start or today_iso }}">
+      <span>To</span>
+      <input id="end" type="date" value="{{ end or today_iso }}">
+      <button class="btn" onclick="fetchRange()">Fetch</button>
+      <button class="btn secondary" onclick="onlyToday()">Today</button>
+      <button class="btn ghost" onclick="resetRange()">Reset</button>
+      <button class="btn" onclick="exportLotsCSV()">Download CSV</button>
+      <input type="hidden" id="todayIso" value="{{ today_iso }}">
+    </div>
 
     <table>
-      <thead>
-        <tr>
-          <th>Heat</th>
-          <th>Type</th>
-          <th>Available (kg)</th>
-          <th>Allocate (kg)</th>
-          <th>Heat Unit Cost</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Lot</th><th>Grade</th><th class="right">Weight (kg)</th><th class="right">Cost/kg (₹)</th><th>QA</th><th>PDF</th></tr></thead>
       <tbody>
-      {% for h in heats %}
-        <tr>
-          <td>{{ h.heat_no }}</td>
-          <td>
-            {% set g = heat_grades.get(h.id) %}
-            {% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>
-            {% else %}<span class="badge badge-success">KRIP</span>{% endif %}
-          </td>
-          <td>{{ '%.1f' % (available_map.get(h.id, 0.0)) }}</td>
-          <td><input type="number" step="0.1" min="0" max="{{ available_map.get(h.id, 0.0) }}" name="alloc_{{ h.id }}" value="0.0"/></td>
-          <td>₹ {{ '%.2f' % (h.unit_cost or 0.0) }}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    <p style="margin-top:10px"><button class="btn" type="submit">Create Lot</button></p>
-  </form>
-
-  <h2>Lots</h2>
-  <table>
-    <thead>
-      <tr><th>Lot</th><th>Grade</th><th>Weight</th><th>Unit Cost</th><th>QA</th><th>Remarks</th><th>Actions</th></tr>
-    </thead>
-    <tbody>
-      {% for lot in lots %}
+        {% for lot in visible_lots %}
         <tr>
           <td>{{ lot.lot_no }}</td>
           <td>{{ lot.grade }}</td>
-          <td>{{ '%.1f' % (lot.weight or 0) }}</td>
-          <td>₹ {{ '%.2f' % (lot.unit_cost or 0) }}</td>
+          <td class="right">{{ '%.1f' % (lot.weight or 0) }}</td>
+          <td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>
           <td>{{ lot.qa_status }}</td>
-          <td>{{ lot.qa_remarks or '' }}</td>
-          <td class="actions">
-            <a href="/qa/lot/{{ lot.id }}">QA</a>
-            <a href="/traceability/lot/{{ lot.id }}">Trace</a>
-            <a href="/pdf/lot/{{ lot.id }}">PDF</a>
-          </td>
+          <td><a class="btn ghost" href="/pdf/lot/{{ lot.id }}" target="_blank">Trace PDF</a></td>
         </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </body>
 </html>
