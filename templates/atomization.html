@@ -8,10 +8,11 @@
     .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
     .brand .name{font-weight:800;font-size:20px;line-height:48px;margin:0}
     .brand img{height:48px}
-
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
     .grid-1{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:12px}
     .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px}
+    .card h3{margin:0 0 8px 0;font-size:14px}
+    .card h2{margin:0 0 8px 0;font-size:18px}
     .muted{color:#6b7280;font-size:12px}
     .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px;flex-wrap:wrap}
     input,select{padding:4px 6px}
@@ -19,46 +20,65 @@
     .btn.secondary{background:#374151}
     .btn.ghost{background:#e5e7eb;color:#111827}
     a.btn-link{display:inline-block;margin-left:8px}
-
     table{border-collapse:collapse;width:100%}
     th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
     th{background:#f3f4f6}
     .right{text-align:right}
-
     .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
     .badge-success{background:#16a34a}
     .badge-info{background:#0ea5e9}
+    .alloc-hdr{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:6px 0}
   </style>
   <script>
-    function fetchRange(){
-      const s=document.getElementById('start').value;
-      const e=document.getElementById('end').value;
-      location.href = /atomization?start=${s}&end=${e};
-    }
-    function onlyToday(){
-      const t=document.getElementById('todayIso').value;
-      document.getElementById('start').value=t;
-      document.getElementById('end').value=t;
-      fetchRange();
-    }
-    // Reset to "show all non-zero lots / deactivate date range"
-    function resetRange(){
-      location.href = '/atomization?all=1';
-    }
-    function exportCSV(){
-      const s=document.getElementById('start').value;
-      const e=document.getElementById('end').value;
-      const u=new URL('/atomization/export', window.location.origin);
-      if(location.search.indexOf('all=1') !== -1){
-        u.searchParams.set('all','1');
-      } else {
-        u.searchParams.set('start', s); u.searchParams.set('end', e);
-      }
+    function fetchLotsRange(){
+      const s=document.getElementById('lots_start').value;
+      const e=document.getElementById('lots_end').value;
+      const u=new URL('/atomization', window.location.origin);
+      u.searchParams.set('start', s); u.searchParams.set('end', e);
       window.location.href=u.toString();
     }
-    function exportDowntimeCSV(){
-      window.location.href='/atomization/downtime/export';
+    function lotsToday(){
+      const t=document.getElementById('todayIso').value;
+      document.getElementById('lots_start').value=t;
+      document.getElementById('lots_end').value=t;
+      fetchLotsRange();
     }
+    // NEW: Reset => show ALL lots with non-zero weight (server handles ?reset=1)
+    function lotsReset(){
+      const u=new URL('/atomization', window.location.origin);
+      u.searchParams.set('reset', '1');
+      window.location.href=u.toString();
+    }
+    function exportLotsCSV(){
+      const s=document.getElementById('lots_start').value;
+      const e=document.getElementById('lots_end').value;
+      const u=new URL('/atomization/export', window.location.origin);
+      if(s) u.searchParams.set('start', s);
+      if(e) u.searchParams.set('end', e);
+      window.location.href=u.toString();
+    }
+    function updateAlloc(){
+      const weightInput=document.getElementById('lot_weight');
+      const maxW=parseFloat(weightInput.value||'0');
+      let total=0.0;
+      document.querySelectorAll('.alloc-input').forEach(inp=>{
+        const v=parseFloat(inp.value||'0'); if(!isNaN(v)) total+=v;
+      });
+      document.getElementById('allocTotal').textContent=total.toFixed(1);
+      document.getElementById('remTotal').textContent=(Math.max(0, maxW-total)).toFixed(1);
+    }
+    function clampAlloc(el, maxVal){
+      let v=parseFloat(el.value||'0');
+      if(isNaN(v) || v<0){ v=0; }
+      if(v>maxVal){ v=maxVal; }
+      el.value=v;
+      updateAlloc();
+    }
+    document.addEventListener('DOMContentLoaded', ()=>{
+      updateAlloc();
+      const w=document.getElementById('lot_weight');
+      if(w){ w.addEventListener('input', updateAlloc); }
+    });
   </script>
 </head>
 <body>
@@ -73,124 +93,164 @@
   <div class="grid">
     <div class="card">
       <h2>KPIs (Today)</h2>
-      <div style="margin-bottom:8px">
-        <strong>Production (Today):</strong> {{ (atom_last5[-1].actual if atom_last5 else 0) or 0 }} kg
-      </div>
-      <div style="margin-bottom:8px">
+      <div class="card">
+        <h3>Production Efficiency (Today)</h3>
         <table>
-          <thead><tr><th>Efficiency % (Today)</th><th class="right">Capacity (kg)</th></tr></thead>
+          <thead><tr><th>Actual Output (kg)</th><th class="right">Target ({{ '%.0f' % (atom_capacity or 6000) }} kg)</th><th class="right">Eff. %</th></tr></thead>
           <tbody>
             <tr>
+              <td class="right">{{ '%.0f' % ((atom_eff_today or 0) * (atom_capacity or 6000) / 100.0) }}</td>
+              <td class="right">{{ '%.0f' % (atom_capacity or 6000) }}</td>
               <td class="right">{{ '%.1f' % (atom_eff_today or 0) }}</td>
-              <td class="right">{{ '%.0f' % (atom_capacity or 0) }}</td>
             </tr>
           </tbody>
         </table>
-      </div>
-
-      <h3 style="margin-top:8px">Last 5 Days</h3>
-      <table>
-        <thead><tr><th>Date</th><th class="right">Actual (kg)</th><th class="right">Target (kg)</th><th class="right">Eff.%</th></tr></thead>
-        <tbody>
-          {% for d in atom_last5 %}
-          <tr>
-            <td>{{ d.date }}</td>
-            <td class="right">{{ '%.0f' % (d.actual or 0) }}</td>
-            <td class="right">{{ '%.0f' % (d.target or 0) }}</td>
-            <td class="right">{{ '%.1f' % ( (100.0 * (d.actual or 0) / (d.target or 1)) ) }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-
-      <!-- Downtime buttons below KPI -->
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-        <button class="btn secondary" onclick="exportDowntimeCSV()">Downtime CSV</button>
-        <a class="btn ghost" href="/atomization/downtime">Open downtime page</a>
+        <div class="muted">Target auto-adjusts using Atomization downtime.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button class="btn secondary" onclick="location.href='/atomization/downtime/export'">Atom downtime CSV</button>
+          <a class="btn ghost" href="/atomization/downtime">Open Atomization downtime page</a>
+        </div>
       </div>
     </div>
 
     <div class="card">
-      <h3>Live Stock – Lots Available</h3>
-      <table style="width:auto">
-        <thead><tr><th>Type</th><th class="right">Available (kg)</th><th class="right">Value (₹)</th></tr></thead>
+      <h3>Production – Last 5 Days</h3>
+      <table>
+        <thead><tr><th>Date</th><th class="right">Actual (kg)</th><th class="right">Target (kg)</th><th class="right">Eff.%</th></tr></thead>
         <tbody>
-          <tr><td>KRIP</td><td class="right">{{ '%.1f' % (atom_stock.krip_qty or 0) }}</td><td class="right">{{ '%.2f' % (atom_stock.krip_val or 0) }}</td></tr>
-          <tr><td>KRFS</td><td class="right">{{ '%.1f' % (atom_stock.krfs_qty or 0) }}</td><td class="right">{{ '%.2f' % (atom_stock.krfs_val or 0) }}</td></tr>
-        </tbody>
-        <tfoot>
+          {% for d in atom_last5 or [] %}
           <tr>
-            <th>Total</th>
-            <th class="right">{{ '%.1f' % ((atom_stock.krip_qty or 0)+(atom_stock.krfs_qty or 0)) }}</th>
-            <th class="right">{{ '%.2f' % ((atom_stock.krip_val or 0)+(atom_stock.krfs_val or 0)) }}</th>
+            <td>{{ d.date }}</td>
+            <td class="right">{{ '%.0f' % (d.actual or 0) }}</td>
+            <td class="right">{{ '%.0f' % (d.target or 0) }}</td>
+            <td class="right">{{ '%.1f' % ( 100.0 * (d.actual or 0) / ((d.target or 1)) ) }}</td>
           </tr>
-        </tfoot>
+          {% endfor %}
+        </tbody>
       </table>
     </div>
   </div>
 
-  <!-- Toolbar above lots table -->
-  <div class="toolbar">
-    <span>Today</span>
-    <input id="start" type="date" value="{{ start or today_iso }}">
-    <span>To</span>
-    <input id="end" type="date" value="{{ end or today_iso }}">
-    <button class="btn" onclick="fetchRange()">Fetch</button>
-    <button class="btn secondary" onclick="onlyToday()">Today</button>
-    <button class="btn ghost" onclick="resetRange()">Reset</button>
-    <button class="btn" onclick="exportCSV()">Download CSV</button>
-    <input type="hidden" id="todayIso" value="{{ today_iso }}">
+  <div class="grid-1">
+    <div class="card">
+      <h3>Live Stock – Lots Available</h3>
+      <table style="width:auto">
+        <thead><tr><th>Grade</th><th class="right">Qty (kg)</th><th class="right">Value (₹)</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>KRIP</td>
+            <td class="right">{{ '%.1f' % ((lots_stock.krip_qty or 0)) }}</td>
+            <td class="right">{{ '%.2f' % ((lots_stock.krip_val or 0)) }}</td>
+          </tr>
+          <tr>
+            <td>KRFS</td>
+            <td class="right">{{ '%.1f' % ((lots_stock.krfs_qty or 0)) }}</td>
+            <td class="right">{{ '%.2f' % ((lots_stock.krfs_val or 0)) }}</td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <th>Total</th>
+            <th class="right">{{ '%.1f' % (((lots_stock.krip_qty or 0)+(lots_stock.krfs_qty or 0))) }}</th>
+            <th class="right">{{ '%.2f' % (((lots_stock.krip_val or 0)+(lots_stock.krfs_val or 0))) }}</th>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="muted">Note: downstream deductions are not applied (as agreed).</div>
+    </div>
   </div>
 
-  <!-- Heats available for allocation -->
-  <div class="card" style="margin-bottom:12px">
-    <h3>Approved Heats (Available > 0)</h3>
-    <table>
-      <thead><tr><th>Heat</th><th>Grade</th><th class="right">Available (kg)</th><th>QA</th><th>Trace</th></tr></thead>
-      <tbody>
-        {% for h in heats %}
-        <tr>
-          <td>{{ h.heat_no }}</td>
-          <td>{% if heat_grades[h.id] == 'KRFS' %}<span class="badge badge-info">KRFS</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
-          <td class="right">{{ '%.1f' % (available_map.get(h.id,0.0)) }}</td>
-          <td>{{ h.qa_status }}</td>
-          <td><a class="btn ghost" href="/traceability/heat/{{ h.id }}">View</a></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <!-- Create Lot (existing) -->
+  <div class="card">
+    <h2 style="margin:0 0 8px 0;">Create Lot (Allocate from Approved Heats)</h2>
+    <form method="post" action="/atomization/new">
+      <div class="alloc-hdr">
+        <div>
+          <label>Lot Weight (kg)</label>
+          <input id="lot_weight" name="lot_weight" type="number" step="0.1" min="1" value="3000">
+        </div>
+        <div class="muted">Allocated: <strong id="allocTotal">0.0</strong> kg  |  Remaining: <strong id="remTotal">3000.0</strong> kg</div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Heat</th>
+            <th>Type</th>
+            <th class="right">Output (kg)</th>
+            <th class="right">Available (kg)</th>
+            <th class="right">Cost/kg (₹)</th>
+            <th class="right">kWh/ton</th>
+            <th>Trace</th>
+            <th class="right">Allocate (kg)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in heats %}
+            {% set g = heat_grades.get(h.id) %}
+            {% set avail = (available_map.get(h.id) or 0.0) %}
+            {% set kwhpt = ( (h.power_kwh or 0) > 0 and (h.actual_output or 0) > 0 ) and ( (h.power_kwh / h.actual_output) * 1000 ) or 0 %}
+            <tr>
+              <td>{{ h.heat_no }}</td>
+              <td>{% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
+              <td class="right">{{ '%.1f' % (h.actual_output or 0) }}</td>
+              <td class="right">{{ '%.1f' % avail }}</td>
+              <td class="right">{{ '%.2f' % (h.unit_cost or 0) }}</td>
+              <td class="right">{{ '%.1f' % kwhpt }}</td>
+              <td><a class="btn ghost" href="/traceability/heat/{{ h.id }}">View</a></td>
+              <td class="right" style="width:160px">
+                <input class="alloc-input" type="number" step="0.1" min="0" max="{{ '%.1f' % avail }}"
+                       name="alloc_{{ h.id }}" value="" oninput="clampAlloc(this, {{ '%.5f' % avail }})">
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <p><button class="btn" type="submit">Create Lot</button></p>
+    </form>
   </div>
 
-  <!-- Lots table -->
+  <!-- Lots (server provides filtered list; Reset shows all non-zero) -->
   <div class="card">
     <h2>Lots</h2>
+    <div class="toolbar">
+      <span>From</span>
+      <input id="lots_start" type="date" value="{{ start or today_iso }}">
+      <span>To</span>
+      <input id="lots_end" type="date" value="{{ end or today_iso }}">
+      <button class="btn" onclick="fetchLotsRange()">Fetch</button>
+      <button class="btn secondary" onclick="lotsToday()">Today</button>
+      <button class="btn ghost" onclick="lotsReset()">Reset</button>
+      <button class="btn" onclick="exportLotsCSV()">Download CSV</button>
+      <input type="hidden" id="todayIso" value="{{ today_iso }}">
+    </div>
+
     <table>
       <thead>
         <tr>
-          <th>Lot No</th>
+          <th>Lot</th>
           <th>Grade</th>
           <th class="right">Weight (kg)</th>
-          <th class="right">Unit Cost (₹)</th>
-          <th class="right">Total Cost (₹)</th>
+          <th class="right">Cost/kg (₹)</th>
           <th>QA</th>
-          <th>Actions</th>
+          <th>Trace</th>
+          <th>PDF</th>
+          <th>QA Form</th>
         </tr>
       </thead>
       <tbody>
-        {% for l in lots %}
-        <tr>
-          <td>{{ l.lot_no }}</td>
-          <td>{% if l.grade == 'KRFS' %}<span class="badge badge-info">KRFS</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
-          <td class="right">{{ '%.1f' % (l.weight or 0) }}</td>
-          <td class="right">{{ '%.2f' % (l.unit_cost or 0) }}</td>
-          <td class="right">{{ '%.2f' % (l.total_cost or 0) }}</td>
-          <td>{{ l.qa_status }}</td>
-          <td>
-            <a href="/traceability/lot/{{ l.id }}">Trace</a> |
-            <a href="/pdf/lot/{{ l.id }}">PDF</a> |
-            <a href="/qa/lot/{{ l.id }}">QA</a>
-          </td>
-        </tr>
+        {% for lot in lots %}
+          <tr>
+            <td>{{ lot.lot_no }}</td>
+            <td>{% if (lot.grade or 'KRIP') == 'KRFS' %}<span class="badge badge-info">KRFS</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
+            <td class="right">{{ '%.1f' % (lot.weight or 0) }}</td>
+            <td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>
+            <td>{{ lot.qa_status or '' }}</td>
+            <td><a class="btn ghost" href="/traceability/lot/{{ lot.id }}">Trace</a></td>
+            <td><a class="btn" href="/pdf/lot/{{ lot.id }}">PDF</a></td>
+            <td><a class="btn secondary" href="/qa/lot/{{ lot.id }}">Lot QA</a></td>
+          </tr>
         {% endfor %}
       </tbody>
     </table>
