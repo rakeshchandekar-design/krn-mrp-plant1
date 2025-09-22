@@ -25,6 +25,20 @@
     .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px;flex-wrap:wrap}
     input,select{padding:4px 6px}
   </style>
+  <script>
+    function toggleCustomer(sel, inputId) {
+      const input = document.getElementById(inputId);
+      if (sel.value === "PLANT2") {
+        input.value = "Plant 2";
+        input.disabled = true;
+        input.required = false;
+      } else {
+        input.value = "";
+        input.disabled = false;
+        input.required = true;
+      }
+    }
+  </script>
 </head>
 <body>
   <div class="brand">
@@ -72,13 +86,15 @@
           <th>Lot</th>
           <th>Grade</th>
           <th class="right">Lot Weight (kg)</th>
-          <th class="right">Available in RAP (kg)</th>
+          <th class="right">Available (kg)</th>
           <th class="right">Cost/kg (₹)</th>
+          <th class="right">Value (₹)</th>
+          <th>Docs</th>
           <th>Allocate</th>
         </tr>
       </thead>
       <tbody>
-        {% for r in rows %}
+        {% for r in rows if (r.available_qty or 0) > 0 %}
           {% set lot = r.lot %}
           <tr>
             <td>{{ lot.lot_no }}</td>
@@ -92,16 +108,22 @@
             <td class="right">{{ '%.1f' % (lot.weight or 0) }}</td>
             <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
             <td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>
+            <td class="right">{{ '%.2f' % ((lot.unit_cost or 0) * (r.available_qty or 0)) }}</td>
+            <td>
+              <a href="/lot/{{ lot.id }}/trace" target="_blank">Trace</a> |
+              <a href="/lot/{{ lot.id }}/pdf" target="_blank">PDF</a> |
+              <a href="/lot/{{ lot.id }}/qa" target="_blank">QA</a>
+            </td>
             <td>
               <form method="post" action="/rap/allocate" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
                 <input type="hidden" name="rap_lot_id" value="{{ r.id }}">
-                <input type="date" name="date" value="{{ (lot.lot_no.split('-')[1][0:4] ~ '-' ~ lot.lot_no.split('-')[1][4:6] ~ '-' ~ lot.lot_no.split('-')[1][6:8]) if lot.lot_no else '' }}" required>
-                <select name="kind">
+                <input type="date" name="date" max="{{ today }}" min="{{ (today - timedelta(days=3)) }}" required>
+                <select name="kind" onchange="toggleCustomer(this, 'dest{{r.id}}')">
                   <option value="DISPATCH">Dispatch</option>
                   <option value="PLANT2">Plant 2</option>
                 </select>
                 <input type="number" step="0.1" min="0" max="{{ '%.1f' % (r.available_qty or 0) }}" name="qty" placeholder="Qty (kg)" required>
-                <input type="text" name="dest" placeholder="Customer / Plant 2">
+                <input type="text" id="dest{{r.id}}" name="dest" placeholder="Customer / Plant 2" required>
                 <input type="text" name="remarks" placeholder="remarks">
                 <button class="btn" type="submit">Allocate</button>
               </form>
