@@ -1,6 +1,7 @@
 import os, io, datetime as dt
 from typing import Optional, Dict, List, Tuple
 from urllib.parse import quote
+from enum import Enum
 
 # FastAPI
 from fastapi import FastAPI, Request, Form, Depends, Response
@@ -179,6 +180,53 @@ def migrate_schema(engine):
                 )
             """))
 
+        # RAP tables
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rap_lot (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lot_id INTEGER UNIQUE,
+                    available_qty REAL NOT NULL DEFAULT 0,
+                    status TEXT,
+                    FOREIGN KEY(lot_id) REFERENCES lot(id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rap_alloc (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rap_lot_id INTEGER NOT NULL,
+                    date DATE NOT NULL,
+                    kind TEXT NOT NULL,
+                    qty REAL NOT NULL DEFAULT 0,
+                    remarks TEXT,
+                    dest TEXT,
+                    FOREIGN KEY(rap_lot_id) REFERENCES rap_lot(id)
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rap_lot (
+                    id SERIAL PRIMARY KEY,
+                    lot_id INT UNIQUE,
+                    available_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    status TEXT,
+                    FOREIGN KEY(lot_id) REFERENCES lot(id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rap_alloc (
+                    id SERIAL PRIMARY KEY,
+                    rap_lot_id INT NOT NULL,
+                    date DATE NOT NULL,
+                    kind TEXT NOT NULL,
+                    qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    remarks TEXT,
+                    dest TEXT,
+                    FOREIGN KEY(rap_lot_id) REFERENCES rap_lot(id)
+                )
+            """))
+
+
 # -------------------------------------------------
 # Constants
 # -------------------------------------------------
@@ -319,6 +367,44 @@ class AtomDowntime(Base):
     kind = Column(String)
     remarks = Column(String)
 
+# -------------------------------
+# RAP / ULA models (new)
+# -------------------------------
+
+class RAPLot(Base):
+    """
+    A mirror bucket for an Atomization lot that enters RAP stage.
+    We keep available_qty here; allocations reduce it.
+    """
+    __tablename__ = "rap_lot"
+    id = Column(Integer, primary_key=True)
+    lot_id = Column(Integer, ForeignKey("lot.id"), unique=True, index=True)
+    available_qty = Column(Float, default=0.0)
+    # status is informational; available_qty==0 implies closed
+    status = Column(String, default="OPEN")  # OPEN / CLOSED
+
+    lot = relationship("Lot")
+
+class RAPKind(str, Enum):
+    DISPATCH = "DISPATCH"
+    PLANT2   = "PLANT2"
+
+class RAPAlloc(Base):
+    """
+    Individual allocation movement from RAP to a destination (Dispatch or Plant 2).
+    """
+    __tablename__ = "rap_alloc"
+    id = Column(Integer, primary_key=True)
+    rap_lot_id = Column(Integer, ForeignKey("rap_lot.id"), index=True)
+    date = Column(Date, nullable=False)
+    kind = Column(String, nullable=False)   # DISPATCH or PLANT2
+    qty  = Column(Float, nullable=False, default=0.0)
+    remarks = Column(String)
+    dest = Column(String)  # customer name or "Plant 2"
+
+    rap_lot = relationship("RAPLot")
+
+
 # -------------------------------------------------
 # App + Templates (robust paths)
 # -------------------------------------------------
@@ -420,6 +506,36 @@ def atom_day_available_minutes(db: Session, day: dt.date) -> int:
 
 def atom_day_target_kg(db: Session, day: dt.date) -> float:
     return DAILY_CAPACITY_ATOM_KG * (atom_day_available_minutes(db, day) / 1440.0)
+
+# -------------------------------
+# RAP helpers
+# -------------------------------
+def rap_total_alloc_qty_for_lot(db: Session, lot_id: int) -> float:
+    rap = db.query(RAPLot).filter(RAPLot.lot_id == lot_id).first()
+    if not rap:
+        return 0.0
+    q = db.query(func.coalesce(func.sum(RAPAlloc.qty), 0.0)).filter(RAPAlloc.rap_lot_id == rap.id).scalar() or 0.0
+    return float(q)
+
+def ensure_rap_lot(db: Session, lot: Lot) -> RAPLot:
+    """
+    Ensure a RAPLot exists for an APPROVED lot.
+    available_qty is recalculated as (lot.weight - total_allocs).
+    """
+    rap = db.query(RAPLot).filter(RAPLot.lot_id == lot.id).first()
+    total_alloc = rap_total_alloc_qty_for_lot(db, lot.id) if rap else 0.0
+    current_avail = max((lot.weight or 0.0) - total_alloc, 0.0)
+
+    if rap:
+        rap.available_qty = current_avail
+        rap.status = "CLOSED" if current_avail <= 1e-6 else "OPEN"
+        db.add(rap)
+        return rap
+
+    rap = RAPLot(lot_id=lot.id, available_qty=current_avail, status=("CLOSED" if current_avail <= 1e-6 else "OPEN"))
+    db.add(rap); db.flush()
+    return rap
+
 
 # -------------------------------------------------
 # Health + Setup + Home
@@ -948,24 +1064,32 @@ def atom_page(
         target = atom_day_target_kg(db, d)
         last5.append({"date": d.isoformat(), "actual": actual, "target": target})
 
-    # Live stock of lots (simple: total lots by grade)
+     # Live stock of lots (WIP) = ALL atomization lots (any QA) - RAP allocations (only approved lots allocate)
     stock = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
-    for lot in lots:
-        qty = lot.weight or 0.0
-        val = qty * (lot.unit_cost or 0.0)
-        if (lot.grade or "KRIP") == "KRFS":
-            stock["KRFS_qty"] += qty
-            stock["KRFS_val"] += val
-        else:
-            stock["KRIP_qty"] += qty
-            stock["KRIP_val"] += val
 
-    lots_stock = {
-        "krip_qty": stock.get("KRIP_qty", 0.0),
-        "krip_val": stock.get("KRIP_val", 0.0),
-        "krfs_qty": stock.get("KRFS_qty", 0.0),
-        "krfs_val": stock.get("KRFS_val", 0.0),
-    }
+    # Preload RAP allocations per lot id (for speed)
+    # We only ever create RAP entries for APPROVED lots, but we subtract allocs from total WIP as requested.
+    rap_alloc_by_lot: Dict[int, float] = {}
+    rap_pairs = (
+        db.query(RAPLot.lot_id, func.coalesce(func.sum(RAPAlloc.qty), 0.0))
+          .join(RAPAlloc, RAPAlloc.rap_lot_id == RAPLot.id, isouter=True)
+          .group_by(RAPLot.lot_id)
+          .all()
+    )
+    for lid, s in rap_pairs:
+        rap_alloc_by_lot[int(lid)] = float(s or 0.0)
+
+    for lot in lots:
+        gross = float(lot.weight or 0.0)
+        rap_taken = rap_alloc_by_lot.get(lot.id, 0.0)
+        qty = max(gross - rap_taken, 0.0)
+        if qty <= 0:
+            continue
+        val = qty * float(lot.unit_cost or 0.0)
+        if (lot.grade or "KRIP") == "KRFS":
+            stock["KRFS_qty"] += qty; stock["KRFS_val"] += val
+        else:
+            stock["KRIP_qty"] += qty; stock["KRIP_val"] += val
 
     # Date range defaults for the toolbar above Lots table
     s = start or today.isoformat()
@@ -1279,6 +1403,123 @@ def atom_downtime_add(
     db.add(AtomDowntime(date=d, minutes=minutes, kind=kind, remarks=remarks))
     db.commit()
     return RedirectResponse("/atomization/downtime", status_code=303)
+
+# -------------------------------------------------
+# RAP – Ready After Atomization
+# -------------------------------------------------
+
+@app.get("/rap", response_class=HTMLResponse)
+def rap_page(request: Request, db: Session = Depends(get_db)):
+    """
+    Show all APPROVED lots in RAP stage (auto ensure/refresh RAPLot rows),
+    allow allocating DISPATCH / PLANT2.
+    """
+    # Bring in all APPROVED lots
+    lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").order_by(Lot.id.desc()).all()
+
+    # Ensure RAP rows exist & are up to date
+    rap_rows: List[RAPLot] = []
+    for lot in lots:
+        rap = ensure_rap_lot(db, lot)
+        rap_rows.append(rap)
+    db.commit()  # persist any ensure updates
+
+    # KPIs: Available stock and value (by grade) for RAP (i.e., ready stock)
+    k = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
+    for rap in rap_rows:
+        lot = rap.lot
+        qty = float(rap.available_qty or 0.0)
+        if qty <= 0: 
+            continue
+        val = qty * float(lot.unit_cost or 0.0)
+        if (lot.grade or "KRIP") == "KRFS":
+            k["KRFS_qty"] += qty; k["KRFS_val"] += val
+        else:
+            k["KRIP_qty"] += qty; k["KRIP_val"] += val
+
+    return templates.TemplateResponse(
+        "rap.html",
+        {
+            "request": request,
+            "rows": rap_rows,  # each has .lot and .available_qty
+            "kpi": k
+        }
+    )
+
+@app.post("/rap/allocate")
+def rap_allocate(
+    rap_lot_id: int = Form(...),
+    date: str = Form(...),
+    kind: str = Form(...),            # "DISPATCH" or "PLANT2"
+    qty: float = Form(...),
+    dest: str = Form(""),
+    remarks: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    rap = db.get(RAPLot, rap_lot_id)
+    if not rap:
+        return _alert_redirect("RAP lot not found.", url="/rap")
+
+    try:
+        d = dt.date.fromisoformat(date)
+    except:
+        return _alert_redirect("Invalid date.", url="/rap")
+
+    qty = float(qty or 0.0)
+    if qty <= 0:
+        return _alert_redirect("Quantity must be > 0.", url="/rap")
+
+    # Refresh available from source of truth
+    lot = db.get(Lot, rap.lot_id)
+    if not lot or (lot.qa_status or "") != "APPROVED":
+        return _alert_redirect("Underlying lot is not APPROVED.", url="/rap")
+
+    # Recompute available (lot.weight - sum allocations)
+    total_alloc = rap_total_alloc_qty_for_lot(db, lot.id)
+    avail = max((lot.weight or 0.0) - total_alloc, 0.0)
+    if qty > avail + 1e-6:
+        return _alert_redirect(f"Over-allocation. Available {avail:.1f} kg.", url="/rap")
+
+    # Insert movement
+    db.add(RAPAlloc(
+        rap_lot_id=rap.id,
+        date=d,
+        kind=(kind if kind in ("DISPATCH","PLANT2") else "DISPATCH"),
+        qty=qty,
+        remarks=remarks,
+        dest=(dest or ("Plant 2" if kind=="PLANT2" else "")),
+    ))
+
+    # Update RAPLot mirror
+    rap.available_qty = max(avail - qty, 0.0)
+    rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
+
+    db.add(rap); db.commit()
+    return RedirectResponse("/rap", status_code=303)
+
+# ---------- CSV export for RAP ----------
+@app.get("/rap/export")
+def rap_export(db: Session = Depends(get_db)):
+    out = io.StringIO()
+    out.write("Lot No,Grade,Available Qty,Unit Cost,Value,Status\n")
+    rows = (
+        db.query(RAPLot)
+          .join(Lot, Lot.id == RAPLot.lot_id)
+          .order_by(RAPLot.id.asc())
+          .all()
+    )
+    for r in rows:
+        lot = r.lot
+        qty = float(r.available_qty or 0.0)
+        val = qty * float(lot.unit_cost or 0.0)
+        out.write(f"{lot.lot_no},{lot.grade or ''},{qty:.1f},{float(lot.unit_cost or 0.0):.2f},{val:.2f},{r.status or ''}\n")
+    data = out.getvalue().encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="rap_stock.csv"'}
+    )
+
 
 # -------------------------------------------------
 # PDF (no cost in PDF)
