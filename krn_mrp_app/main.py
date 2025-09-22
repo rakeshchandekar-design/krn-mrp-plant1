@@ -1025,6 +1025,8 @@ def qa_heat_save(
 # -------------------------------------------------
 # Atomization (ENHANCED — additions only; existing allocation UI untouched)
 # -------------------------------------------------
+# Atomization (ENHANCED — additions only; existing allocation UI untouched)
+# -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(
     request: Request,
@@ -1064,7 +1066,7 @@ def atom_page(
         target = atom_day_target_kg(db, d)
         last5.append({"date": d.isoformat(), "actual": actual, "target": target})
 
-     # Live stock of lots (WIP) = ALL atomization lots (any QA) - RAP allocations (only approved lots allocate)
+    # Live stock of lots (WIP) = ALL atomization lots (any QA) - RAP allocations (only approved lots allocate)
     stock = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
 
     # Preload RAP allocations per lot id (for speed)
@@ -1091,6 +1093,14 @@ def atom_page(
         else:
             stock["KRIP_qty"] += qty; stock["KRIP_val"] += val
 
+    # NEW: lowercase keys for the template (fixes NameError)
+    lots_stock = {
+        "krip_qty": stock.get("KRIP_qty", 0.0),
+        "krip_val": stock.get("KRIP_val", 0.0),
+        "krfs_qty": stock.get("KRFS_qty", 0.0),
+        "krfs_val": stock.get("KRFS_val", 0.0),
+    }
+
     # Date range defaults for the toolbar above Lots table
     s = start or today.isoformat()
     e = end or today.isoformat()
@@ -1104,24 +1114,24 @@ def atom_page(
     err = request.query_params.get("err")
 
     return templates.TemplateResponse(
-    "atomization.html",
-    {
-        "request": request,
-        "heats": heats,
-        "lots": lots,
-        "heat_grades": grades,
-        "available_map": available_map,
-        "today_iso": today.isoformat(),
-        "start": s,
-        "end": e,
-        "atom_eff_today": eff_today,
-        "atom_last5": last5,
-        "atom_capacity": DAILY_CAPACITY_ATOM_KG,
-        "atom_stock": stock,
-        "lots_stock": lots_stock,
-        "error_msg": err,   # <-- DO NOT MISS THIS
-    }
-)
+        "atomization.html",
+        {
+            "request": request,
+            "heats": heats,
+            "lots": lots,
+            "heat_grades": grades,
+            "available_map": available_map,
+            "today_iso": today.isoformat(),
+            "start": s,
+            "end": e,
+            "atom_eff_today": eff_today,
+            "atom_last5": last5,
+            "atom_capacity": DAILY_CAPACITY_ATOM_KG,
+            "atom_stock": stock,
+            "lots_stock": lots_stock,
+            "error_msg": err,   # <-- DO NOT MISS THIS
+        }
+    )
 
 
 def _redir_err(msg: str) -> RedirectResponse:
