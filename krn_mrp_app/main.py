@@ -1284,7 +1284,10 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
     c.drawString(2 * cm, y, f"Weight: {lot.weight:.1f} kg"); y -= 14
     c.drawString(2 * cm, y, f"Lot QA: {lot.qa_status}"); y -= 18
 
-        c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "Heats (Allocation)"); y -= 14
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(2 * cm, y, "Heats (Allocation)")
+    y -= 14
+
     c.setFont("Helvetica", 10)
     for lh in lot.heats:
         h = lh.heat
