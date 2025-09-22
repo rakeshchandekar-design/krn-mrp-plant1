@@ -226,6 +226,66 @@ def migrate_schema(engine):
                 )
             """))
 
+                # RAP Dispatch + Transfer tables
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rap_dispatch(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL,
+                    customer TEXT NOT NULL,
+                    grade TEXT NOT NULL,
+                    total_qty REAL DEFAULT 0,
+                    total_cost REAL DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rap_dispatch_item(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dispatch_id INTEGER,
+                    lot_id INTEGER,
+                    qty REAL DEFAULT 0,
+                    cost REAL DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rap_transfer(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL,
+                    lot_id INTEGER,
+                    qty REAL DEFAULT 0,
+                    remarks TEXT
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rap_dispatch(
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    customer TEXT NOT NULL,
+                    grade TEXT NOT NULL,
+                    total_qty DOUBLE PRECISION DEFAULT 0,
+                    total_cost DOUBLE PRECISION DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rap_dispatch_item(
+                    id SERIAL PRIMARY KEY,
+                    dispatch_id INT REFERENCES rap_dispatch(id),
+                    lot_id INT REFERENCES lot(id),
+                    qty DOUBLE PRECISION DEFAULT 0,
+                    cost DOUBLE PRECISION DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rap_transfer(
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    lot_id INT REFERENCES lot(id),
+                    qty DOUBLE PRECISION DEFAULT 0,
+                    remarks TEXT
+                )
+            """))
+
 
 # -------------------------------------------------
 # Constants
@@ -403,6 +463,39 @@ class RAPAlloc(Base):
     dest = Column(String)  # customer name or "Plant 2"
 
     rap_lot = relationship("RAPLot")
+
+# RAP Dispatch + Transfer Models
+class RAPDispatch(Base):
+    __tablename__ = "rap_dispatch"
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False)
+    customer = Column(String, nullable=False)
+    grade = Column(String, nullable=False)
+    total_qty = Column(Float, default=0.0)
+    total_cost = Column(Float, default=0.0)
+
+    items = relationship("RAPDispatchItem", back_populates="dispatch", cascade="all, delete-orphan")
+
+class RAPDispatchItem(Base):
+    __tablename__ = "rap_dispatch_item"
+    id = Column(Integer, primary_key=True)
+    dispatch_id = Column(Integer, ForeignKey("rap_dispatch.id"))
+    lot_id = Column(Integer, ForeignKey("lot.id"))
+    qty = Column(Float, default=0.0)
+    cost = Column(Float, default=0.0)
+
+    dispatch = relationship("RAPDispatch", back_populates="items")
+    lot = relationship("Lot")
+
+class RAPTransfer(Base):
+    __tablename__ = "rap_transfer"
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False)
+    lot_id = Column(Integer, ForeignKey("lot.id"))
+    qty = Column(Float, default=0.0)
+    remarks = Column(String, default="")
+
+    lot = relationship("Lot")
 
 
 # -------------------------------------------------
@@ -1415,6 +1508,29 @@ def atom_downtime_add(
     return RedirectResponse("/atomization/downtime", status_code=303)
 
 # -------------------------------------------------
+# RAP Page
+# -------------------------------------------------
+@app.get("/rap", response_class=HTMLResponse)
+def rap_page(request: Request, db: Session = Depends(get_db)):
+    lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").order_by(Lot.id.desc()).all()
+
+    today = dt.date.today()
+    summary = {"krip_qty": 0.0, "krip_val": 0.0, "krfs_qty": 0.0, "krfs_val": 0.0}
+    for lot in lots:
+        qty = lot.weight or 0.0
+        val = qty * (lot.unit_cost or 0.0)
+        if lot.grade == "KRFS":
+            summary["krfs_qty"] += qty; summary["krfs_val"] += val
+        else:
+            summary["krip_qty"] += qty; summary["krip_val"] += val
+
+    return templates.TemplateResponse(
+        "rap.html",
+        {"request": request, "lots": lots, "today": today.isoformat(), "summary": summary}
+    )
+
+
+# -------------------------------------------------
 # RAP – Ready After Atomization
 # -------------------------------------------------
 
@@ -1529,6 +1645,57 @@ def rap_export(db: Session = Depends(get_db)):
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="rap_stock.csv"'}
     )
+
+# -------------------------------------------------
+# RAP Dispatch + Transfer
+# -------------------------------------------------
+@app.get("/rap/dispatch/new", response_class=HTMLResponse)
+def rap_dispatch_new(request: Request, db: Session = Depends(get_db)):
+    lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").all()
+    return templates.TemplateResponse("rap_dispatch_new.html", {"request": request, "lots": lots})
+
+@app.post("/rap/dispatch/save")
+def rap_dispatch_save(
+    customer: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    today = dt.date.today()
+    disp = RAPDispatch(date=today, customer=customer, grade="KRIP", total_qty=0, total_cost=0)
+    db.add(disp); db.flush()
+    # TODO: parse selected lots+qtys from form, add RAPDispatchItem
+    db.commit()
+    return RedirectResponse(f"/rap/dispatch/pdf/{disp.id}", status_code=303)
+
+@app.get("/rap/dispatch/pdf/{disp_id}")
+def rap_dispatch_pdf(disp_id: int, db: Session = Depends(get_db)):
+    from rap_dispatch_pdf import draw_dispatch_note
+    disp = db.get(RAPDispatch, disp_id)
+    if not disp:
+        return PlainTextResponse("Dispatch not found", status_code=404)
+    items = db.query(RAPDispatchItem).filter(RAPDispatchItem.dispatch_id == disp_id).all()
+    buf = io.BytesIO()
+    from reportlab.pdfgen import canvas
+    c = canvas.Canvas(buf, pagesize=A4)
+    draw_dispatch_note(c, disp, items, db)
+    c.showPage(); c.save()
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename=\"dispatch_{disp.id}.pdf\"'})
+
+@app.get("/rap/transfer/new", response_class=HTMLResponse)
+def rap_transfer_new(request: Request, db: Session = Depends(get_db)):
+    lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").all()
+    return templates.TemplateResponse("rap_transfer_new.html", {"request": request, "lots": lots})
+
+@app.post("/rap/transfer/save")
+def rap_transfer_save(
+    lot_id: int = Form(...), qty: float = Form(...), remarks: str = Form(""),
+    db: Session = Depends(get_db)
+):
+    today = dt.date.today()
+    t = RAPTransfer(date=today, lot_id=lot_id, qty=qty, remarks=remarks)
+    db.add(t); db.commit()
+    return RedirectResponse("/rap", status_code=303)
 
 
 # -------------------------------------------------
