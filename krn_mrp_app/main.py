@@ -998,28 +998,38 @@ async def atom_new(
                 pass
 
     if not allocs:
-        return PlainTextResponse("Enter allocation for at least one heat.", status_code=400)
+        return HTMLResponse(
+            '<script>alert("Enter allocation for at least one heat.");history.back();</script>'
+        )
 
     heats = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
     if not heats:
-        return PlainTextResponse("Selected heats not found", status_code=404)
+        return HTMLResponse('<script>alert("Selected heats not found.");history.back();</script>')
 
     # Per-heat availability check
     for h in heats:
         avail = heat_available(db, h)
         take = allocs.get(h.id, 0.0)
         if take > avail + 1e-6:
-            return PlainTextResponse(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.", status_code=400)
+            return HTMLResponse(
+                f'<script>alert("Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.");history.back();</script>'
+            )
 
-    # NEW: total allocation must equal Lot Weight (±0.1 kg tolerance)
+    # Enforce single grade family (no mixing KRIP & KRFS in one lot)
+    g_list = [heat_grade(h) for h in heats]
+    if not all(g == g_list[0] for g in g_list):
+        return HTMLResponse(
+            '<script>alert("Mixing KRIP and KRFS in the same lot is not allowed.");history.back();</script>'
+        )
+
+    # Total allocation must equal Lot Weight (±0.1 kg)
     total_alloc = sum(allocs.values())
     if abs(total_alloc - float(lot_weight or 0.0)) > 0.1:
-        # If you prefer auto-fix instead of blocking, replace next two lines with: lot_weight = total_alloc
-        msg = f"Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg)."
-        return PlainTextResponse(msg, status_code=400)
+        return HTMLResponse(
+            f'<script>alert("Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg).");history.back();</script>'
+        )
 
-    any_fesi = any(heat_grade(h) == "KRFS" for h in heats)
-    grade = "KRFS" if any_fesi else "KRIP"
+    grade = g_list[0]  # since all equal now
 
     today = dt.date.today().strftime("%Y%m%d")
     seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"KR%{today}%")).scalar() or 0) + 1
@@ -1027,7 +1037,7 @@ async def atom_new(
     lot = Lot(lot_no=lot_no, weight=float(lot_weight), grade=grade)
     db.add(lot); db.flush()
 
-    # Create LotHeat rows
+    # Create LotHeat rows and update mirror alloc_used
     for h in heats:
         qty = allocs.get(h.id, 0.0)
         if qty <= 0:
@@ -1058,14 +1068,13 @@ async def atom_new(
                 sums[k] += v * q
             except:
                 pass
-    avg = {}
-    for k in list(sums.keys()):
-        avg[k] = (sums[k] / total_alloc) if total_alloc > 0 else None
+    avg = {k: (sums[k] / total_alloc) if total_alloc > 0 else None for k in sums.keys()}
     lc = LotChem(lot=lot, **{k: (str(v) if v is not None else "") for k, v in avg.items()})
     db.add(lc)
 
     db.commit()
     return RedirectResponse("/atomization", status_code=303)
+
 
 # ---------- CSV export for atomization lots (NEW) ----------
 @app.get("/atomization/export")
@@ -1131,7 +1140,15 @@ def qa_dashboard(request: Request, db: Session = Depends(get_db)):
 @app.get("/traceability/lot/{lot_id}", response_class=HTMLResponse)
 def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
     lot = db.get(Lot, lot_id)
-    heats = [lh.heat for lh in lot.heats]
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+
+    # Allocation qty per heat for this lot
+    alloc_rows = db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()
+    alloc_map = {r.heat_id: float(r.qty or 0.0) for r in alloc_rows}
+    heats = [db.get(Heat, r.heat_id) for r in alloc_rows]
+
+    # FIFO GRN rows (unchanged)
     rows = []
     for h in heats:
         for cons in h.rm_consumptions:
@@ -1148,7 +1165,17 @@ def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
                     },
                 )
             )
-    return templates.TemplateResponse("trace_lot.html", {"request": request, "lot": lot, "heats": heats, "grn_rows": rows})
+    return templates.TemplateResponse(
+        "trace_lot.html",
+        {
+            "request": request,
+            "lot": lot,
+            "heats": heats,
+            "alloc_map": alloc_map,   # NEW: qty used from each heat for THIS lot
+            "grn_rows": rows
+        }
+    )
+
 
 # -------------------------------------------------
 # Traceability - HEAT (for trace_heat.html)
@@ -1257,14 +1284,18 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
     c.drawString(2 * cm, y, f"Weight: {lot.weight:.1f} kg"); y -= 14
     c.drawString(2 * cm, y, f"Lot QA: {lot.qa_status}"); y -= 18
 
-    c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "Heats"); y -= 14
+        c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "Heats (Allocation)"); y -= 14
     c.setFont("Helvetica", 10)
     for lh in lot.heats:
         h = lh.heat
-        c.drawString(2.2 * cm, y, f"{h.heat_no}  | Out: {h.actual_output:.1f} kg | QA: {h.qa_status}")
+        c.drawString(
+            2.2 * cm, y,
+            f"{h.heat_no}  | Alloc to lot: {float(lh.qty or 0):.1f} kg  | Heat Out: {float(h.actual_output or 0):.1f} kg  | QA: {h.qa_status}"
+        )
         y -= 12
         if y < 3 * cm:
             c.showPage(); draw_header(c, f"Traceability Report – Lot {lot.lot_no}"); y = height - 4 * cm
+
 
     y -= 6
     c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "GRN Consumption (FIFO)"); y -= 14
