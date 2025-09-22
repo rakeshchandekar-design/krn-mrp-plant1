@@ -1508,69 +1508,55 @@ def atom_downtime_add(
     return RedirectResponse("/atomization/downtime", status_code=303)
 
 # -------------------------------------------------
-# RAP Page
+# RAP – Ready After Atomization (final)
 # -------------------------------------------------
 @app.get("/rap", response_class=HTMLResponse)
 def rap_page(request: Request, db: Session = Depends(get_db)):
-    lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").order_by(Lot.id.desc()).all()
-
+    """
+    Show APPROVED atomization lots in RAP, ensure RAPLot rows exist,
+    and compute grade-wise available KPIs.
+    """
     today = dt.date.today()
-    summary = {"krip_qty": 0.0, "krip_val": 0.0, "krfs_qty": 0.0, "krfs_val": 0.0}
-    for lot in lots:
-        qty = lot.weight or 0.0
-        val = qty * (lot.unit_cost or 0.0)
-        if lot.grade == "KRFS":
-            summary["krfs_qty"] += qty; summary["krfs_val"] += val
-        else:
-            summary["krip_qty"] += qty; summary["krip_val"] += val
 
-    return templates.TemplateResponse(
-        "rap.html",
-        {"request": request, "lots": lots, "today": today.isoformat(), "summary": summary}
-    )
-
-
-# -------------------------------------------------
-# RAP – Ready After Atomization
-# -------------------------------------------------
-
-@app.get("/rap", response_class=HTMLResponse)
-def rap_page(request: Request, db: Session = Depends(get_db)):
-    """
-    Show all APPROVED lots in RAP stage (auto ensure/refresh RAPLot rows),
-    allow allocating DISPATCH / PLANT2.
-    """
     # Bring in all APPROVED lots
-    lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").order_by(Lot.id.desc()).all()
+    lots = (
+        db.query(Lot)
+        .filter(Lot.qa_status == "APPROVED")
+        .order_by(Lot.id.desc())
+        .all()
+    )
 
     # Ensure RAP rows exist & are up to date
     rap_rows: List[RAPLot] = []
     for lot in lots:
-        rap = ensure_rap_lot(db, lot)
-        rap_rows.append(rap)
+        rap_rows.append(ensure_rap_lot(db, lot))
     db.commit()  # persist any ensure updates
 
-    # KPIs: Available stock and value (by grade) for RAP (i.e., ready stock)
-    k = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
+    # KPIs: Available stock & value in RAP (ready stock)
+    kpi = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
     for rap in rap_rows:
         lot = rap.lot
         qty = float(rap.available_qty or 0.0)
-        if qty <= 0: 
+        if qty <= 0:
             continue
         val = qty * float(lot.unit_cost or 0.0)
         if (lot.grade or "KRIP") == "KRFS":
-            k["KRFS_qty"] += qty; k["KRFS_val"] += val
+            kpi["KRFS_qty"] += qty
+            kpi["KRFS_val"] += val
         else:
-            k["KRIP_qty"] += qty; k["KRIP_val"] += val
+            kpi["KRIP_qty"] += qty
+            kpi["KRIP_val"] += val
 
-    # Map names to what rap.html expects
-kpi  = summary   # totals by grade
-rows = lots      # individual RAP lots
-
-return templates.TemplateResponse(
-    "rap.html",
-    {"request": request, "rows": rows, "kpi": kpi, "today": today.isoformat()}
-)
+    # Render
+    return templates.TemplateResponse(
+        "rap.html",
+        {
+            "request": request,
+            "rows": rap_rows,        # what rap.html iterates
+            "kpi": kpi,              # what rap.html uses for KPI table
+            "today": today.isoformat()
+        }
+    )
 
 @app.post("/rap/allocate")
 def rap_allocate(
