@@ -1592,21 +1592,31 @@ def rap_allocate(
     if qty > avail + 1e-6:
         return _alert_redirect(f"Over-allocation. Available {avail:.1f} kg.", url="/rap")
 
-    # Insert movement
-    db.add(RAPAlloc(
+    # Insert movement (keep handle, flush to get id)
+    rec = RAPAlloc(
         rap_lot_id=rap.id,
         date=d,
-        kind=(kind if kind in ("DISPATCH","PLANT2") else "DISPATCH"),
+        kind=(kind if kind in ("DISPATCH", "PLANT2") else "DISPATCH"),
         qty=qty,
         remarks=remarks,
-        dest=(dest or ("Plant 2" if kind=="PLANT2" else "")),
-    ))
+        dest=(dest or ("Plant 2" if kind == "PLANT2" else "")),
+    )
+    db.add(rec)
+    db.flush()               # <-- get rec.id
+    alloc_id = rec.id
 
     # Update RAPLot mirror
     rap.available_qty = max(avail - qty, 0.0)
     rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
 
-    db.add(rap); db.commit()
+    db.add(rap)
+    db.commit()
+
+    # If dispatch, jump to the PDF note
+    if rec.kind == "DISPATCH":
+        return RedirectResponse(f"/rap/dispatch/{alloc_id}/pdf", status_code=303)
+
+    # Otherwise (PLANT2), back to RAP
     return RedirectResponse("/rap", status_code=303)
 
 # ---------- CSV export for RAP ----------
@@ -1682,6 +1692,112 @@ def rap_transfer_save(
     t = RAPTransfer(date=today, lot_id=lot_id, qty=qty, remarks=remarks)
     db.add(t); db.commit()
     return RedirectResponse("/rap", status_code=303)
+
+# -------------------------------------------------
+# RAP Dispatch Note PDF
+# -------------------------------------------------
+@app.get("/rap/dispatch/{alloc_id}/pdf")
+def rap_dispatch_pdf(alloc_id: int, db: Session = Depends(get_db)):
+    # Load allocation + linked RAPLot + Lot
+    alloc = db.get(RAPAlloc, alloc_id)
+    if not alloc:
+        return PlainTextResponse("Dispatch allocation not found.", status_code=404)
+
+    rap = db.get(RAPLot, alloc.rap_lot_id)
+    if not rap:
+        return PlainTextResponse("RAP lot not found.", status_code=404)
+
+    lot = db.get(Lot, rap.lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found.", status_code=404)
+
+    # Collect trace items (heats & FIFO rows) for annexure
+    heats = []
+    fifo_rows = []
+    for lh in lot.heats:
+        h = db.get(Heat, lh.heat_id)
+        if not h:
+            continue
+        heats.append((h, float(lh.qty or 0.0)))
+        for cons in h.rm_consumptions:
+            g = cons.grn
+            fifo_rows.append({
+                "heat_no": h.heat_no,
+                "rm_type": cons.rm_type,
+                "grn_id": cons.grn_id,
+                "supplier": g.supplier if g else "",
+                "qty": float(cons.qty or 0.0)
+            })
+
+    # Make PDF
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    # Header
+    draw_header(c, "Dispatch Note")
+
+    # Top fields
+    y = height - 4 * cm
+    c.setFont("Helvetica", 11)
+    c.drawString(2 * cm, y, f"Date/Time: {(alloc.date or dt.date.today()).isoformat()}  {dt.datetime.now().strftime('%H:%M')}"); y -= 14
+    c.drawString(2 * cm, y, f"Customer: {alloc.dest or ''}"); y -= 14
+    c.drawString(2 * cm, y, f"Note Type: DISPATCH"); y -= 14
+
+    # Lot summary
+    y -= 6
+    c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "Lot Details"); y -= 14
+    c.setFont("Helvetica", 10)
+    c.drawString(2 * cm, y, f"Lot: {lot.lot_no}    Grade: {lot.grade or '-'}"); y -= 12
+    c.drawString(2 * cm, y, f"Allocated Qty (kg): {float(alloc.qty or 0):.1f}"); y -= 12
+    c.drawString(2 * cm, y, f"Cost / kg (₹): {float(lot.unit_cost or 0):.2f}    Cost Value (₹): {float(lot.unit_cost or 0) * float(alloc.qty or 0):.2f}"); y -= 16
+
+    # Blank sell-rate placeholder
+    c.setFont("Helvetica-Oblique", 10)
+    c.drawString(2 * cm, y, "SELL RATE (₹/kg): _________________________     Amount (₹): _________________________"); y -= 18
+
+    # Annexure – QA & Trace
+    c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "Annexure: QA Certificates & GRN Trace"); y -= 14
+    c.setFont("Helvetica", 10)
+
+    # Heats table (lot allocations)
+    c.drawString(2 * cm, y, "Heats used in this lot (lot allocation vs. heat out / QA):"); y -= 12
+    for h, qalloc in heats:
+        c.drawString(2.2 * cm, y,
+            f"{h.heat_no}  | Alloc to lot: {qalloc:.1f} kg  | Heat Out: {float(h.actual_output or 0):.1f} kg  | QA: {h.qa_status or ''}"
+        )
+        y -= 12
+        if y < 3 * cm:
+            c.showPage(); draw_header(c, "Dispatch Note"); y = height - 4 * cm
+
+    # FIFO rows
+    y -= 6
+    c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "GRN Consumption (FIFO)"); y -= 14
+    c.setFont("Helvetica", 10)
+    for r in fifo_rows:
+        c.drawString(2.2 * cm, y,
+            f"Heat {r['heat_no']} | {r['rm_type']} | GRN #{r['grn_id']} | {r['supplier']} | {r['qty']:.1f} kg"
+        )
+        y -= 12
+        if y < 3 * cm:
+            c.showPage(); draw_header(c, "Dispatch Note"); y = height - 4 * cm
+
+    # Footer note & signature
+    y -= 8
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(2 * cm, y, "This document is a Dispatch Note for Invoice purpose only."); y -= 16
+
+    c.setFont("Helvetica", 10)
+    c.drawString(2 * cm, y, "Authorized Sign: ____________________________"); y -= 24
+
+    c.showPage(); c.save()
+    buf.seek(0)
+    filename = f"Dispatch_{lot.lot_no}_{alloc.id}.pdf"
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'}
+    )
 
 
 # -------------------------------------------------
