@@ -1,5 +1,3 @@
-# --- START OF FILE: main.py (patched) ---
-
 import os, io, datetime as dt
 from typing import Optional, Dict, List, Tuple
 
@@ -327,6 +325,8 @@ if not os.path.isdir(STATIC_DIR):
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+# expose python builtins to Jinja
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
 
 # -------------------------------------------------
@@ -378,6 +378,7 @@ def heat_date_from_no(heat_no: str) -> Optional[dt.date]:
         return None
 
 def lot_date_from_no(lot_no: str) -> Optional[dt.date]:
+    """Parse date from lot number e.g. KRIP-YYYYMMDD-###"""
     try:
         parts = lot_no.split("-")
         for p in parts:
@@ -388,6 +389,7 @@ def lot_date_from_no(lot_no: str) -> Optional[dt.date]:
     return None
 
 def day_available_minutes(db: Session, day: dt.date) -> int:
+    """Melting: 1440 minus total of per-heat downtime + day-level downtime."""
     dn = day.strftime("%Y%m%d")
     heat_mins = (
         db.query(func.coalesce(func.sum(Heat.downtime_min), 0))
@@ -403,6 +405,7 @@ def day_target_kg(db: Session, day: dt.date) -> float:
     return DAILY_CAPACITY_KG * (day_available_minutes(db, day) / 1440.0)
 
 def atom_day_available_minutes(db: Session, day: dt.date) -> int:
+    """Atomization: currently only day-level downtime (no per-lot downtime fields)."""
     extra_mins = db.query(func.coalesce(func.sum(AtomDowntime.minutes), 0)).filter(AtomDowntime.date == day).scalar() or 0
     return max(1440 - int(extra_mins), 0)
 
@@ -503,6 +506,7 @@ def grn_new_post(
     db.add(g); db.commit()
     return RedirectResponse("/grn", status_code=303)
 
+# ---------- CSV export for report range ----------
 @app.get("/grn/export")
 def grn_export(
     start: str,
@@ -560,14 +564,14 @@ def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat) -> fl
     return added_cost
 
 # -------------------------------------------------
-# Melting (unchanged UX/logic)
+# Melting (enhanced performance, unchanged UX/logic)
 # -------------------------------------------------
 @app.get("/melting", response_class=HTMLResponse)
 def melting_page(
     request: Request,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    all: Optional[int] = 0,
+    start: Optional[str] = None,   # YYYY-MM-DD
+    end: Optional[str] = None,     # YYYY-MM-DD
+    all: Optional[int] = 0,        # if 1 => show all heats with available > 0
     db: Session = Depends(get_db),
 ):
     heats: List[Heat] = (
@@ -576,11 +580,13 @@ def melting_page(
         .order_by(Heat.id.desc())
         .all()
     )
+
     used_map: Dict[int, float] = dict(
         db.query(LotHeat.heat_id, func.coalesce(func.sum(LotHeat.qty), 0.0))
           .group_by(LotHeat.heat_id)
           .all()
     )
+
     rows = []
     for h in heats:
         avail = heat_available_fast(h, used_map)
@@ -606,7 +612,7 @@ def melting_page(
     yield_today = (100.0 * tot_out_today / tot_in_today) if tot_in_today > 0 else 0.0
     eff_today   = (100.0 * tot_out_today / DAILY_CAPACITY_KG) if DAILY_CAPACITY_KG > 0 else 0.0
 
-    # Last 5 days
+    # Last 5 days: actual, target adjusted
     last5 = []
     for i in range(4, -1, -1):
         d = today - dt.timedelta(days=i)
@@ -614,7 +620,7 @@ def melting_page(
         target = day_target_kg(db, d)
         last5.append({"date": d.isoformat(), "actual": actual, "target": target})
 
-    # Live stock summary
+    # Live stock summary by grade
     krip_qty = krip_val = krfs_qty = krfs_val = 0.0
     for r in rows:
         if r["available"] <= 0:
@@ -625,12 +631,13 @@ def melting_page(
         else:
             krip_qty += r["available"]; krip_val += val
 
-    s = start or dt.date.today().isoformat()
-    e = end or dt.date.today().isoformat()
+    # Date range defaults
+    s = start or today.isoformat()
+    e = end or today.isoformat()
     try:
         s_date = dt.date.fromisoformat(s); e_date = dt.date.fromisoformat(e)
     except Exception:
-        s_date, e_date = dt.date.today(), dt.date.today()
+        s_date, e_date = today, today
 
     visible_heats = [r["heat"] for r in rows if s_date <= r["date"] <= e_date]
     if all and int(all) == 1:
@@ -659,26 +666,33 @@ def melting_page(
             "eff_today": eff_today,
             "last5": last5,
             "stock": {"krip_qty": krip_qty, "krip_val": krip_val, "krfs_qty": krfs_qty, "krfs_val": krfs_val},
-            "today_iso": dt.date.today().isoformat(),
+            "today_iso": today.isoformat(),
             "start": s, "end": e,
             "power_target": POWER_TARGET_KWH_PER_TON,
             "trace_map": trace_map,
         },
     )
 
+# -------------------------------------------------
+# Create Heat (same logic; inline alert if GRN insufficient)
+# -------------------------------------------------
 @app.post("/melting/new")
 def melting_new(
     request: Request,
     notes: Optional[str] = Form(None),
+
     slag_qty: float = Form(...),
     power_kwh: float = Form(...),
+
     downtime_min: int = Form(...),
     downtime_type: str = Form("production"),
     downtime_note: str = Form(""),
+
     rm_type_1: Optional[str] = Form(None), rm_qty_1: Optional[str] = Form(None),
     rm_type_2: Optional[str] = Form(None), rm_qty_2: Optional[str] = Form(None),
     rm_type_3: Optional[str] = Form(None), rm_qty_3: Optional[str] = Form(None),
     rm_type_4: Optional[str] = Form(None), rm_qty_4: Optional[str] = Form(None),
+
     db: Session = Depends(get_db),
 ):
     def _to_float(x: Optional[str]) -> Optional[float]:
@@ -713,6 +727,7 @@ def melting_new(
         downtime_type = None
         downtime_note = ""
 
+    # Create heat number
     today = dt.date.today().strftime("%Y%m%d")
     seq = (db.query(func.count(Heat.id)).filter(Heat.heat_no.like(f"{today}-%")).scalar() or 0) + 1
     heat_no = f"{today}-{seq:03d}"
@@ -727,6 +742,7 @@ def melting_new(
     )
     db.add(heat); db.flush()
 
+    # Stock checks
     for t, q in parsed:
         if available_stock(db, t) < q - 1e-6:
             db.rollback()
@@ -734,6 +750,7 @@ def melting_new(
             html = f"""<script>alert("{msg}");window.location="/melting";</script>"""
             return HTMLResponse(html)
 
+    # Consume FIFO + accumulate RM cost
     total_inputs = 0.0
     total_rm_cost = 0.0
     used_fesi = False
@@ -764,6 +781,7 @@ def melting_new(
     db.commit()
     return RedirectResponse("/melting", status_code=303)
 
+# ---------- CSV export for melting report ----------
 @app.get("/melting/export")
 def melting_export(
     start: Optional[str] = None,
@@ -796,13 +814,15 @@ def melting_export(
     return StreamingResponse(
         io.BytesIO(data),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'}
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
+# ---------- CSV export for melting downtime ----------
 @app.get("/melting/downtime/export")
 def downtime_export(db: Session = Depends(get_db)):
     out = io.StringIO()
     out.write("Source,Date,Heat No,Minutes,Type/Kind,Remarks\n")
+
     heats = db.query(Heat).order_by(Heat.id.asc()).all()
     for h in heats:
         mins = int(h.downtime_min or 0)
@@ -810,15 +830,20 @@ def downtime_export(db: Session = Depends(get_db)):
             continue
         d = heat_date_from_no(h.heat_no) or dt.date.today()
         out.write(f"HEAT,{d.isoformat()},{h.heat_no},{mins},{h.downtime_type or ''},{(h.downtime_note or '').replace(',', ' ')}\n")
+
     days = db.query(Downtime).order_by(Downtime.date.asc(), Downtime.id.asc()).all()
     for r in days:
         out.write(f"DAY,{r.date.isoformat()},,{int(r.minutes or 0)},{r.kind or ''},{(r.remarks or '').replace(',', ' ')}\n")
+
     data = out.getvalue().encode("utf-8")
-    return StreamingResponse(io.BytesIO(data), media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename=\"downtime_export.csv\"'})
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="downtime_export.csv"'}
+    )
 
 # -------------------------------------------------
-# QA redirect + Heat QA (unchanged)
+# QA redirect + Heat QA
 # -------------------------------------------------
 @app.get("/qa")
 def qa_redirect():
@@ -829,10 +854,12 @@ def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
     heat = db.get(Heat, heat_id)
     if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
+
     chem = heat.chemistry
     if not chem:
         chem = HeatChem(heat=heat)
         db.add(chem); db.commit(); db.refresh(chem)
+
     return templates.TemplateResponse(
         "qa_heat.html",
         {
@@ -862,6 +889,7 @@ def qa_heat_save(
     heat = db.get(Heat, heat_id)
     if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
+
     chem = heat.chemistry or HeatChem(heat=heat)
     chem.c = C; chem.si = Si; chem.s = S; chem.p = P
     chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
@@ -870,25 +898,31 @@ def qa_heat_save(
     return RedirectResponse("/melting", status_code=303)
 
 # -------------------------------------------------
-# Atomization (enhanced)
+# Atomization (ENHANCED — additions only; existing allocation UI untouched)
 # -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(
     request: Request,
-    start: Optional[str] = None,   # YYYY-MM-DD
+    start: Optional[str] = None,   # YYYY-MM-DD (for toolbar on atomization page)
     end: Optional[str] = None,     # YYYY-MM-DD
-    reset: Optional[int] = 0,      # if 1 => show ALL lots with non-zero weight (ignores date filters)
     db: Session = Depends(get_db)
 ):
-    heats = db.query(Heat).filter(Heat.qa_status == "APPROVED").order_by(Heat.id.desc()).all()
+    # Only APPROVED heats
+    heats_all = db.query(Heat).filter(Heat.qa_status == "APPROVED").order_by(Heat.id.desc()).all()
+
+    # Availability + grade
+    available_map = {h.id: heat_available(db, h) for h in heats_all}
+    grades = {h.id: heat_grade(h) for h in heats_all}
+
+    # Hide zero-available heats
+    heats = [h for h in heats_all if (available_map.get(h.id) or 0.0) > 0.0001]
+
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
 
-    grades = {h.id: heat_grade(h) for h in heats}
-    available_map = {h.id: heat_available(db, h) for h in heats}
-
+    # ----- KPIs & last-5-days for Atomization -----
     today = dt.date.today()
 
-    # KPIs for Atomization
+    # production today = sum of lot weights created today
     lots_with_dates = [(lot, lot_date_from_no(lot.lot_no) or today) for lot in lots]
     prod_today = sum((lot.weight or 0.0) for lot, d in lots_with_dates if d == today)
     eff_today = (100.0 * prod_today / DAILY_CAPACITY_ATOM_KG) if DAILY_CAPACITY_ATOM_KG > 0 else 0.0
@@ -900,7 +934,7 @@ def atom_page(
         target = atom_day_target_kg(db, d)
         last5.append({"date": d.isoformat(), "actual": actual, "target": target})
 
-    # Live stock – lots
+    # Live stock of lots (simple: total lots by grade; no downstream deductions yet)
     stock = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
     for lot in lots:
         qty = lot.weight or 0.0
@@ -917,7 +951,7 @@ def atom_page(
         "krfs_val": stock.get("KRFS_val", 0.0),
     }
 
-    # Date handling for toolbar
+    # Date range defaults for the toolbar above Lots table
     s = start or today.isoformat()
     e = end or today.isoformat()
     try:
@@ -925,22 +959,12 @@ def atom_page(
     except Exception:
         s_date, e_date = today, today
 
-    # NEW: server-side list for the Lots table
-    if reset and int(reset) == 1:
-        lots_filtered = [lot for lot in lots if (lot.weight or 0.0) > 0.0]
-    else:
-        lots_filtered = []
-        for lot in lots:
-            d = lot_date_from_no(lot.lot_no) or today
-            if s_date <= d <= e_date:
-                lots_filtered.append(lot)
-
     return templates.TemplateResponse(
         "atomization.html",
         {
             "request": request,
-            "heats": heats,
-            "lots": lots_filtered,          # table uses this directly
+            "heats": heats,                     # filtered list (available > 0)
+            "lots": lots,
             "heat_grades": grades,
             "available_map": available_map,
             "today_iso": today.isoformat(),
@@ -960,6 +984,8 @@ async def atom_new(
     db: Session = Depends(get_db)
 ):
     form = await request.form()
+
+    # Parse allocations
     allocs: Dict[int, float] = {}
     for key, val in form.items():
         if key.startswith("alloc_"):
@@ -970,6 +996,7 @@ async def atom_new(
                     allocs[hid] = qty
             except:
                 pass
+
     if not allocs:
         return PlainTextResponse("Enter allocation for at least one heat.", status_code=400)
 
@@ -977,11 +1004,19 @@ async def atom_new(
     if not heats:
         return PlainTextResponse("Selected heats not found", status_code=404)
 
+    # Per-heat availability check
     for h in heats:
         avail = heat_available(db, h)
         take = allocs.get(h.id, 0.0)
         if take > avail + 1e-6:
             return PlainTextResponse(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.", status_code=400)
+
+    # NEW: total allocation must equal Lot Weight (±0.1 kg tolerance)
+    total_alloc = sum(allocs.values())
+    if abs(total_alloc - float(lot_weight or 0.0)) > 0.1:
+        # If you prefer auto-fix instead of blocking, replace next two lines with: lot_weight = total_alloc
+        msg = f"Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg)."
+        return PlainTextResponse(msg, status_code=400)
 
     any_fesi = any(heat_grade(h) == "KRFS" for h in heats)
     grade = "KRFS" if any_fesi else "KRIP"
@@ -989,18 +1024,18 @@ async def atom_new(
     today = dt.date.today().strftime("%Y%m%d")
     seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"KR%{today}%")).scalar() or 0) + 1
     lot_no = f"{grade}-{today}-{seq:03d}"
-    lot = Lot(lot_no=lot_no, weight=lot_weight, grade=grade)
+    lot = Lot(lot_no=lot_no, weight=float(lot_weight), grade=grade)
     db.add(lot); db.flush()
 
-    total_alloc = 0.0
+    # Create LotHeat rows
     for h in heats:
         qty = allocs.get(h.id, 0.0)
         if qty <= 0:
             continue
         db.add(LotHeat(lot_id=lot.id, heat_id=h.id, qty=qty))
         h.alloc_used = (h.alloc_used or 0.0) + qty
-        total_alloc += qty
 
+    # Weighted average cost from heats
     weighted_cost = 0.0
     for h in heats:
         qty = allocs.get(h.id, 0.0)
@@ -1011,6 +1046,7 @@ async def atom_new(
     lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
     lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
 
+    # Average chemistry
     sums = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
     for h in heats:
         q = allocs.get(h.id, 0.0)
@@ -1031,6 +1067,7 @@ async def atom_new(
     db.commit()
     return RedirectResponse("/atomization", status_code=303)
 
+# ---------- CSV export for atomization lots (NEW) ----------
 @app.get("/atomization/export")
 def atom_export(
     start: Optional[str] = None,
@@ -1060,9 +1097,10 @@ def atom_export(
     return StreamingResponse(
         io.BytesIO(data),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'}
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
+# ---------- CSV export for atomization downtime (NEW) ----------
 @app.get("/atomization/downtime/export")
 def atom_downtime_export(db: Session = Depends(get_db)):
     out = io.StringIO()
@@ -1074,7 +1112,7 @@ def atom_downtime_export(db: Session = Depends(get_db)):
     return StreamingResponse(
         io.BytesIO(data),
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename=\"atom_downtime_export.csv\"'}
+        headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
 # -------------------------------------------------
@@ -1088,7 +1126,7 @@ def qa_dashboard(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots, "heat_grades": heat_grades})
 
 # -------------------------------------------------
-# Traceability - LOT
+# Traceability - LOT (existing)
 # -------------------------------------------------
 @app.get("/traceability/lot/{lot_id}", response_class=HTMLResponse)
 def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
@@ -1113,7 +1151,7 @@ def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("trace_lot.html", {"request": request, "lot": lot, "heats": heats, "grn_rows": rows})
 
 # -------------------------------------------------
-# Traceability - HEAT
+# Traceability - HEAT (for trace_heat.html)
 # -------------------------------------------------
 @app.get("/traceability/heat/{heat_id}", response_class=HTMLResponse)
 def trace_heat(heat_id: int, request: Request, db: Session = Depends(get_db)):
@@ -1143,7 +1181,10 @@ def trace_heat(heat_id: int, request: Request, db: Session = Depends(get_db)):
 def downtime_page(request: Request, db: Session = Depends(get_db)):
     today = dt.date.today()
     last = db.query(Downtime).order_by(Downtime.date.desc(), Downtime.id.desc()).limit(50).all()
-    return templates.TemplateResponse("downtime.html", {"request": request, "today": today.isoformat(), "rows": last})
+    return templates.TemplateResponse(
+        "downtime.html",
+        {"request": request, "today": today.isoformat(), "rows": last}
+    )
 
 @app.post("/melting/downtime")
 def downtime_add(
@@ -1159,12 +1200,15 @@ def downtime_add(
     db.commit()
     return RedirectResponse("/melting/downtime", status_code=303)
 
-# NEW: Atomization downtime page (separate template so it posts to atomization route)
+# Atomization downtime page (renders your atom_down.html)
 @app.get("/atomization/downtime", response_class=HTMLResponse)
 def atom_downtime_page(request: Request, db: Session = Depends(get_db)):
     today = dt.date.today()
     last = db.query(AtomDowntime).order_by(AtomDowntime.date.desc(), AtomDowntime.id.desc()).limit(50).all()
-    return templates.TemplateResponse("atom_downtime.html", {"request": request, "today": today.isoformat(), "rows": last})
+    return templates.TemplateResponse(
+        "atom_down.html",
+        {"request": request, "today": today.isoformat(), "rows": last}
+    )
 
 @app.post("/atomization/downtime")
 def atom_downtime_add(
@@ -1181,7 +1225,7 @@ def atom_downtime_add(
     return RedirectResponse("/atomization/downtime", status_code=303)
 
 # -------------------------------------------------
-# PDF (unchanged)
+# PDF (no cost in PDF)
 # -------------------------------------------------
 def draw_header(c: canvas.Canvas, title: str):
     width, height = A4
@@ -1237,75 +1281,4 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
     c.showPage(); c.save()
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/pdf",
-                             headers={"Content-Disposition": f'inline; filename=\"trace_{lot.lot_no}.pdf\"'})
-
-# -------------------------------------------------
-# NEW: Lot QA (GET + POST) using your qa_lot.html
-# -------------------------------------------------
-@app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
-def qa_lot_form(lot_id: int, request: Request, db: Session = Depends(get_db)):
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
-
-    # Ensure child rows exist so template never breaks
-    chem = lot.chemistry or LotChem(lot=lot)
-    if not lot.chemistry:
-        db.add(chem); db.commit(); db.refresh(chem)
-
-    phys = lot.phys or LotPhys(lot=lot)
-    if not lot.phys:
-        db.add(phys); db.commit(); db.refresh(phys)
-
-    psd = lot.psd or LotPSD(lot=lot)
-    if not lot.psd:
-        db.add(psd); db.commit(); db.refresh(psd)
-
-    grade = lot.grade or "KRIP"
-    ctx = {
-        "request": request,
-        "lot": lot,
-        "grade": grade,
-        "chem": {"C": chem.c or "", "Si": chem.si or "", "S": chem.s or "", "P": chem.p or "",
-                 "Cu": chem.cu or "", "Ni": chem.ni or "", "Mn": chem.mn or "", "Fe": chem.fe or ""},
-        "phys": {"ad": phys.ad or "", "flow": phys.flow or ""},
-        "psd": {"p212": psd.p212 or "", "p180": psd.p180 or "", "n180p150": psd.n180p150 or "",
-                "n150p75": psd.n150p75 or "", "n75p45": psd.n75p45 or "", "n45": psd.n45 or ""},
-    }
-    return templates.TemplateResponse("qa_lot.html", ctx)
-
-@app.post("/qa/lot/{lot_id}")
-def qa_lot_save(
-    lot_id: int,
-    C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
-    Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
-    ad: str = Form(""), flow: str = Form(""),
-    p212: str = Form(""), p180: str = Form(""), n180p150: str = Form(""),
-    n150p75: str = Form(""), n75p45: str = Form(""), n45: str = Form(""),
-    decision: str = Form("APPROVED"), remarks: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
-
-    chem = lot.chemistry or LotChem(lot=lot)
-    phys = lot.phys or LotPhys(lot=lot)
-    psd  = lot.psd or LotPSD(lot=lot)
-
-    # Save everything
-    chem.c, chem.si, chem.s, chem.p = C, Si, S, P
-    chem.cu, chem.ni, chem.mn, chem.fe = Cu, Ni, Mn, Fe
-
-    phys.ad, phys.flow = ad, flow
-
-    psd.p212, psd.p180, psd.n180p150 = p212, p180, n180p150
-    psd.n150p75, psd.n75p45, psd.n45 = n150p75, n75p45, n45
-
-    lot.qa_status = decision
-    lot.qa_remarks = remarks
-
-    db.add_all([chem, phys, psd, lot]); db.commit()
-    return RedirectResponse("/qa-dashboard", status_code=303)
-
-# --- END OF FILE: main.py (patched) ---
+                             headers={"Content-Disposition": f'inline; filename="trace_{lot.lot_no}.pdf"'})
