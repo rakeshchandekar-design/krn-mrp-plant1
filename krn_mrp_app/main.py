@@ -1546,115 +1546,37 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
         else:
             kpi["KRIP_qty"] += qty
             kpi["KRIP_val"] += val
-    from datetime import date
 
-# --- Monthly RAP KPI Trends ---
-today = date.today()
-month_start = today.replace(day=1)
+    # --- Monthly RAP KPI Trends ---
+    month_start = today.replace(day=1)
 
-trend = (
-    db.query(RAPAlloc.kind, Lot.grade, func.sum(RAPAlloc.qty))
-    .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
-    .join(Lot, RAPLot.lot_id == Lot.id)
-    .filter(RAPAlloc.date >= month_start)
-    .group_by(RAPAlloc.kind, Lot.grade)
-    .all()
-)
+    trend = (
+        db.query(RAPAlloc.kind, Lot.grade, func.sum(RAPAlloc.qty))
+        .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
+        .join(Lot, RAPLot.lot_id == Lot.id)
+        .filter(RAPAlloc.date >= month_start)
+        .group_by(RAPAlloc.kind, Lot.grade)
+        .all()
+    )
 
-kpi_trends = {
-    "DISPATCH": {"KRIP": 0, "KRFS": 0},
-    "PLANT2": {"KRIP": 0, "KRFS": 0},
-}
-for kind, grade, qty in trend:
-    kpi_trends[kind][grade or "KRIP"] = float(qty or 0)
+    kpi_trends = {
+        "DISPATCH": {"KRIP": 0, "KRFS": 0},
+        "PLANT2": {"KRIP": 0, "KRFS": 0},
+    }
+    for kind, grade, qty in trend:
+        kpi_trends[kind][grade or "KRIP"] = float(qty or 0)
 
     # Render
     return templates.TemplateResponse(
-    "rap.html",
-    {
-        "request": request,
-        "rows": rap_rows,
-        "kpi": kpi,
-        "kpi_trends": kpi_trends,
-        "today": today.isoformat()
-    }
-)
-
-@app.post("/rap/allocate")
-def rap_allocate(
-    rap_lot_id: int = Form(...),
-    date: str = Form(...),
-    kind: str = Form(...),            # "DISPATCH" or "PLANT2"
-    qty: float = Form(...),
-    dest: str = Form(""),
-    remarks: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    # Fetch RAP lot
-    rap = db.get(RAPLot, rap_lot_id)
-    if not rap:
-        return _alert_redirect("RAP lot not found.", url="/rap")
-
-    # Date validation: only today or last 3 days; no future
-    try:
-        d = dt.date.fromisoformat(date)
-    except Exception:
-        return _alert_redirect("Invalid date.", url="/rap")
-    today = dt.date.today()
-    if d > today or d < (today - dt.timedelta(days=3)):
-        return _alert_redirect("Date must be today or within the last 3 days.", url="/rap")
-
-    # Quantity must be > 0
-    try:
-        qty = float(qty or 0.0)
-    except Exception:
-        qty = 0.0
-    if qty <= 0:
-        return _alert_redirect("Quantity must be > 0.", url="/rap")
-
-    # Underlying lot must be APPROVED
-    lot = db.get(Lot, rap.lot_id)
-    if not lot or (lot.qa_status or "") != "APPROVED":
-        return _alert_redirect("Underlying lot is not APPROVED.", url="/rap")
-
-    # Available = lot.weight - total RAP allocations
-    total_alloc = rap_total_alloc_qty_for_lot(db, lot.id)
-    avail = max((lot.weight or 0.0) - total_alloc, 0.0)
-    if qty > avail + 1e-6:
-        return _alert_redirect(f"Over-allocation. Available {avail:.1f} kg.", url="/rap")
-
-    # Kind & destination rules
-    kind = (kind or "").upper()
-    if kind not in ("DISPATCH", "PLANT2"):
-        kind = "DISPATCH"
-    if kind == "DISPATCH":
-        if not (dest and dest.strip()):
-            return _alert_redirect("Customer name is required for Dispatch.", url="/rap")
-    else:
-        dest = "Plant 2"
-
-    # Insert movement and flush to get id
-    rec = RAPAlloc(
-        rap_lot_id=rap.id,
-        date=d,
-        kind=kind,
-        qty=qty,
-        remarks=remarks,
-        dest=dest,
+        "rap.html",
+        {
+            "request": request,
+            "rows": rap_rows,
+            "kpi": kpi,
+            "kpi_trends": kpi_trends,
+            "today": today.isoformat(),
+        },
     )
-    db.add(rec)
-    db.flush()  # rec.id available now
-
-    # Update RAPLot mirror
-    rap.available_qty = max(avail - qty, 0.0)
-    rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
-    db.add(rap)
-    db.commit()
-
-    # If dispatch, open the Dispatch Note PDF; else return to RAP
-    if rec.kind == "DISPATCH":
-        return RedirectResponse(f"/rap/dispatch/{rec.id}/pdf", status_code=303)
-    return RedirectResponse("/rap", status_code=303)
 
 
 # ---------- CSV export for RAP ----------
