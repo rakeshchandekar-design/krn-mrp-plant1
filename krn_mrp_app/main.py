@@ -1691,7 +1691,7 @@ def export_rap_transfers(db: Session = Depends(get_db)):
         .all()
     )
     for a in transfers:
-        lot = a.raplot
+        lot = a.rap_lot
         writer.writerow([
             a.date.isoformat() if a.date else "",
             lot.lot_no if lot else "",
