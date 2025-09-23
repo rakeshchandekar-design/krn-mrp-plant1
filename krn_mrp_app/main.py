@@ -1671,27 +1671,41 @@ def rap_allocate(
     if rec.kind == "DISPATCH":
         return RedirectResponse(f"/rap/dispatch/{rec.id}/pdf", status_code=303)
     return RedirectResponse("/rap", status_code=303)
-# ---------- CSV export for RAP ----------
-@app.get("/rap/export")
-def rap_export(db: Session = Depends(get_db)):
-    out = io.StringIO()
-    out.write("Lot No,Grade,Available Qty,Unit Cost,Value,Status\n")
-    rows = (
-        db.query(RAPLot)
-          .join(Lot, Lot.id == RAPLot.lot_id)
-          .order_by(RAPLot.id.asc())
-          .all()
+
+# -------------------------------------------------
+# RAP Transfer CSV export (Plant-2 only)
+# -------------------------------------------------
+@app.get("/rap/transfer/export")
+def export_rap_transfers(db: Session = Depends(get_db)):
+    import csv
+    from io import StringIO
+    buf = StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Date", "Lot No", "Grade", "Qty", "Unit Cost", "Customer"])
+
+    transfers = (
+        db.query(RAPAlloc)
+        .join(RAPLot)
+        .filter(RAPAlloc.kind == "PLANT2")
+        .order_by(RAPAlloc.date)
+        .all()
     )
-    for r in rows:
-        lot = r.lot
-        qty = float(r.available_qty or 0.0)
-        val = qty * float(lot.unit_cost or 0.0)
-        out.write(f"{lot.lot_no},{lot.grade or ''},{qty:.1f},{float(lot.unit_cost or 0.0):.2f},{val:.2f},{r.status or ''}\n")
-    data = out.getvalue().encode("utf-8")
+    for a in transfers:
+        lot = a.raplot
+        writer.writerow([
+            a.date.isoformat() if a.date else "",
+            lot.lot_no if lot else "",
+            lot.grade if lot else "",
+            f"{a.qty:.2f}",
+            f"{(lot.unit_cost or 0.0):.2f}" if lot else "",
+            a.dest or "",
+        ])
+
+    buf.seek(0)
     return StreamingResponse(
-        io.BytesIO(data),
+        iter([buf.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="rap_stock.csv"'}
+        headers={"Content-Disposition": "attachment; filename=rap_transfers.csv"},
     )
     
 # ---------- CSV export: all DISPATCH movements (till date) ----------
