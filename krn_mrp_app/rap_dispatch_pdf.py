@@ -5,7 +5,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 
 def _logo_path():
-    base = os.path.dirname(os.path.abspath(_file_))
+    # Use the directory of this file to resolve the logo
+    base = os.path.dirname(os.path.abspath(__file__))  # <-- double underscores
     p1 = os.path.join(base, "static", "KRN_Logo.png")
     p2 = os.path.join(base, "..", "static", "KRN_Logo.png")
     return p1 if os.path.exists(p1) else p2
