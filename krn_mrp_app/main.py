@@ -1566,12 +1566,12 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
     for kind, grade, qty in trend:
         kpi_trends[kind][grade or "KRIP"] = float(qty or 0)
 
-        # compute date boundaries for the allocation form
+    # compute date boundaries for the allocation form
     today_iso = today.isoformat()
     min_date_iso = (today - dt.timedelta(days=3)).isoformat()
 
-    # Render
-        return templates.TemplateResponse(
+    # ✅ Correct indentation here (only 4 spaces in, not 8)
+    return templates.TemplateResponse(
         "rap.html",
         {
             "request": request,
