@@ -1672,42 +1672,7 @@ def rap_allocate(
         return RedirectResponse(f"/rap/dispatch/{rec.id}/pdf", status_code=303)
     return RedirectResponse("/rap", status_code=303)
 
-# -------------------------------------------------
-# RAP Transfer CSV export (Plant-2 only)
-# -------------------------------------------------
-@app.get("/rap/transfer/export")
-def export_rap_transfers(db: Session = Depends(get_db)):
-    import csv
-    from io import StringIO
-    buf = StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["Date", "Lot No", "Grade", "Qty", "Unit Cost", "Customer"])
 
-    transfers = (
-        db.query(RAPAlloc)
-        .join(RAPLot)
-        .filter(RAPAlloc.kind == "PLANT2")
-        .order_by(RAPAlloc.date)
-        .all()
-    )
-    for a in transfers:
-        lot = a.rap_lot
-        writer.writerow([
-            a.date.isoformat() if a.date else "",
-            lot.lot_no if lot else "",
-            lot.grade if lot else "",
-            f"{a.qty:.2f}",
-            f"{(lot.unit_cost or 0.0):.2f}" if lot else "",
-            a.dest or "",
-        ])
-
-    buf.seek(0)
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=rap_transfers.csv"},
-    )
-    
 # ---------- CSV export for Dispatch movements ----------
 
 
@@ -1763,29 +1728,40 @@ def export_rap_transfers(db: Session = Depends(get_db)):
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹/kg)", "Value (₹)"])
+    writer.writerow([
+        "Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹/kg)", "Value (₹)", "Remarks", "Alloc ID"
+    ])
 
     rows = (
-        db.query(RAPAlloc)
+        db.query(RAPAlloc, RAPLot, Lot)
+          .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
+          .join(Lot, RAPLot.lot_id == Lot.id)
           .filter(RAPAlloc.kind == "PLANT2")
           .order_by(RAPAlloc.date.asc(), RAPAlloc.id.asc())
           .all()
     )
 
-    for a in rows:
-        rap = a.rap_lot                     # ✅ fixed
-        lot = rap.lot if rap else None
-        qty = float(a.qty or 0.0)
-        unit = float(lot.unit_cost or 0.0) if lot else 0.0
-        value = qty * unit
+    for alloc, rl, lot in rows:
+        qty  = float(alloc.qty or 0.0)
+        unit = float(lot.unit_cost or 0.0)
+        val  = qty * unit
         writer.writerow([
-            (a.date.isoformat() if a.date else ""),
-            (lot.lot_no if lot else ""),
-            (lot.grade if lot else ""),
+            (alloc.date or dt.date.today()).isoformat(),
+            lot.lot_no or "",
+            lot.grade or "",
             f"{qty:.1f}",
             f"{unit:.2f}",
-            f"{value:.2f}",
+            f"{val:.2f}",
+            (alloc.remarks or "").replace(",", " "),
+            alloc.id,
         ])
+
+    buf.seek(0)
+    return StreamingResponse(
+        io.StringIO(buf.getvalue()),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="plant2_transfers.csv"'},
+    )
 
     buf.seek(0)
     return StreamingResponse(
