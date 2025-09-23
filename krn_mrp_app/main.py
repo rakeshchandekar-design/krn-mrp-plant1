@@ -1590,21 +1590,25 @@ def rap_allocate(
     remarks: str = Form(""),
     db: Session = Depends(get_db),
 ):
+    # Fetch RAP lot
     rap = db.get(RAPLot, rap_lot_id)
     if not rap:
         return _alert_redirect("RAP lot not found.", url="/rap")
 
-      try:
+    # Date validation: only today or last 3 days; no future
+    try:
         d = dt.date.fromisoformat(date)
-    except:
+    except Exception:
         return _alert_redirect("Invalid date.", url="/rap")
-
-    # Date rule: only today or the last 3 days, no future
     today = dt.date.today()
     if d > today or d < (today - dt.timedelta(days=3)):
         return _alert_redirect("Date must be today or within the last 3 days.", url="/rap")
 
-    qty = float(qty or 0.0)
+    # Quantity must be > 0
+    try:
+        qty = float(qty or 0.0)
+    except Exception:
+        qty = 0.0
     if qty <= 0:
         return _alert_redirect("Quantity must be > 0.", url="/rap")
 
@@ -1613,23 +1617,45 @@ def rap_allocate(
     if not lot or (lot.qa_status or "") != "APPROVED":
         return _alert_redirect("Underlying lot is not APPROVED.", url="/rap")
 
-    # Recompute available (lot.weight - sum allocations)
+    # Available = lot.weight - total RAP allocations
     total_alloc = rap_total_alloc_qty_for_lot(db, lot.id)
     avail = max((lot.weight or 0.0) - total_alloc, 0.0)
     if qty > avail + 1e-6:
         return _alert_redirect(f"Over-allocation. Available {avail:.1f} kg.", url="/rap")
 
-    # Kind-specific rules
+    # Kind & destination rules
     kind = (kind or "").upper()
     if kind not in ("DISPATCH", "PLANT2"):
         kind = "DISPATCH"
-
     if kind == "DISPATCH":
         if not (dest and dest.strip()):
             return _alert_redirect("Customer name is required for Dispatch.", url="/rap")
     else:
-        # PLANT2 -> force the destination label, ignore whatever came
         dest = "Plant 2"
+
+    # Insert movement and flush to get id
+    rec = RAPAlloc(
+        rap_lot_id=rap.id,
+        date=d,
+        kind=kind,
+        qty=qty,
+        remarks=remarks,
+        dest=dest,
+    )
+    db.add(rec)
+    db.flush()  # rec.id available now
+
+    # Update RAPLot mirror
+    rap.available_qty = max(avail - qty, 0.0)
+    rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
+    db.add(rap)
+    db.commit()
+
+    # If dispatch, open the Dispatch Note PDF; else return to RAP
+    if rec.kind == "DISPATCH":
+        return RedirectResponse(f"/rap/dispatch/{rec.id}/pdf", status_code=303)
+    return RedirectResponse("/rap", status_code=303)
+
 
 # ---------- CSV export for RAP ----------
 @app.get("/rap/export")
