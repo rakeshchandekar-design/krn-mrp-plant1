@@ -1784,11 +1784,11 @@ def rap_dispatch_new(request: Request, db: Session = Depends(get_db)):
 
 # ---------- Multi-lot dispatch: create items + reduce RAP availability ----------
 @app.post("/rap/dispatch/save")
-def rap_dispatch_save(
+async def rap_dispatch_save(
     request: Request,
     date: str = Form(...),
     customer: str = Form(...),
-    lot_ids: List[int] = Form(default=[]),               # from checkboxes name="lot_ids"
+    lot_ids: List[int] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
     # validate date (today or last 3 days; no future)
