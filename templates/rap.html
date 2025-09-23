@@ -25,20 +25,6 @@
     .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px;flex-wrap:wrap}
     input,select{padding:4px 6px}
   </style>
-  <script>
-    function toggleCustomer(sel, inputId) {
-      const input = document.getElementById(inputId);
-      if (sel.value === "PLANT2") {
-        input.value = "Plant 2";
-        input.disabled = true;
-        input.required = false;
-      } else {
-        input.value = "";
-        input.disabled = false;
-        input.required = true;
-      }
-    }
-  </script>
 </head>
 <body>
   <div class="brand">
@@ -52,11 +38,14 @@
     <a class="btn" href="/rap/export">Download CSV</a>
   </p>
 
+  <!-- Top grid: KPIs (left) and Month-to-date movement (right) -->
   <div class="grid">
     <div class="card">
       <h3>RAP KPIs</h3>
       <table style="width:auto">
-        <thead><tr><th>Grade</th><th class="right">Available (kg)</th><th class="right">Value (₹)</th></tr></thead>
+        <thead>
+          <tr><th>Grade</th><th class="right">Available (kg)</th><th class="right">Value (₹)</th></tr>
+        </thead>
         <tbody>
           <tr><td>KRIP</td><td class="right">{{ '%.1f' % (kpi.KRIP_qty or 0) }}</td><td class="right">{{ '%.2f' % (kpi.KRIP_val or 0) }}</td></tr>
           <tr><td>KRFS</td><td class="right">{{ '%.1f' % (kpi.KRFS_qty or 0) }}</td><td class="right">{{ '%.2f' % (kpi.KRFS_val or 0) }}</td></tr>
@@ -71,67 +60,77 @@
       </table>
       <div class="muted">RAP available = Approved lot weight − allocations (Dispatch/Plant 2).</div>
     </div>
-    <h4>This Month – Cumulative Movements</h4>
-<svg width="320" height="120">
-  <!-- Dispatch bars -->
-  <rect x="60" y="20" width="{{ kpi_trends.DISPATCH.KRIP/10 }}" height="15" fill="#16a34a"/>
-  <text x="10" y="32">Dispatch KRIP</text>
-  <text x="{{ 65 + kpi_trends.DISPATCH.KRIP/10 }}" y="32">{{ kpi_trends.DISPATCH.KRIP }}</text>
-
-  <rect x="60" y="40" width="{{ kpi_trends.DISPATCH.KRFS/10 }}" height="15" fill="#0ea5e9"/>
-  <text x="10" y="52">Dispatch KRFS</text>
-  <text x="{{ 65 + kpi_trends.DISPATCH.KRFS/10 }}" y="52">{{ kpi_trends.DISPATCH.KRFS }}</text>
-
-  <!-- Transfer bars -->
-  <rect x="60" y="70" width="{{ kpi_trends.PLANT2.KRIP/10 }}" height="15" fill="#16a34a"/>
-  <text x="10" y="82">Plant2 KRIP</text>
-  <text x="{{ 65 + kpi_trends.PLANT2.KRIP/10 }}" y="82">{{ kpi_trends.PLANT2.KRIP }}</text>
-
-  <rect x="60" y="90" width="{{ kpi_trends.PLANT2.KRFS/10 }}" height="15" fill="#0ea5e9"/>
-  <text x="10" y="102">Plant2 KRFS</text>
-  <text x="{{ 65 + kpi_trends.PLANT2.KRFS/10 }}" y="102">{{ kpi_trends.PLANT2.KRFS }}</text>
-</svg>
-
-
-   <div class="card">
-  <h3>Create Dispatch Note (Multi-lot)</h3>
-  <form method="post" action="/rap/dispatch/save">
-    <label>Date: 
-   <input type="date" name="date"
-       value="{{ today }}"
-       max="{{ today }}"
-       min="{{ min_date }}"
-       required>
-    </label>
-    <label>Customer: <input type="text" name="customer" required></label>
-    <table>
-      <thead>
-        <tr>
-          <th>Select</th><th>Lot</th><th>Grade</th><th>Available</th><th>Qty to Dispatch</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in rows if (r.available_qty or 0) > 0 %}
-        <tr>
-          <td><input type="checkbox" name="lot_ids" value="{{ r.id }}"></td>
-          <td>{{ r.lot.lot_no }}</td>
-          <td>{{ r.lot.grade }}</td>
-          <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
-          <td><input type="number" step="0.1" min="0" max="{{ '%.1f' % (r.available_qty or 0) }}" name="qty_{{ r.id }}"></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <button class="btn" type="submit">Generate Dispatch Note</button>
-  </form>
-</div>
 
     <div class="card">
-      <h3>Quick Allocate</h3>
-      <div class="muted">Use the Allocate buttons in the table below for per-lot movements.</div>
+      <h3>This Month – Cumulative Movements</h3>
+      <table style="width:auto">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th class="right">KRIP (kg)</th>
+            <th class="right">KRFS (kg)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Dispatch</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRIP'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRFS'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
+          </tr>
+          <tr>
+            <td>Plant 2</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRIP'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRFS'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
+  <!-- Full-width: Create Dispatch Note (multi-lot) -->
+  <div class="card">
+    <h3>Create Dispatch Note (Multi-lot)</h3>
+    <form method="post" action="/rap/dispatch/save">
+      <label>Date:
+        <input type="date" name="date"
+               value="{{ today }}"
+               max="{{ today }}"
+               min="{{ min_date }}"
+               required>
+      </label>
+      <label>Customer: <input type="text" name="customer" required></label>
+      <table>
+        <thead>
+          <tr>
+            <th>Select</th>
+            <th>Lot</th>
+            <th>Grade</th>
+            <th class="right">Available</th>
+            <th>Qty to Dispatch</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows if (r.available_qty or 0) > 0 %}
+          <tr>
+            <td><input type="checkbox" name="lot_ids" value="{{ r.id }}"></td>
+            <td>{{ r.lot.lot_no }}</td>
+            <td>{{ r.lot.grade }}</td>
+            <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
+            <td><input type="number" step="0.1" min="0" max="{{ '%.1f' % (r.available_qty or 0) }}" name="qty_{{ r.id }}"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button class="btn" type="submit">Generate Dispatch Note</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>Quick Allocate</h3>
+    <div class="muted">Use the Allocate buttons in the table below for per-lot movements.</div>
+  </div>
+
+  <!-- RAP Lots -->
   <div class="card">
     <h2 style="margin:0 0 8px 0;">RAP Lots</h2>
     <table>
@@ -164,20 +163,19 @@
             <td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>
             <td class="right">{{ '%.2f' % ((lot.unit_cost or 0) * (r.available_qty or 0)) }}</td>
             <td>
-              <a href="/lot/{{ lot.id }}/trace" target="_blank">Trace</a> |
-              <a href="/lot/{{ lot.id }}/pdf" target="_blank">PDF</a> |
-              <a href="/lot/{{ lot.id }}/qa" target="_blank">QA</a>
+              <span class="muted">Trace</span> |
+              <span class="muted">PDF</span> |
+              <span class="muted">QA</span>
             </td>
             <td>
+              <!-- Per-lot = Plant 2 transfer only -->
               <form method="post" action="/rap/allocate" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
                 <input type="hidden" name="rap_lot_id" value="{{ r.id }}">
                 <input type="date" name="date" max="{{ today }}" min="{{ min_date }}" required>
-                <select name="kind" onchange="toggleCustomer(this, 'dest{{r.id}}')">
-                  <option value="DISPATCH">Dispatch</option>
+                <select name="kind">
                   <option value="PLANT2">Plant 2</option>
                 </select>
                 <input type="number" step="0.1" min="0" max="{{ '%.1f' % (r.available_qty or 0) }}" name="qty" placeholder="Qty (kg)" required>
-                <input type="text" id="dest{{r.id}}" name="dest" placeholder="Customer / Plant 2" required>
                 <input type="text" name="remarks" placeholder="remarks">
                 <button class="btn" type="submit">Allocate</button>
               </form>
