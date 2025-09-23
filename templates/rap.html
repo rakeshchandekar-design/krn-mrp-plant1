@@ -4,26 +4,33 @@
   <meta charset="utf-8">
   <title>RAP – Ready After Atomization</title>
   <style>
-    body{font-family:system-ui,Arial,sans-serif;margin:20px;}
-    .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-    .brand .name{font-weight:600;font-size:26px;line-height:48px;margin:0}
-    .brand img{height:48px}
+    body { font-family: system-ui, Arial, sans-serif; margin: 20px; }
+    .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .brand .name { font-weight: 600; font-size: 26px; line-height: 48px; margin: 0; }
+    .brand img { height: 48px; }
 
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
-    .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px}
-    .card h3{margin:0 0 8px 0;font-size:14px}
-    .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
-    .btn.ghost{background:#e5e7eb;color:#111827}
-    table{border-collapse:collapse;width:100%}
-    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
-    th{background:#f3f4f6}
-    .right{text-align:right}
-    .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
-    .badge-success{background:#16a34a}
-    .badge-info{background:#0ea5e9}
-    .muted{color:#6b7280;font-size:12px}
-    .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px;flex-wrap:wrap}
-    input,select{padding:4px 6px}
+    .toolbar-head { margin: 6px 0 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+    .card h3 { margin: 0 0 8px 0; font-size: 14px; }
+
+    .btn { padding: 8px 14px; border-radius: 8px; background: #111827; color: #fff; border: none; cursor: pointer; text-decoration: none; display: inline-block; }
+    .btn.ghost { background: #e5e7eb; color: #111827; }
+
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
+    th { background: #f3f4f6; }
+    .right { text-align: right; }
+
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; color: #fff; }
+    .badge-success { background: #16a34a; }
+    .badge-info { background: #0ea5e9; }
+
+    .muted { color: #6b7280; font-size: 12px; }
+    .toolbar { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+
+    input, select { padding: 4px 6px; }
   </style>
 </head>
 <body>
@@ -33,13 +40,13 @@
   </div>
 
   <h1>RAP – Ready After Atomization</h1>
-  <p>
-    <a class="btn ghost" href="/">🏠 Home</a>
+  <p class="toolbar-head">
+    <a class="btn ghost" href="/">Home</a>
     <a class="btn ghost" href="/atomization">← Back to Atomization</a>
     <a class="btn" href="/rap/export">Download CSV</a>
-   </p>
+  </p>
 
-  <!-- Top grid: KPIs (left) and Month-to-date movement (right) -->
+  <!-- Row 1: KPIs (left) + Month-to-date (right) -->
   <div class="grid">
     <div class="card">
       <h3>RAP KPIs</h3>
@@ -48,14 +55,22 @@
           <tr><th>Grade</th><th class="right">Available (kg)</th><th class="right">Value (₹)</th></tr>
         </thead>
         <tbody>
-          <tr><td>KRIP</td><td class="right">{{ '%.1f' % (kpi.KRIP_qty or 0) }}</td><td class="right">{{ '%.2f' % (kpi.KRIP_val or 0) }}</td></tr>
-          <tr><td>KRFS</td><td class="right">{{ '%.1f' % (kpi.KRFS_qty or 0) }}</td><td class="right">{{ '%.2f' % (kpi.KRFS_val or 0) }}</td></tr>
+          <tr>
+            <td>KRIP</td>
+            <td class="right">{{ '%.1f' % (kpi.KRIP_qty or 0) }}</td>
+            <td class="right">{{ '%.2f' % (kpi.KRIP_val or 0) }}</td>
+          </tr>
+          <tr>
+            <td>KRFS</td>
+            <td class="right">{{ '%.1f' % (kpi.KRFS_qty or 0) }}</td>
+            <td class="right">{{ '%.2f' % (kpi.KRFS_val or 0) }}</td>
+          </tr>
         </tbody>
         <tfoot>
           <tr>
             <th>Total</th>
-            <th class="right">{{ '%.1f' % ((kpi.KRIP_qty or 0)+(kpi.KRFS_qty or 0)) }}</th>
-            <th class="right">{{ '%.2f' % ((kpi.KRIP_val or 0)+(kpi.KRFS_val or 0)) }}</th>
+            <th class="right">{{ '%.1f' % ((kpi.KRIP_qty or 0) + (kpi.KRFS_qty or 0)) }}</th>
+            <th class="right">{{ '%.2f' % ((kpi.KRIP_val or 0) + (kpi.KRFS_val or 0)) }}</th>
           </tr>
         </tfoot>
       </table>
@@ -63,48 +78,41 @@
     </div>
 
     <div class="card">
-  <h3>This Month – Cumulative Movements</h3>
-  <table style="width:auto">
-    <thead>
-      <tr><th>Type</th><th class="right">KRIP (kg)</th><th class="right">KRFS (kg)</th></tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>Dispatch</td>
-        <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRIP'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
-        <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRFS'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
-      </tr>
-      <tr>
-        <td>Plant 2</td>
-        <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRIP'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
-        <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRFS'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <div class="card">
-  <h3>This Month – Cumulative Movements</h3>
-  <!-- …the table… -->
-  <p class="toolbar" style="margin-top:8px">
-    <a class="btn" href="/rap/dispatch/export">Download Dispatch Movements (CSV)</a>
-    <a class="btn ghost" href="/rap/transfer/export">Download Plant-2 Transfers (CSV)</a>
-  </p>
+      <h3>This Month – Cumulative Movements</h3>
+      <table style="width:auto">
+        <thead>
+          <tr><th>Type</th><th class="right">KRIP (kg)</th><th class="right">KRFS (kg)</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Dispatch</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRIP'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRFS'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
+          </tr>
+          <tr>
+            <td>Plant 2</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRIP'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRFS'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="toolbar">
+        <a class="btn" href="/rap/dispatch/export">Download Dispatch Movements (CSV)</a>
+        <a class="btn ghost" href="/rap/transfer/export">Download Plant-2 Transfers (CSV)</a>
+      </p>
+    </div>
   </div>
 
-  <!-- Full-width: Create Dispatch Note (multi-lot) -->
+  <!-- Row 2: Create Dispatch Note (full width) -->
   <div class="card">
     <h3>Create Dispatch Note (Multi-lot)</h3>
     <form id="dispatchForm" method="post" action="/rap/dispatch/save">
       <label>Date:
-        <input type="date" name="date"
-               value="{{ today }}"
-               max="{{ today }}"
-               min="{{ min_date }}"
-               required>
+        <input type="date" name="date" value="{{ today }}" max="{{ today }}" min="{{ min_date }}" required>
       </label>
-      <label>Customer: <input type="text" name="customer" required></label>
-
-      <!-- NEW: total dispatch quantity -->
+      <label>Customer:
+        <input type="text" name="customer" required>
+      </label>
       <label style="margin-left:8px;">Total Dispatch Qty (kg):
         <input type="number" step="0.1" min="0" name="total_qty" id="total_qty" placeholder="e.g. 250.0" required>
       </label>
@@ -139,18 +147,16 @@
           {% endfor %}
         </tbody>
       </table>
+
       <button class="btn" type="submit">Generate Dispatch Note</button>
     </form>
 
     <script>
-      // Validate: at least one lot, only one grade among selections,
-      // and sum(qty_i) == total_qty (within 0.05 kg tolerance).
       (function () {
         const form = document.getElementById('dispatchForm');
         const totalEl = document.getElementById('total_qty');
 
         function selectedRows() {
-          // return array of {row, cb, qty, grade}
           const out = [];
           document.querySelectorAll('input.pick').forEach(cb => {
             if (cb.checked) {
@@ -158,10 +164,8 @@
               const qtyEl = row.querySelector('input.dq');
               const gEl = row.querySelector('.lot-grade');
               out.push({
-                row,
-                cb,
                 qty: parseFloat(qtyEl.value || '0'),
-                grade: (gEl?.textContent || 'KRIP').trim()
+                grade: (gEl ? gEl.textContent : 'KRIP').trim()
               });
             }
           });
@@ -175,8 +179,6 @@
             alert('Select at least one lot.');
             return;
           }
-
-          // ensure each picked lot has qty > 0
           for (const p of picks) {
             if (!(p.qty > 0)) {
               e.preventDefault();
@@ -184,16 +186,12 @@
               return;
             }
           }
-
-          // single-grade constraint
           const gset = new Set(picks.map(p => p.grade));
           if (gset.size > 1) {
             e.preventDefault();
             alert('Please select lots of a single grade (KRIP or KRFS) in one dispatch.');
             return;
           }
-
-          // total == sum
           const want = parseFloat(totalEl.value || '0');
           const have = picks.reduce((s, p) => s + p.qty, 0);
           if (!(want > 0)) {
@@ -203,15 +201,15 @@
           }
           if (Math.abs(want - have) > 0.05) {
             e.preventDefault();
-            alert(Total Dispatch Qty (${want.toFixed(1)}) must equal the sum of selected lot quantities (${have.toFixed(1)}).);
+            alert(`Total Dispatch Qty (${want.toFixed(1)}) must equal the sum of selected lot quantities (${have.toFixed(1)}).`);
             return;
           }
         });
       })();
     </script>
-  </div>
+  </div>
 
-  <!-- RAP Lots -->
+  <!-- Row 3: RAP Lots – Transfers to Plant 2 (full width) -->
   <div class="card">
     <h2 style="margin:0 0 8px 0;">RAP Lots – Transfers to Plant 2</h2>
     <table>
@@ -243,70 +241,28 @@
             <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
             <td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>
             <td class="right">{{ '%.2f' % ((lot.unit_cost or 0) * (r.available_qty or 0)) }}</td>
-           <td>
-           <a href="/lot/{{ lot.id }}/trace" target="_blank">Trace</a> |
-           <a href="/lot/{{ lot.id }}/pdf"   target="_blank">PDF</a> |
-           <a href="/lot/{{ lot.id }}/qa"    target="_blank">QA</a>
-           </td>
             <td>
-              <!-- Per-lot = Plant 2 transfer only -->
+              <a href="/lot/{{ lot.id }}/trace" target="_blank">Trace</a> |
+              <a href="/lot/{{ lot.id }}/pdf" target="_blank">PDF</a> |
+              <a href="/lot/{{ lot.id }}/qa" target="_blank">QA</a>
+            </td>
+            <td>
               <form method="post" action="/rap/allocate" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
                 <input type="hidden" name="rap_lot_id" value="{{ r.id }}">
                 <input type="hidden" name="kind" value="PLANT2">
                 <input type="date" name="date" max="{{ today }}" min="{{ min_date }}" required>
                 <input type="number" step="0.1" min="0" max="{{ '%.1f' % (r.available_qty or 0) }}" name="qty" placeholder="Qty (kg)" required>
-                <input type="text"  name="remarks" placeholder="remarks">
+                <input type="text" name="remarks" placeholder="remarks">
                 <button class="btn" type="submit">Allocate</button>
               </form>
-
             </td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
-
     {% if not rows %}
       <p class="muted">No APPROVED lots are available in RAP.</p>
     {% endif %}
   </div>
-  <script>
-  (function(){
-    const table = document.querySelector('form[action="/rap/dispatch/save"]');
-    if(!table) return;
-
-    // Live total
-    const totalSpan = document.createElement('span');
-    totalSpan.style.marginLeft = '12px';
-    totalSpan.className = 'muted';
-    table.querySelector('h3')?.appendChild(totalSpan);
-
-    function refreshTotal(){
-      let sum = 0;
-      table.querySelectorAll('tbody input[type="number"]').forEach(inp=>{
-        const v = parseFloat(inp.value || "0");
-        if (!isNaN(v)) sum += v;
-      });
-      totalSpan.textContent = `Total qty: ${sum.toFixed(1)} kg`;
-    }
-    table.addEventListener('input', refreshTotal);
-    refreshTotal();
-
-    // Single-grade guard on submit (UI only; server also validates)
-    table.addEventListener('submit', (e)=>{
-      const grades = new Set();
-      table.querySelectorAll('tbody tr').forEach(tr=>{
-        const chk = tr.querySelector('input[type="checkbox"]');
-        if (chk && chk.checked) {
-          const gradeCell = tr.querySelectorAll('td')[2];
-          if (gradeCell) grades.add(gradeCell.textContent.trim());
-        }
-      });
-      if (grades.size > 1) {
-        e.preventDefault();
-        alert("Please select lots of a single grade (KRIP or KRFS) for one dispatch note.");
-      }
-    });
-  })();
-</script>
 </body>
 </html>
