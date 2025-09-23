@@ -1758,43 +1758,32 @@ def rap_dispatch_export(db: Session = Depends(get_db)):
 # ---------- CSV export for Plant-2 transfers ----------
 @app.get("/rap/transfer/export")
 def export_rap_transfers(db: Session = Depends(get_db)):
-    import csv, io
-    from fastapi.responses import StreamingResponse
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Lot No", "Grade", "Quantity (kg)", "Customer/Target"])
 
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹/kg)", "Value (₹)", "Remarks"])
-
-    rows = (
-        db.query(RAPAlloc, RAPLot, Lot)
-          .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
-          .join(Lot, RAPLot.lot_id == Lot.id)
-          .filter(RAPAlloc.kind == "PLANT2")
-          .order_by(RAPAlloc.date.asc(), RAPAlloc.id.asc())
-          .all()
+    transfers = (
+        db.query(RAPAlloc)
+        .join(RAPLot)
+        .filter(RAPAlloc.kind == "PLANT2")
+        .all()
     )
 
-    for alloc, rap_lot, lot in rows:
-        qty  = float(alloc.qty or 0.0)
-        unit = float(lot.unit_cost or 0.0)
-        val  = qty * unit
-        w.writerow([
-            alloc.date.isoformat() if alloc.date else "",
-            lot.lot_no or "",
-            lot.grade or "",
-            f"{qty:.1f}",
-            f"{unit:.2f}",
-            f"{val:.2f}",
-            (alloc.remarks or "").replace(",", " "),
+    for tr in transfers:
+        lot = tr.rap_lot
+        writer.writerow([
+            tr.date.strftime("%Y-%m-%d") if tr.date else "",
+            lot.lot_no if lot else "",
+            lot.grade if lot else "",
+            tr.qty or 0,
+            tr.customer or tr.target or ""
         ])
 
-    buf.seek(0)
-        return StreamingResponse(
+    return StreamingResponse(
         io.StringIO(output.getvalue()),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=plant2_transfers.csv"}
     )
-
 
         
 # -------------------------------------------------
