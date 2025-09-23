@@ -1757,44 +1757,43 @@ def rap_dispatch_export(db: Session = Depends(get_db)):
 
 # ---------- CSV export for Plant-2 transfers ----------
 @app.get("/rap/transfer/export")
-def rap_transfer_export(db: Session = Depends(get_db)):
-    import csv
-    import io
+def export_rap_transfers(db: Session = Depends(get_db)):
+    import csv, io
     from fastapi.responses import StreamingResponse
 
     buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹)", "Value (₹)", "Remarks"])
+    w = csv.writer(buf)
+    w.writerow(["Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹/kg)", "Value (₹)", "Remarks"])
 
     rows = (
         db.query(RAPAlloc, RAPLot, Lot)
-        .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
-        .join(Lot, RAPLot.lot_id == Lot.id)
-        .filter(RAPAlloc.kind == "PLANT2")
-        .order_by(RAPAlloc.date, RAPAlloc.id)
-        .all()
+          .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
+          .join(Lot, RAPLot.lot_id == Lot.id)
+          .filter(RAPAlloc.kind == "PLANT2")
+          .order_by(RAPAlloc.date.asc(), RAPAlloc.id.asc())
+          .all()
     )
 
-    for alloc, rap, lot in rows:
-        qty = float(alloc.qty or 0.0)
+    for alloc, rap_lot, lot in rows:
+        qty  = float(alloc.qty or 0.0)
         unit = float(lot.unit_cost or 0.0)
-        val = qty * unit
-        writer.writerow([
-            (alloc.date or dt.date.today()).isoformat(),
-            (lot.lot_no or ""),
-            (lot.grade or ""),
+        val  = qty * unit
+        w.writerow([
+            alloc.date.isoformat() if alloc.date else "",
+            lot.lot_no or "",
+            lot.grade or "",
             f"{qty:.1f}",
             f"{unit:.2f}",
             f"{val:.2f}",
             (alloc.remarks or "").replace(",", " "),
         ])
 
-    data = buf.getvalue().encode("utf-8")
+    buf.seek(0)
     return StreamingResponse(
-        io.BytesIO(data),
+        buf,
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="plant2_transfers.csv"'}
-    )
+    )
 
         
 # -------------------------------------------------
