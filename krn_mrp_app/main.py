@@ -1754,19 +1754,82 @@ def lot_trace_view(lot_id: int, db: Session = Depends(get_db)):
 def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     if not lot:
-        return HTMLResponse("<p>Lot not found</p>", status_code=404)
+        return PlainTextResponse("Lot not found", status_code=404)
 
-    lines = [f"<h3>QA snapshot – Lot {lot.lot_no}</h3>", "<table border=1 cellpadding=6 cellspacing=0>",
-             "<thead><tr><th>Heat</th><th>QA</th><th>Notes</th></tr></thead><tbody>"]
+    # helpers to show value or dash
+    def v(x): return ("—" if x in (None, "",) else x)
+
+    rows = []
     for lh in getattr(lot, "heats", []):
         h = db.get(Heat, lh.heat_id)
         if not h:
             continue
-        notes = getattr(h, "qa_notes", "") or ""
-        lines.append(f"Heat {h.heat_no}: QA={getattr(h,'qa_status','-')} | Notes={getattr(h,'qa_notes','')}")
-    lines.append("</tbody></table>")
-    lines.append('<p style="margin-top:12px"><a href="/rap">← Back to RAP</a></p>')
-    return HTMLResponse("".join(lines))
+        rows.append({
+            "heat_no": h.heat_no,
+            "qa": getattr(h, "qa_status", "") or "—",
+            "notes": getattr(h, "qa_notes", "") if hasattr(h, "qa_notes") else "—",
+        })
+
+    # Pull QA blocks from Lot if present (adjust attribute names to your models)
+    chem = getattr(lot, "chemistry", None)
+    phys = getattr(lot, "phys", None)
+    psd  = getattr(lot, "psd", None)
+
+    html = [
+        f"<h2>QA snapshot – Lot {lot.lot_no}</h2>",
+        "<table border='1' cellpadding='6' cellspacing='0'>",
+        "<tr><th>Heat</th><th>QA</th><th>Notes</th></tr>",
+    ]
+    for r in rows:
+        html.append(f"<tr><td>{r['heat_no']}</td><td>{r['qa']}</td><td>{r['notes']}</td></tr>")
+    if not rows:
+        html.append("<tr><td colspan='3'>No heats recorded.</td></tr>")
+    html.append("</table><br>")
+
+    # Chemistry table
+    html += ["<h3>Chemistry</h3>",
+             "<table border='1' cellpadding='6' cellspacing='0'>",
+             "<tr><th>C</th><th>Si</th><th>S</th><th>P</th><th>Cu</th><th>Ni</th><th>Mn</th><th>Fe</th></tr>"]
+    if chem:
+        html.append(f"<tr><td>{v(getattr(chem,'c',None))}</td>"
+                    f"<td>{v(getattr(chem,'si',None))}</td>"
+                    f"<td>{v(getattr(chem,'s',None))}</td>"
+                    f"<td>{v(getattr(chem,'p',None))}</td>"
+                    f"<td>{v(getattr(chem,'cu',None))}</td>"
+                    f"<td>{v(getattr(chem,'ni',None))}</td>"
+                    f"<td>{v(getattr(chem,'mn',None))}</td>"
+                    f"<td>{v(getattr(chem,'fe',None))}</td></tr>")
+    else:
+        html.append("<tr><td colspan='8'>—</td></tr>")
+    html.append("</table><br>")
+
+    # Physical table
+    html += ["<h3>Physical</h3>",
+             "<table border='1' cellpadding='6' cellspacing='0'>",
+             "<tr><th>AD (g/cc)</th><th>Flow (s/50g)</th></tr>"]
+    if phys:
+        html.append(f"<tr><td>{v(getattr(phys,'ad',None))}</td><td>{v(getattr(phys,'flow',None))}</td></tr>")
+    else:
+        html.append("<tr><td colspan='2'>—</td></tr>")
+    html.append("</table><br>")
+
+    # PSD table
+    html += ["<h3>PSD</h3>",
+             "<table border='1' cellpadding='6' cellspacing='0'>",
+             "<tr><th>+212</th><th>+180</th><th>-180+150</th><th>-150+75</th><th>-75+45</th><th>-45</th></tr>"]
+    if psd:
+        html.append(
+            f"<tr><td>{v(getattr(psd,'p212',None))}</td>"
+            f"<td>{v(getattr(psd,'p180',None))}</td>"
+            f"<td>{v(getattr(psd,'n180p150',None))}</td>"
+            f"<td>{v(getattr(psd,'n150p75',None))}</td>"
+            f"<td>{v(getattr(psd,'n75p45',None))}</td>"
+            f"<td>{v(getattr(psd,'n45',None))}</td></tr>"
+        )
+    else:
+        html.append("<tr><td colspan='6'>—</td></tr>")
+    html.append("</table><p><a href='/rap'>← Back to RAP</a></p>")
+    return HTMLResponse("".join(html))
 
 @app.get("/lot/{lot_id}/pdf")
 def lot_pdf_view(lot_id: int, db: Session = Depends(get_db)):
@@ -1854,102 +1917,99 @@ def rap_dispatch_new(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("rap_dispatch_new.html", {"request": request, "lots": lots})
 
 # ---------- Multi-lot dispatch: create items + reduce RAP availability ----------
+from fastapi import Request
+
 @app.post("/rap/dispatch/save")
-def rap_dispatch_save(
-    request: Request,
-    customer: str = Form(...),
-    date: str = Form(...),
-    db: Session = Depends(get_db)
-):
-    # Gather selected lots and quantities from form
-    # NOTE: Starlette provides request.form() as async, but when called inside a sync
-    # path function FastAPI runs it in a threadpool. This is safe here.
-    form = request.scope.get("_form")  # try cache first
-    if form is None:
-        form = request._dict.get("form") if hasattr(request, "_dict") else None
-    if form is None:
-        # Fallback: re-parse in a lightweight way
-        import urllib.parse
-        body = request._body if hasattr(request, "_body") else None
-        if body is None:
-            body = b""
-        form = urllib.parse.parse_qs(body.decode("utf-8"), keep_blank_values=True)
+async def rap_dispatch_save(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    customer = (form.get("customer") or "").strip()
+    if not customer:
+        return _alert_redirect("Customer is required.", url="/rap")
 
-    # Extract lot ids (checkbox list) and per-lot qtys
-    def getall(key):  # works both for dict(list) and FormData
-        v = form.get(key, [])
-        return v if isinstance(v, list) else [v]
-
-    raw_ids = getall("lot_ids")
-    lot_ids = []
-    for v in raw_ids:
-        try:
-            lot_ids.append(int(v))
-        except Exception:
-            pass
-
+    # selected RAPLot ids
+    lot_ids = form.getlist("lot_ids")
     if not lot_ids:
         return _alert_redirect("Select at least one lot.", url="/rap")
 
-    # Map RAPLot id -> qty
-    qty_map = {}
-    for rid in lot_ids:
-        q = form.get(f"qty_{rid}", ["0"])[0]
-        try:
-            qty_map[rid] = max(float(q or 0), 0.0)
-        except Exception:
-            qty_map[rid] = 0.0
-
-    # Validate single grade
-    grades = set()
-    items = []
-    for rid in lot_ids:
-        rap = db.get(RAPLot, rid)
-        if not rap:
-            continue
-        lot = db.get(Lot, rap.lot_id)
-        if not lot:
-            continue
-        grades.add(lot.grade or "KRIP")
-        qty = min(float(rap.available_qty or 0.0), float(qty_map.get(rid, 0.0)))
-        if qty > 0:
-            items.append((rap, lot, qty))
-    if len(grades) > 1:
-        return _alert_redirect("Please select lots of a single grade (KRIP or KRFS).", url="/rap")
-    if not items:
-        return _alert_redirect("Enter quantity for at least one selected lot.", url="/rap")
-
-    # Create dispatch header
+    # date
     try:
-        d = dt.date.fromisoformat(date)
+        d = dt.date.fromisoformat(form.get("date") or "")
     except Exception:
         d = dt.date.today()
-    disp = RAPDispatch(date=d, customer=customer, grade=(list(grades)[0]), total_qty=0, total_cost=0)
+
+    # total qty (optional check – UI already enforces)
+    total_qty = float(form.get("total_qty") or 0.0)
+
+    # Build items, enforce single grade & availability
+    items = []
+    sel_grade = None
+    for rid in lot_ids:
+        rap = db.get(RAPLot, int(rid))
+        if not rap:
+            return _alert_redirect("RAP lot not found.", url="/rap")
+        lot = db.get(Lot, rap.lot_id)
+        if not lot or (lot.qa_status or "") != "APPROVED":
+            return _alert_redirect("Underlying lot is not APPROVED.", url="/rap")
+
+        q = float(form.get(f"qty_{rid}") or 0.0)
+        if q <= 0:
+            return _alert_redirect("Enter quantity for every selected lot.", url="/rap")
+
+        # recompute available
+        total_alloc = rap_total_alloc_qty_for_lot(db, lot.id)
+        avail = max(float(lot.weight or 0.0) - float(total_alloc or 0.0), 0.0)
+        if q > avail + 1e-6:
+            return _alert_redirect(f"Over-allocation on {lot.lot_no}. Available {avail:.1f} kg.", url="/rap")
+
+        g = (lot.grade or "KRIP")
+        sel_grade = sel_grade or g
+        if g != sel_grade:
+            return _alert_redirect("Select lots of a single grade per dispatch.", url="/rap")
+
+        items.append((rap, lot, q))
+
+    if total_qty > 0:
+        s = sum(q for _, _, q in items)
+        if abs(total_qty - s) > 0.05:
+            return _alert_redirect("Total Dispatch Qty must equal the sum of selected lot quantities.", url="/rap")
+
+    # Create RAPDispatch + items
+    disp = RAPDispatch(date=d, customer=customer, grade=sel_grade, total_qty=0.0, total_cost=0.0)
     db.add(disp); db.flush()
 
-    # Create items and corresponding RAP allocations (DISPATCH)
-    total_qty = 0.0
-    total_cost = 0.0
-    for rap, lot, qty in items:
-        unit = float(lot.unit_cost or 0.0)
-        total_qty += qty
-        total_cost += qty * unit
-        db.add(RAPDispatchItem(dispatch_id=disp.id, lot_id=lot.id, qty=qty, cost=unit))
+    total_qty_acc = 0.0
+    total_cost_acc = 0.0
 
-        # Allocation record
-        db.add(RAPAlloc(
-            rap_lot_id=rap.id, date=d, kind="DISPATCH", qty=qty, remarks="Dispatch (multi-lot)", dest=customer
-        ))
-        # Mirror RAPLot
-        rap.available_qty = max(float(rap.available_qty or 0.0) - qty, 0.0)
+    for rap, lot, q in items:
+        db.add(RAPDispatchItem(dispatch_id=disp.id, lot_id=lot.id, qty=q, cost=float(lot.unit_cost or 0.0)))
+        total_qty_acc += q
+        total_cost_acc += q * float(lot.unit_cost or 0.0)
+
+        # Mirror a DISPATCH allocation (so RAP available reduces)
+        alloc = RAPAlloc(
+            rap_lot_id=rap.id,
+            date=d,
+            kind="DISPATCH",
+            qty=q,
+            remarks=f"Dispatch #{disp.id}",
+            dest=customer,
+        )
+        db.add(alloc)
+        db.flush()
+
+        # Update RAPLot mirror
+        # (available = lot.weight - sum(alloc))
+        total_alloc_after = rap_total_alloc_qty_for_lot(db, lot.id)
+        rap.available_qty = max(float(lot.weight or 0.0) - total_alloc_after, 0.0)
         rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
         db.add(rap)
 
-    disp.total_qty = total_qty
-    disp.total_cost = total_cost
-    db.add(disp); db.commit()
+    disp.total_qty = total_qty_acc
+    disp.total_cost = total_cost_acc
+    db.add(disp)
+    db.commit()
 
-    # Show the multi-lot dispatch note
+    # multi-lot PDF
     return RedirectResponse(f"/rap/dispatch/pdf/{disp.id}", status_code=303)
 
 @app.get("/rap/dispatch/pdf/{disp_id}")
