@@ -49,7 +49,6 @@
       document.getElementById('lots_end').value=t;
       fetchLotsRange();
     }
-    // NEW: Reset => show ALL lots with non-zero weight (server handles ?reset=1)
     function lotsReset(){
       const u=new URL('/atomization', window.location.origin);
       u.searchParams.set('reset', '1');
@@ -163,8 +162,8 @@
         </tfoot>
       </table>
       <div class="muted">
-  Note: numbers are <strong>net of RAP allocations</strong> (Dispatch / Plant-2). They include lots of any QA status.
-</div>
+        Note: numbers are <strong>net of RAP allocations</strong> (Dispatch / Plant-2). They include lots of any QA status.
+      </div>
     </div>
   </div>
 
@@ -175,14 +174,15 @@
       <div class="alloc-hdr">
         <div>
           <label>Lot Weight (kg)</label>
-          <div>
-  <label>+20 / Dryer Oversize (kg)</label>
-  <input id="oversize_kg" name="oversize_kg"
-         type="number" step="0.01" min="0.01"
-         value="0.01" required>
-</div>
           <input id="lot_weight" name="lot_weight" type="number" step="0.1" min="1" value="3000">
         </div>
+
+        <!-- NEW: required +20 / Dryer Oversize input (must be > 0) -->
+        <div>
+          <label>+20 / Dryer Oversize (kg)</label>
+          <input id="oversize_kg" name="oversize_kg" type="number" step="0.01" min="0.01" value="0.01" required>
+        </div>
+
         <div class="muted">Allocated: <strong id="allocTotal">0.0</strong> kg  |  Remaining: <strong id="remTotal">3000.0</strong> kg</div>
       </div>
 
@@ -222,23 +222,23 @@
       </table>
 
       <p><button class="btn" type="submit">Create Lot</button></p>
-      <script>
-(function () {
-  // Attach to this Create Lot form only
-  var form = document.querySelector('form[action="/atomization/new"]');
-  if (!form) return;
-  form.addEventListener('submit', function (e) {
-    var ozInput = form.querySelector('#oversize_kg');
-    var oz = parseFloat(ozInput && ozInput.value || '0');
-    if (!(oz > 0)) {
-      e.preventDefault();
-      alert('+20 / Dryer Oversize must be greater than 0 (min 0.01 kg).');
-      if (ozInput) ozInput.focus();
-    }
-  });
-})();
-</script>
 
+      <!-- Guard: oversize must be > 0 -->
+      <script>
+      (function () {
+        var form = document.querySelector('form[action="/atomization/new"]');
+        if (!form) return;
+        form.addEventListener('submit', function (e) {
+          var ozInput = form.querySelector('#oversize_kg');
+          var oz = parseFloat(ozInput && ozInput.value || '0');
+          if (!(oz > 0)) {
+            e.preventDefault();
+            alert('+20 / Dryer Oversize must be greater than 0 (min 0.01 kg).');
+            if (ozInput) ozInput.focus();
+          }
+        });
+      })();
+      </script>
     </form>
   </div>
 
