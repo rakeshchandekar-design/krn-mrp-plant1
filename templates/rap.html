@@ -71,6 +71,56 @@
       </table>
       <div class="muted">RAP available = Approved lot weight − allocations (Dispatch/Plant 2).</div>
     </div>
+    <h4>This Month – Cumulative Movements</h4>
+<svg width="320" height="120">
+  <!-- Dispatch bars -->
+  <rect x="60" y="20" width="{{ kpi_trends.DISPATCH.KRIP/10 }}" height="15" fill="#16a34a"/>
+  <text x="10" y="32">Dispatch KRIP</text>
+  <text x="{{ 65 + kpi_trends.DISPATCH.KRIP/10 }}" y="32">{{ kpi_trends.DISPATCH.KRIP }}</text>
+
+  <rect x="60" y="40" width="{{ kpi_trends.DISPATCH.KRFS/10 }}" height="15" fill="#0ea5e9"/>
+  <text x="10" y="52">Dispatch KRFS</text>
+  <text x="{{ 65 + kpi_trends.DISPATCH.KRFS/10 }}" y="52">{{ kpi_trends.DISPATCH.KRFS }}</text>
+
+  <!-- Transfer bars -->
+  <rect x="60" y="70" width="{{ kpi_trends.PLANT2.KRIP/10 }}" height="15" fill="#16a34a"/>
+  <text x="10" y="82">Plant2 KRIP</text>
+  <text x="{{ 65 + kpi_trends.PLANT2.KRIP/10 }}" y="82">{{ kpi_trends.PLANT2.KRIP }}</text>
+
+  <rect x="60" y="90" width="{{ kpi_trends.PLANT2.KRFS/10 }}" height="15" fill="#0ea5e9"/>
+  <text x="10" y="102">Plant2 KRFS</text>
+  <text x="{{ 65 + kpi_trends.PLANT2.KRFS/10 }}" y="102">{{ kpi_trends.PLANT2.KRFS }}</text>
+</svg>
+
+
+   <div class="card">
+  <h3>Create Dispatch Note (Multi-lot)</h3>
+  <form method="post" action="/rap/dispatch/save">
+    <label>Date: 
+      <input type="date" name="date" max="{{ today }}" min="{{ (today | todatetime - timedelta(days=3)) | date('Y-m-d') }}" required>
+    </label>
+    <label>Customer: <input type="text" name="customer" required></label>
+    <table>
+      <thead>
+        <tr>
+          <th>Select</th><th>Lot</th><th>Grade</th><th>Available</th><th>Qty to Dispatch</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows if (r.available_qty or 0) > 0 %}
+        <tr>
+          <td><input type="checkbox" name="lot_ids" value="{{ r.id }}"></td>
+          <td>{{ r.lot.lot_no }}</td>
+          <td>{{ r.lot.grade }}</td>
+          <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
+          <td><input type="number" step="0.1" min="0" max="{{ '%.1f' % (r.available_qty or 0) }}" name="qty_{{ r.id }}"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <button class="btn" type="submit">Generate Dispatch Note</button>
+  </form>
+</div>
 
     <div class="card">
       <h3>Quick Allocate</h3>
