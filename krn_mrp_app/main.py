@@ -1709,26 +1709,27 @@ def export_rap_transfers(db: Session = Depends(get_db)):
     )
     
 # ---------- CSV export for Dispatch movements ----------
+
+
 @app.get("/rap/dispatch/export")
-def rap_dispatch_export(db: Session = Depends(get_db)):
-    import csv
-    import io
+def export_rap_dispatch(db: Session = Depends(get_db)):
+    import csv, io
     from fastapi.responses import StreamingResponse
 
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
-        "Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹)", "Value (₹)",
-        "Customer", "Remarks", "Alloc ID"
+        "Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹/kg)",
+        "Value (₹)", "Customer", "Remarks", "Alloc ID"
     ])
 
     rows = (
         db.query(RAPAlloc, RAPLot, Lot)
-        .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
-        .join(Lot, RAPLot.lot_id == Lot.id)
-        .filter(RAPAlloc.kind == "DISPATCH")
-        .order_by(RAPAlloc.date, RAPAlloc.id)
-        .all()
+          .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
+          .join(Lot, RAPLot.lot_id == Lot.id)
+          .filter(RAPAlloc.kind == "DISPATCH")
+          .order_by(RAPAlloc.date.asc(), RAPAlloc.id.asc())
+          .all()
     )
 
     for alloc, rap, lot in rows:
@@ -1737,36 +1738,33 @@ def rap_dispatch_export(db: Session = Depends(get_db)):
         val = qty * unit
         writer.writerow([
             (alloc.date or dt.date.today()).isoformat(),
-            (lot.lot_no or ""),
-            (lot.grade or ""),
+            lot.lot_no or "",
+            lot.grade or "",
             f"{qty:.1f}",
             f"{unit:.2f}",
             f"{val:.2f}",
-            (alloc.dest or ""),
+            alloc.dest or "",
             (alloc.remarks or "").replace(",", " "),
             alloc.id,
         ])
 
-    data = buf.getvalue().encode("utf-8")
+    buf.seek(0)
     return StreamingResponse(
-        io.BytesIO(data),
+        io.StringIO(buf.getvalue()),
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="dispatch_movements.csv"'}
+        headers={"Content-Disposition": 'attachment; filename="dispatch_movements.csv"'},
     )
-
-
 
 # ---------- CSV export for Plant-2 transfers ----------
 @app.get("/rap/transfer/export")
-def rap_transfer_export(db: Session = Depends(get_db)):
+def export_rap_transfers(db: Session = Depends(get_db)):
     import csv, io
     from fastapi.responses import StreamingResponse
 
     buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹/kg)", "Value (₹)"])
+    writer = csv.writer(buf)
+    writer.writerow(["Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹/kg)", "Value (₹)"])
 
-    # pull all PLANT2 allocations; we'll traverse relationships in Python
     rows = (
         db.query(RAPAlloc)
           .filter(RAPAlloc.kind == "PLANT2")
@@ -1775,12 +1773,12 @@ def rap_transfer_export(db: Session = Depends(get_db)):
     )
 
     for a in rows:
-        rap = a.rap_lot                 # RAPLot (may be None if data inconsistent)
-        lot = rap.lot if rap else None  # Lot (may be None if data inconsistent)
-        qty   = float(a.qty or 0.0)
-        unit  = float((lot.unit_cost if lot else 0.0) or 0.0)
+        rap = a.rap_lot
+        lot = rap.lot if rap else None
+        qty = float(a.qty or 0.0)
+        unit = float(lot.unit_cost or 0.0) if lot else 0.0
         value = qty * unit
-        w.writerow([
+        writer.writerow([
             (a.date.isoformat() if a.date else ""),
             (lot.lot_no if lot else ""),
             (lot.grade if lot else ""),
