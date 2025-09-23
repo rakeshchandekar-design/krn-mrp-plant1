@@ -1582,7 +1582,95 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
             "min_date": min_date_iso,
         }
     )
+# -------------------------------------------------
+# RAP per-lot allocation (Dispatch / Plant 2)
+# -------------------------------------------------
+@app.post("/rap/allocate")
+def rap_allocate(
+    rap_lot_id: int = Form(...),
+    date: str = Form(...),
+    kind: str = Form(...),            # "DISPATCH" or "PLANT2"
+    qty: float = Form(...),
+    dest: str = Form(""),
+    remarks: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    # Fetch RAP lot
+    rap = db.get(RAPLot, rap_lot_id)
+    if not rap:
+        return _alert_redirect("RAP lot not found.", url="/rap")
 
+    # Date validation: only today or last 3 days; no future
+    try:
+        d = dt.date.fromisoformat(date)
+    except Exception:
+        return _alert_redirect("Invalid date.", url="/rap")
+    today = dt.date.today()
+    if d > today or d < (today - dt.timedelta(days=3)):
+        return _alert_redirect("Date must be today or within the last 3 days.", url="/rap")
+
+    # Quantity must be > 0
+    try:
+        qty = float(qty or 0.0)
+    except Exception:
+        qty = 0.0
+    if qty <= 0:
+        return _alert_redirect("Quantity must be > 0.", url="/rap")
+
+    # Underlying lot must be APPROVED
+    lot = db.get(Lot, rap.lot_id)
+    if not lot or (lot.qa_status or "") != "APPROVED":
+        return _alert_redirect("Underlying lot is not APPROVED.", url="/rap")
+
+    # Available = lot.weight - total RAP allocations
+    # If you already have rap_total_alloc_qty_for_lot(), this will use it.
+    try:
+        total_alloc = rap_total_alloc_qty_for_lot(db, lot.id)
+    except NameError:
+        total_alloc = (
+            db.query(func.coalesce(func.sum(RAPAlloc.qty), 0.0))
+              .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
+              .filter(RAPLot.lot_id == lot.id)
+              .scalar()
+            or 0.0
+        )
+
+    avail = max(float(lot.weight or 0.0) - float(total_alloc or 0.0), 0.0)
+    if qty > avail + 1e-6:
+        return _alert_redirect(f"Over-allocation. Available {avail:.1f} kg.", url="/rap")
+
+    # Kind & destination rules
+    kind = (kind or "").upper()
+    if kind not in ("DISPATCH", "PLANT2"):
+        kind = "DISPATCH"
+    if kind == "DISPATCH":
+        if not (dest and dest.strip()):
+            return _alert_redirect("Customer name is required for Dispatch.", url="/rap")
+    else:
+        dest = "Plant 2"
+
+    # Insert allocation and flush to get id
+    rec = RAPAlloc(
+        rap_lot_id=rap.id,
+        date=d,
+        kind=kind,
+        qty=qty,
+        remarks=remarks,
+        dest=dest,
+    )
+    db.add(rec)
+    db.flush()  # rec.id is now available
+
+    # Update RAPLot mirror
+    rap.available_qty = max(avail - qty, 0.0)
+    rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
+    db.add(rap)
+    db.commit()
+
+    # If dispatch, open the Dispatch Note PDF; else return to RAP
+    if rec.kind == "DISPATCH":
+        return RedirectResponse(f"/rap/dispatch/{rec.id}/pdf", status_code=303)
+    return RedirectResponse("/rap", status_code=303)
 # ---------- CSV export for RAP ----------
 @app.get("/rap/export")
 def rap_export(db: Session = Depends(get_db)):
@@ -1607,6 +1695,86 @@ def rap_export(db: Session = Depends(get_db)):
     )
 
 # -------------------------------------------------
+# Lot quick views used by RAP "Docs" column
+# -------------------------------------------------
+@app.get("/lot/{lot_id}/trace", response_class=PlainTextResponse)
+def lot_trace_view(lot_id: int, db: Session = Depends(get_db)):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+
+    lines = [f"Trace for lot {lot.lot_no}", ""]
+    # Heats used in the lot
+    for lh in getattr(lot, "heats", []):
+        h = db.get(Heat, lh.heat_id)
+        if not h:
+            continue
+        lines.append(
+            f"Heat {h.heat_no} | Alloc to lot: {float(lh.qty or 0):.1f} kg "
+            f"| Heat Out: {float(h.actual_output or 0):.1f} kg | QA: {h.qa_status or ''}"
+        )
+        # FIFO (GRN) consumption
+        for cons in getattr(h, "rm_consumptions", []):
+            g = cons.grn
+            lines.append(
+                f"  - {cons.rm_type} | GRN #{cons.grn_id} | {g.supplier if g else ''} "
+                f"| {float(cons.qty or 0):.1f} kg"
+            )
+    return PlainTextResponse("\n".join(lines))
+
+@app.get("/lot/{lot_id}/qa", response_class=PlainTextResponse)
+def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+    lines = [f"QA snapshot for lot {lot.lot_no}", ""]
+    for lh in getattr(lot, "heats", []):
+        h = db.get(Heat, lh.heat_id)
+        if h:
+            lines.append(f"Heat {h.heat_no}: QA={h.qa_status or '-'}  | Notes={h.qa_notes or ''}")
+    return PlainTextResponse("\n".join(lines))
+
+@app.get("/lot/{lot_id}/pdf")
+def lot_pdf_view(lot_id: int, db: Session = Depends(get_db)):
+    """Minimal 1-page summary PDF for the lot (separate from Dispatch Note)."""
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+
+    # simple header (re-use your existing helper if you have one)
+    try:
+        draw_header(c, "Lot Summary")
+    except Exception:
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(2 * cm, h - 2.5 * cm, "KRN Alloys Pvt. Ltd")
+        c.setFont("Helvetica", 12)
+        c.drawString(2 * cm, h - 3.2 * cm, "Lot Summary")
+
+    y = h - 4 * cm
+    c.setFont("Helvetica", 11)
+    c.drawString(2 * cm, y, f"Lot: {lot.lot_no}    Grade: {lot.grade or '-'}"); y -= 14
+    c.drawString(2 * cm, y, f"Lot Weight: {float(lot.weight or 0):.1f} kg"); y -= 14
+    c.drawString(2 * cm, y, f"Unit Cost: ₹{float(lot.unit_cost or 0):.2f}"); y -= 20
+    c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "Heats"); y -= 14
+    c.setFont("Helvetica", 10)
+    for lh in getattr(lot, "heats", []):
+        hobj = db.get(Heat, lh.heat_id)
+        if not hobj:
+            continue
+        c.drawString(2.2 * cm, y, f"{hobj.heat_no} | Alloc: {float(lh.qty or 0):.1f} kg | QA: {hobj.qa_status or ''}")
+        y -= 12
+        if y < 3 * cm:
+            c.showPage(); y = h - 3 * cm
+    c.showPage(); c.save()
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'inline; filename="lot_{lot.lot_no}.pdf"'})
+
+# -------------------------------------------------
 # RAP Dispatch + Transfer
 # -------------------------------------------------
 @app.get("/rap/dispatch/new", response_class=HTMLResponse)
@@ -1628,7 +1796,7 @@ def rap_dispatch_save(
 
 @app.get("/rap/dispatch/pdf/{disp_id}")
 def rap_dispatch_pdf(disp_id: int, db: Session = Depends(get_db)):
-    from rap_dispatch_pdf import draw_dispatch_note
+    from .rap_dispatch_pdf import draw_dispatch_note
     disp = db.get(RAPDispatch, disp_id)
     if not disp:
         return PlainTextResponse("Dispatch not found", status_code=404)
