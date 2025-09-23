@@ -1,12 +1,10 @@
-# rap_dispatch_pdf.py
 import os
 import datetime as dt
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 
 def _logo_path():
-    # Use the directory of this file to resolve the logo
-    base = os.path.dirname(os.path.abspath(__file__))  # <-- double underscores
+    base = os.path.dirname(os.path.abspath(_file_))
     p1 = os.path.join(base, "static", "KRN_Logo.png")
     p2 = os.path.join(base, "..", "static", "KRN_Logo.png")
     return p1 if os.path.exists(p1) else p2
@@ -35,97 +33,110 @@ def _ensure_space(c, y, need=36):
         return height - 4.0*cm
     return y
 
-# ------------------------------------------------------------------
-# Helper: draw annexure (QA certificate + trace to GRN) for ONE lot
-# Returns the updated y position.
-# ------------------------------------------------------------------
-def draw_lot_qa_annexure(c, lot, disp_qty, db=None, y=None):
+# ---------- NEW: compact CoA table helper ----------
+def _draw_coa_table(c, lot, start_y):
     """
-    Renders:
-      - Lot line (lot, grade, QA status, dispatch qty)
-      - CoA (Chemistry / Physical / PSD) if present
-      - Heats with FIFO GRN consumption (supplier, qty)
-    Uses _ensure_space(...) for pagination and returns updated y.
+    Draws CoA (QA) as tables for Chemistry, Physical and PSD.
+    Always renders headers; empty values shown as '—'.
+    Returns new y.
     """
-    if y is None:
-        # sensible default start if someone calls without y
-        _, height = A4
-        y = height - 4.0*cm
+    width, height = A4
+    x_left = 2*cm
+    y = start_y
 
-    # Lot overview
-    y = _ensure_space(c, y, 16)
-    c.setFont("Helvetica", 10)
-    c.drawString(
-        2*cm, y,
-        f"Lot: {lot.lot_no}  |  Grade: {lot.grade or ''}  |  QA: {getattr(lot,'qa_status','') or ''}  |  Dispatch Qty: {float(disp_qty or 0):.1f} kg"
-    )
+    def cell(x, y, w, h, text="", bold=False):
+        c.rect(x, y-h, w, h)           # box
+        c.setFont("Helvetica-Bold" if bold else "Helvetica", 10)
+        c.drawCentredString(x + w/2.0, y - h + 3.5 + 6, str(text))
+
+    # 1) Heat/QA header mini-table
+    y = _ensure_space(c, y, 38)
+    c.setFont("Helvetica-Bold", 12); c.drawString(x_left, y, "QA snapshot — Lot " + (lot.lot_no or "")); y -= 10
+    c.setFont("Helvetica", 10); y -= 2
+
+    col_w = [3.5*cm, 3.0*cm, 8.0*cm]
+    header = ["Heat", "QA", "Notes"]
+    x = x_left; h = 16
+    for i, t in enumerate(header):
+        cell(x, y, col_w[i], h, t, bold=True); x += col_w[i]
+    y -= h
+    # rows
+    for lh in getattr(lot, "heats", []):
+        hobj = getattr(lh, "heat", None)
+        heat_no = getattr(hobj, "heat_no", "")
+        qa = getattr(hobj, "qa_status", "") or "—"
+        notes = getattr(hobj, "qa_notes", "") if hasattr(hobj, "qa_notes") else "—"
+        x = x_left
+        for w, txt in zip(col_w, [heat_no, qa, notes or "—"]):
+            cell(x, y, w, h, txt); x += w
+        y -= h
+
     y -= 12
 
-    # CoA blocks
+    # 2) Chemistry table
+    y = _ensure_space(c, y, 70)
+    c.setFont("Helvetica-Bold", 12); c.drawString(x_left, y, "Chemistry"); y -= 6
+    c.setFont("Helvetica", 10); y -= 4
     chem = getattr(lot, "chemistry", None)
+
+    cols = [("C","c"),("Si","si"),("S","s"),("P","p"),("Cu","cu"),("Ni","ni"),("Mn","mn"),("Fe","fe")]
+    cw = 2.0*cm; h = 16
+    # header row
+    x = x_left
+    for label, _ in cols:
+        cell(x, y, cw, h, label, bold=True); x += cw
+    y -= h
+    # value row
+    x = x_left
+    for _, attr in cols:
+        val = getattr(chem, attr, None) if chem else None
+        cell(x, y, cw, h, (val if (val not in (None, "")) else "—")); x += cw
+    y -= h
+
+    y -= 12
+
+    # 3) Physical table
+    y = _ensure_space(c, y, 48)
+    c.setFont("Helvetica-Bold", 12); c.drawString(x_left, y, "Physical"); y -= 6
+    c.setFont("Helvetica", 10); y -= 4
     phys = getattr(lot, "phys", None)
-    psd  = getattr(lot, "psd", None)
 
-    if chem or phys or psd:
-        y = _ensure_space(c, y, 14)
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(2.2*cm, y, "CoA (QA):")
-        c.setFont("Helvetica", 10)
-        y -= 12
+    cols = [("AD (g/cc)", "ad"), ("Flow (s/50g)", "flow")]
+    cw = 3.5*cm; h = 16
+    x = x_left
+    for label, _ in cols:
+        cell(x, y, cw, h, label, bold=True); x += cw
+    y -= h
+    x = x_left
+    for _, attr in cols:
+        val = getattr(phys, attr, None) if phys else None
+        cell(x, y, cw, h, (val if (val not in (None, "")) else "—")); x += cw
+    y -= h
 
-    if chem:
-        line = []
-        for k in ("c","si","s","p","cu","ni","mn","fe"):
-            v = getattr(chem, k, None)
-            if v not in (None, ""):
-                line.append(f"{k.upper()}:{v}")
-        if line:
-            y = _ensure_space(c, y, 12)
-            c.drawString(2.6*cm, y, "Chemistry: " + ", ".join(line))
-            y -= 12
+    y -= 12
 
-    if phys and (getattr(phys, "ad", None) or getattr(phys, "flow", None)):
-        y = _ensure_space(c, y, 12)
-        c.drawString(2.6*cm, y, f"Physical: AD={getattr(phys,'ad','')}, Flow={getattr(phys,'flow','')}")
-        y -= 12
+    # 4) PSD table
+    y = _ensure_space(c, y, 70)
+    c.setFont("Helvetica-Bold", 12); c.drawString(x_left, y, "PSD"); y -= 6
+    c.setFont("Helvetica", 10); y -= 4
+    psd = getattr(lot, "psd", None)
 
-    if psd and (getattr(psd,"p212",None) or getattr(psd,"p180",None) or getattr(psd,"n180p150",None)
-                or getattr(psd,"n150p75",None) or getattr(psd,"n75p45",None) or getattr(psd,"n45",None)):
-        y = _ensure_space(c, y, 12)
-        parts = []
-        for label, attr in [
-            ("+212", "p212"), ("+180", "p180"), ("-180+150", "n180p150"),
-            ("-150+75", "n150p75"), ("-75+45", "n75p45"), ("-45", "n45")
-        ]:
-            v = getattr(psd, attr, None)
-            if v not in (None, ""):
-                parts.append(f"{label}:{v}")
-        if parts:
-            c.drawString(2.6*cm, y, "PSD: " + ", ".join(parts))
-            y -= 12
+    cols = [("+212","p212"),("+180","p180"),("-180+150","n180p150"),("-150+75","n150p75"),("-75+45","n75p45"),("-45","n45")]
+    cw = 2.7*cm; h = 16
+    x = x_left
+    for label, _ in cols:
+        cell(x, y, cw, h, label, bold=True); x += cw
+    y -= h
+    x = x_left
+    for _, attr in cols:
+        val = getattr(psd, attr, None) if psd else None
+        cell(x, y, cw, h, (val if (val not in (None, "")) else "—")); x += cw
+    y -= h
 
-    # Traceability: heats + GRN FIFO
-    for lh in getattr(lot, "heats", []):
-        h = lh.heat
-        y = _ensure_space(c, y, 14)
-        c.drawString(
-            2.2*cm, y,
-            f"Heat {h.heat_no}: Alloc to lot {float(getattr(lh,'qty',0) or 0):.1f} kg, "
-            f"Heat Out {float(getattr(h,'actual_output',0) or 0):.1f} kg, QA {getattr(h,'qa_status','') or ''}"
-        )
-        y -= 12
-        for cons in getattr(h, "rm_consumptions", []):
-            g = cons.grn
-            supp = g.supplier if g else ""
-            y = _ensure_space(c, y, 12)
-            c.drawString(2.8*cm, y, f"- {cons.rm_type}: GRN #{cons.grn_id} ({supp}) {float(cons.qty or 0):.1f} kg")
-            y -= 12
+    return y - 8
+# ---------- /NEW ----------
 
-    return y - 6  # small gap after each lot block
 
-# ------------------------------------------------------------------
-# Main PDF builder
-# ------------------------------------------------------------------
 def draw_dispatch_note(c, disp, items, db):
     """
     Renders the dispatch note.
@@ -175,24 +186,42 @@ def draw_dispatch_note(c, disp, items, db):
     c.drawRightString(width-2.0*cm, y, f"Total Amount: {total:.2f}")
     y -= 18
 
-    # Manual rate placeholder + note (exact phrasing requested)
+    # Manual rate placeholder + note
     c.setFont("Helvetica", 10)
     c.drawString(2*cm, y, "Final Sell Rate (manual): __________________  ₹/kg"); y -= 16
     c.setFont("Helvetica-Oblique", 10)
     c.drawString(2*cm, y, "This Document is Dispatch Note use for Invoice Purpose Only"); y -= 14
 
-    # -------------------------------
-    # Annexure – QA & Traceability
-    # -------------------------------
+    # Annexure – QA & Trace
     y = _ensure_space(c, y, 22)
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(2*cm, y, "Annexure – QA Certificate & Traceability")
-    y -= 12
+    c.drawString(2*cm, y, "Annexure – QA Certificate & Traceability"); y -= 12
     c.setFont("Helvetica", 10)
 
-    # NEW: use helper for each item
     for it in items:
-        y = draw_lot_qa_annexure(c, it.lot, it.qty, db=db, y=y)
+        lot = it.lot
+        y = _ensure_space(c, y, 16)
+        c.drawString(2*cm, y, f"Lot: {lot.lot_no}  |  Grade: {lot.grade or ''}  |  QA: {getattr(lot, 'qa_status', '') or ''}  |  Dispatch Qty: {float(it.qty or 0):.1f} kg")
+        y -= 12
+
+        # Trace: heats + GRNs
+        for lh in getattr(lot, "heats", []):
+            h = lh.heat
+            y = _ensure_space(c, y, 14)
+            c.drawString(2.2*cm, y, f"Heat {h.heat_no}: Alloc to lot {float(lh.qty or 0):.1f} kg, Heat Out {float(h.actual_output or 0):.1f} kg, QA {h.qa_status or ''}")
+            y -= 12
+            for cons in h.rm_consumptions:
+                g = cons.grn
+                supp = g.supplier if g else ""
+                y = _ensure_space(c, y, 12)
+                c.drawString(2.8*cm, y, f"- {cons.rm_type}: GRN #{cons.grn_id} ({supp}) {float(cons.qty or 0):.1f} kg")
+                y -= 12
+
+        # NEW: start the formal CoA table for this lot (on a fresh page if needed)
+        y = _ensure_space(c, y, 220)
+        y = _draw_coa_table(c, lot, y)
+
+        y -= 8
 
     # Signature block
     y = _ensure_space(c, y, 40)
