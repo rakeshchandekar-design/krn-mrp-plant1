@@ -1755,36 +1755,46 @@ def rap_dispatch_export(db: Session = Depends(get_db)):
     )
 
 
+
 # ---------- CSV export for Plant-2 transfers ----------
 @app.get("/rap/transfer/export")
-def export_rap_transfers(db: Session = Depends(get_db)):
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Date", "Lot No", "Grade", "Quantity (kg)", "Customer/Target"])
+def rap_transfer_export(db: Session = Depends(get_db)):
+    import csv, io
+    from fastapi.responses import StreamingResponse
 
-    transfers = (
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹/kg)", "Value (₹)"])
+
+    # pull all PLANT2 allocations; we'll traverse relationships in Python
+    rows = (
         db.query(RAPAlloc)
-        .join(RAPLot)
-        .filter(RAPAlloc.kind == "PLANT2")
-        .all()
+          .filter(RAPAlloc.kind == "PLANT2")
+          .order_by(RAPAlloc.date.asc(), RAPAlloc.id.asc())
+          .all()
     )
 
-    for tr in transfers:
-        lot = tr.rap_lot
-        writer.writerow([
-            tr.date.strftime("%Y-%m-%d") if tr.date else "",
-            lot.lot_no if lot else "",
-            lot.grade if lot else "",
-            tr.qty or 0,
-            tr.customer or tr.target or ""
+    for a in rows:
+        rap = a.rap_lot                 # RAPLot (may be None if data inconsistent)
+        lot = rap.lot if rap else None  # Lot (may be None if data inconsistent)
+        qty   = float(a.qty or 0.0)
+        unit  = float((lot.unit_cost if lot else 0.0) or 0.0)
+        value = qty * unit
+        w.writerow([
+            (a.date.isoformat() if a.date else ""),
+            (lot.lot_no if lot else ""),
+            (lot.grade if lot else ""),
+            f"{qty:.1f}",
+            f"{unit:.2f}",
+            f"{value:.2f}",
         ])
 
+    buf.seek(0)
     return StreamingResponse(
-        io.StringIO(output.getvalue()),
+        io.StringIO(buf.getvalue()),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=plant2_transfers.csv"}
+        headers={"Content-Disposition": 'attachment; filename="plant2_transfers.csv"'},
     )
-
         
 # -------------------------------------------------
 # Lot quick views used by RAP "Docs" column
