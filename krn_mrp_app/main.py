@@ -1760,8 +1760,7 @@ def export_rap_transfers(db: Session = Depends(get_db)):
     return StreamingResponse(
         io.StringIO(buf.getvalue()),
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="plant2_transfers.csv"'},
-    )
+        headers={"Content-Disposition": 'attachment; filename="plant2_transfers.csv"'},)
 
     buf.seek(0)
     return StreamingResponse(
