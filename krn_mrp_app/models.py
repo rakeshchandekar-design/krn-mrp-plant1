@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boo
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime
 from .db import Base
+from sqlalchemy import CheckConstraint
 
 class RMPrice(Base):
     __tablename__ = "rm_prices"
@@ -62,6 +63,7 @@ class Lot(Base):
     grade: Mapped[str] = mapped_column(String)
     total_kg: Mapped[float] = mapped_column(Float)
     qa_status: Mapped[str] = mapped_column(String, default="PENDING")
+    oversize_kg = Column(Float, nullable=False, default=0.01)
 
 class LotHeat(Base):
     __tablename__ = "lot_heats"
