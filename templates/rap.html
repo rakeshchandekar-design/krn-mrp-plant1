@@ -97,7 +97,11 @@
   <h3>Create Dispatch Note (Multi-lot)</h3>
   <form method="post" action="/rap/dispatch/save">
     <label>Date: 
-      <input type="date" name="date" max="{{ today }}" min="{{ (today | todatetime - timedelta(days=3)) | date('Y-m-d') }}" required>
+   <input type="date" name="date"
+       value="{{ today }}"
+       max="{{ today }}"
+       min="{{ min_date }}"
+       required>
     </label>
     <label>Customer: <input type="text" name="customer" required></label>
     <table>
