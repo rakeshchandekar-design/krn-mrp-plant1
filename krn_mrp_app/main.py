@@ -1773,7 +1773,7 @@ def export_rap_transfers(db: Session = Depends(get_db)):
     )
 
     for a in rows:
-        rap = a.rap_lot
+        rap = a.rap_lot                     # ✅ fixed
         lot = rap.lot if rap else None
         qty = float(a.qty or 0.0)
         unit = float(lot.unit_cost or 0.0) if lot else 0.0
