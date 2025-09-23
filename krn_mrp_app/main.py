@@ -1697,42 +1697,76 @@ def rap_export(db: Session = Depends(get_db)):
 # -------------------------------------------------
 # Lot quick views used by RAP "Docs" column
 # -------------------------------------------------
-@app.get("/lot/{lot_id}/trace", response_class=PlainTextResponse)
+@app.get("/lot/{lot_id}/trace", response_class=HTMLResponse)
 def lot_trace_view(lot_id: int, db: Session = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
+        return HTMLResponse("<p>Lot not found</p>", status_code=404)
 
-    lines = [f"Trace for lot {lot.lot_no}", ""]
-    # Heats used in the lot
+    rows = []
     for lh in getattr(lot, "heats", []):
         h = db.get(Heat, lh.heat_id)
         if not h:
             continue
-        lines.append(
-            f"Heat {h.heat_no} | Alloc to lot: {float(lh.qty or 0):.1f} kg "
-            f"| Heat Out: {float(h.actual_output or 0):.1f} kg | QA: {h.qa_status or ''}"
-        )
-        # FIFO (GRN) consumption
+        # parent row = heat
+        rows.append({
+            "heat_no": h.heat_no,
+            "alloc": float(lh.qty or 0.0),
+            "out": float(h.actual_output or 0.0),
+            "qa": h.qa_status or "",
+            "rm_type": "",
+            "grn_id": "",
+            "supplier": "",
+            "rm_qty": ""
+        })
+        # children rows = FIFO GRNs
         for cons in getattr(h, "rm_consumptions", []):
             g = cons.grn
-            lines.append(
-                f"  - {cons.rm_type} | GRN #{cons.grn_id} | {g.supplier if g else ''} "
-                f"| {float(cons.qty or 0):.1f} kg"
-            )
-    return PlainTextResponse("\n".join(lines))
+            rows.append({
+                "heat_no": "",
+                "alloc": "",
+                "out": "",
+                "qa": "",
+                "rm_type": cons.rm_type,
+                "grn_id": cons.grn_id,
+                "supplier": (g.supplier if g else ""),
+                "rm_qty": f"{float(cons.qty or 0.0):.1f}"
+            })
 
-@app.get("/lot/{lot_id}/qa", response_class=PlainTextResponse)
+    html = [
+        "<h3>Trace – Lot ", lot.lot_no or "", "</h3>",
+        "<table border=1 cellpadding=6 cellspacing=0>",
+        "<thead><tr>",
+        "<th>Heat</th><th>Alloc to Lot (kg)</th><th>Heat Out (kg)</th><th>QA</th>",
+        "<th>RM Type</th><th>GRN #</th><th>Supplier</th><th>RM Qty (kg)</th>",
+        "</tr></thead><tbody>"
+    ]
+    for r in rows:
+        html.append(
+            f"<tr><td>{r['heat_no']}</td><td>{r['alloc']}</td><td>{r['out']}</td><td>{r['qa']}</td>"
+            f"<td>{r['rm_type']}</td><td>{r['grn_id']}</td><td>{r['supplier']}</td><td>{r['rm_qty']}</td></tr>"
+        )
+    html.append("</tbody></table>")
+    html.append('<p style="margin-top:12px"><a href="/rap">← Back to RAP</a></p>')
+    return HTMLResponse("".join(html))
+    
+@app.get("/lot/{lot_id}/qa", response_class=HTMLResponse)
 def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
-    lines = [f"QA snapshot for lot {lot.lot_no}", ""]
+        return HTMLResponse("<p>Lot not found</p>", status_code=404)
+
+    lines = [f"<h3>QA snapshot – Lot {lot.lot_no}</h3>", "<table border=1 cellpadding=6 cellspacing=0>",
+             "<thead><tr><th>Heat</th><th>QA</th><th>Notes</th></tr></thead><tbody>"]
     for lh in getattr(lot, "heats", []):
         h = db.get(Heat, lh.heat_id)
-        if h:
-            lines.append(f"Heat {h.heat_no}: QA={h.qa_status or '-'}  | Notes={h.qa_notes or ''}")
-    return PlainTextResponse("\n".join(lines))
+        if not h:
+            continue
+        notes = getattr(h, "qa_notes", "") or ""
+        lines.append(f"<tr><td>{h.heat_no}</td><td>{h.qa_status or '-'}</td><td>{notes}</td></tr>")
+    lines.append("</tbody></table>")
+    lines.append('<p style="margin-top:12px"><a href="/rap">← Back to RAP</a></p>')
+    return HTMLResponse("".join(lines))
 
 @app.get("/lot/{lot_id}/pdf")
 def lot_pdf_view(lot_id: int, db: Session = Depends(get_db)):
@@ -1759,20 +1793,57 @@ def lot_pdf_view(lot_id: int, db: Session = Depends(get_db)):
     c.drawString(2 * cm, y, f"Lot: {lot.lot_no}    Grade: {lot.grade or '-'}"); y -= 14
     c.drawString(2 * cm, y, f"Lot Weight: {float(lot.weight or 0):.1f} kg"); y -= 14
     c.drawString(2 * cm, y, f"Unit Cost: ₹{float(lot.unit_cost or 0):.2f}"); y -= 20
-    c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "Heats"); y -= 14
+
+    # Heats + GRN (FIFO) section
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(2 * cm, y, "Heats & GRN (FIFO)"); y -= 14
     c.setFont("Helvetica", 10)
+
+    def new_page():
+        nonlocal y
+        c.showPage()
+        # re-draw header
+        try:
+            draw_header(c, "Lot Summary")
+        except Exception:
+            c.setFont("Helvetica-Bold", 18)
+            c.drawString(2 * cm, h - 2.5 * cm, "KRN Alloys Pvt. Ltd")
+            c.setFont("Helvetica", 12)
+            c.drawString(2 * cm, h - 3.2 * cm, "Lot Summary")
+        y = h - 4 * cm
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(2 * cm, y, "Heats & GRN (FIFO)"); y -= 14
+        c.setFont("Helvetica", 10)
+
     for lh in getattr(lot, "heats", []):
         hobj = db.get(Heat, lh.heat_id)
         if not hobj:
             continue
+        # Heat row
+        if y < 3 * cm:
+            new_page()
         c.drawString(2.2 * cm, y, f"{hobj.heat_no} | Alloc: {float(lh.qty or 0):.1f} kg | QA: {hobj.qa_status or ''}")
         y -= 12
-        if y < 3 * cm:
-            c.showPage(); y = h - 3 * cm
+
+        # GRN (FIFO) child rows under this heat
+        for cons in getattr(hobj, "rm_consumptions", []):
+            if y < 3 * cm:
+                new_page()
+            g = cons.grn
+            supplier = (g.supplier if g else "")
+            c.drawString(
+                2.8 * cm, y,
+                f"– {cons.rm_type} | GRN #{cons.grn_id} | {supplier} | {float(cons.qty or 0):.1f} kg"
+            )
+            y -= 12
+
     c.showPage(); c.save()
     buf.seek(0)
-    return StreamingResponse(buf, media_type="application/pdf",
-                             headers={"Content-Disposition": f'inline; filename="lot_{lot.lot_no}.pdf"'})
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="lot_{lot.lot_no}.pdf"'}
+    )
 
 # -------------------------------------------------
 # RAP Dispatch + Transfer
