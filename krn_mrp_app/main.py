@@ -1789,11 +1789,12 @@ def export_rap_transfers(db: Session = Depends(get_db)):
         ])
 
     buf.seek(0)
-    return StreamingResponse(
-        buf,
+        return StreamingResponse(
+        io.StringIO(output.getvalue()),
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="plant2_transfers.csv"'}
-    )
+        headers={"Content-Disposition": "attachment; filename=plant2_transfers.csv"}
+    )
+
 
         
 # -------------------------------------------------
