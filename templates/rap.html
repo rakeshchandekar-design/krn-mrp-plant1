@@ -132,7 +132,7 @@
 
   <!-- RAP Lots -->
   <div class="card">
-    <h2 style="margin:0 0 8px 0;">RAP Lots</h2>
+    <h2 style="margin:0 0 8px 0;">RAP Lots – Transfers to Plant 2</h2>
     <table>
       <thead>
         <tr>
@@ -171,14 +171,13 @@
               <!-- Per-lot = Plant 2 transfer only -->
               <form method="post" action="/rap/allocate" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
                 <input type="hidden" name="rap_lot_id" value="{{ r.id }}">
+                <input type="hidden" name="kind" value="PLANT2">
                 <input type="date" name="date" max="{{ today }}" min="{{ min_date }}" required>
-                <select name="kind">
-                  <option value="PLANT2">Plant 2</option>
-                </select>
                 <input type="number" step="0.1" min="0" max="{{ '%.1f' % (r.available_qty or 0) }}" name="qty" placeholder="Qty (kg)" required>
-                <input type="text" name="remarks" placeholder="remarks">
+                <input type="text"  name="remarks" placeholder="remarks">
                 <button class="btn" type="submit">Allocate</button>
               </form>
+
             </td>
           </tr>
         {% endfor %}
@@ -189,5 +188,44 @@
       <p class="muted">No APPROVED lots are available in RAP.</p>
     {% endif %}
   </div>
+  <script>
+  (function(){
+    const table = document.querySelector('form[action="/rap/dispatch/save"]');
+    if(!table) return;
+
+    // Live total
+    const totalSpan = document.createElement('span');
+    totalSpan.style.marginLeft = '12px';
+    totalSpan.className = 'muted';
+    table.querySelector('h3')?.appendChild(totalSpan);
+
+    function refreshTotal(){
+      let sum = 0;
+      table.querySelectorAll('tbody input[type="number"]').forEach(inp=>{
+        const v = parseFloat(inp.value || "0");
+        if (!isNaN(v)) sum += v;
+      });
+      totalSpan.textContent = `Total qty: ${sum.toFixed(1)} kg`;
+    }
+    table.addEventListener('input', refreshTotal);
+    refreshTotal();
+
+    // Single-grade guard on submit (UI only; server also validates)
+    table.addEventListener('submit', (e)=>{
+      const grades = new Set();
+      table.querySelectorAll('tbody tr').forEach(tr=>{
+        const chk = tr.querySelector('input[type="checkbox"]');
+        if (chk && chk.checked) {
+          const gradeCell = tr.querySelectorAll('td')[2];
+          if (gradeCell) grades.add(gradeCell.textContent.trim());
+        }
+      });
+      if (grades.size > 1) {
+        e.preventDefault();
+        alert("Please select lots of a single grade (KRIP or KRFS) for one dispatch note.");
+      }
+    });
+  })();
+</script>
 </body>
 </html>
