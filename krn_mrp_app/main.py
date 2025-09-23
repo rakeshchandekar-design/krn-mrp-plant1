@@ -1722,27 +1722,44 @@ def rap_dispatch_export(db: Session = Depends(get_db)):
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="dispatch_movements.csv"'}
     )
-
 # ---------- CSV export for Plant-2 transfers ----------
 @app.get("/rap/transfer/export")
 def rap_transfer_export(db: Session = Depends(get_db)):
-    import csv, io
+    import csv
+    import io
     from fastapi.responses import StreamingResponse
 
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["Date", "Lot", "Grade", "Qty (kg)", "Value (₹)"])
 
-    q = db.query(RAPAlloc, RAPLot, Lot).join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id).join(Lot, RAPLot.lot_id == Lot.id) \
-           .filter(RAPAlloc.kind == "PLANT2").order_by(RAPAlloc.date)
+    q = (
+        db.query(RAPAlloc, RAPLot, Lot)
+        .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
+        .join(Lot, RAPLot.lot_id == Lot.id)
+        .filter(RAPAlloc.kind == "PLANT2")
+        .order_by(RAPAlloc.date)
+        .all()
+    )
 
     for alloc, rap, lot in q:
-        value = round(alloc.qty * lot.unit_cost, 2) if lot.unit_cost else 0
-        writer.writerow([alloc.date.isoformat(), lot.lot_no, lot.grade, alloc.qty, value])
+        qty = float(alloc.qty or 0.0)
+        unit = float(lot.unit_cost or 0.0)
+        value = round(qty * unit, 2)
+        writer.writerow([
+            (alloc.date.isoformat() if alloc.date else ""),
+            (lot.lot_no or ""),
+            (lot.grade or ""),
+            f"{qty:.1f}",
+            f"{value:.2f}",
+        ])
 
     buf.seek(0)
-    return StreamingResponse(buf, media_type="text/csv",
-                             headers={"Content-Disposition": "attachment; filename=plant2_transfers.csv"})
+    return StreamingResponse(
+        buf,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=plant2_transfers.csv"},
+    )
         
 # -------------------------------------------------
 # Lot quick views used by RAP "Docs" column
