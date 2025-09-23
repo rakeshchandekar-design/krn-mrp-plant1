@@ -1,10 +1,12 @@
+# rap_dispatch_pdf.py
 import os
 import datetime as dt
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 
-def _logo_path():
-    base = os.path.dirname(os.path.abspath(_file_))
+def _logo_path() -> str:
+    """Return an existing path to the KRN logo."""
+    base = os.path.dirname(os.path.abspath(_file_))  # <— fix here
     p1 = os.path.join(base, "static", "KRN_Logo.png")
     p2 = os.path.join(base, "..", "static", "KRN_Logo.png")
     return p1 if os.path.exists(p1) else p2
@@ -13,12 +15,16 @@ def _header(c, title: str):
     width, height = A4
     logo = _logo_path()
     if os.path.exists(logo):
-        c.drawImage(logo, 1.5*cm, height-3.0*cm, width=4*cm, height=3*cm, preserveAspectRatio=True, mask="auto")
+        c.drawImage(
+            logo, 1.5*cm, height-3.0*cm,
+            width=4*cm, height=3*cm,
+            preserveAspectRatio=True, mask="auto"
+        )
     c.setFont("Helvetica-Bold", 24)
     c.drawString(7*cm, height-2.1*cm, "KRN Alloys Pvt. Ltd")
     c.setFont("Helvetica-Bold", 12)
     c.drawString(7*cm, height-2.7*cm, title)
-    c.line(1.5*cm, height-3.3*cm, width-1.5*cm, height-3.3*cm)
+    c.line(1.5*cm, height-3.3*cm, width-1.5*cm, height-3.3*cm)
 
 def _hline(c, y):
     width, _ = A4
