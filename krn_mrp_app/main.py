@@ -1782,17 +1782,102 @@ def rap_dispatch_new(request: Request, db: Session = Depends(get_db)):
     lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").all()
     return templates.TemplateResponse("rap_dispatch_new.html", {"request": request, "lots": lots})
 
+# ---------- Multi-lot dispatch: create items + reduce RAP availability ----------
 @app.post("/rap/dispatch/save")
 def rap_dispatch_save(
+    request: Request,
+    date: str = Form(...),
     customer: str = Form(...),
-    db: Session = Depends(get_db)
+    lot_ids: List[int] = Form(default=[]),               # from checkboxes name="lot_ids"
+    db: Session = Depends(get_db),
 ):
+    # validate date (today or last 3 days; no future)
+    try:
+        d = dt.date.fromisoformat(date)
+    except Exception:
+        return _alert_redirect("Invalid date.", url="/rap")
     today = dt.date.today()
-    disp = RAPDispatch(date=today, customer=customer, grade="KRIP", total_qty=0, total_cost=0)
+    if d > today or d < (today - dt.timedelta(days=3)):
+        return _alert_redirect("Date must be today or within the last 3 days.", url="/rap")
+
+    if not (customer and customer.strip()):
+        return _alert_redirect("Customer is required.", url="/rap")
+
+    if not lot_ids:
+        return _alert_redirect("Select at least one lot.", url="/rap")
+
+    # create dispatch header
+    disp = RAPDispatch(date=d, customer=customer.strip(), grade="KRIP", total_qty=0.0, total_cost=0.0)
     db.add(disp); db.flush()
-    # TODO: parse selected lots+qtys from form, add RAPDispatchItem
+
+    # read per-lot quantities from the form (fields look like qty_<rap_lot_id>)
+    form = await request.form()
+    total_qty = 0.0
+    total_cost = 0.0
+
+    for rid in lot_ids:
+        try:
+            rid_int = int(rid)
+        except Exception:
+            continue
+
+        qty_str = form.get(f"qty_{rid_int}", "") or "0"
+        try:
+            qty = float(qty_str)
+        except Exception:
+            qty = 0.0
+        if qty <= 0:
+            continue
+
+        # find RAPLot + base Lot
+        rap = db.get(RAPLot, rid_int)
+        if not rap:
+            continue
+        lot = db.get(Lot, rap.lot_id)
+        if not lot or (lot.qa_status or "") != "APPROVED":
+            continue
+
+        # re-compute available
+        total_alloc = rap_total_alloc_qty_for_lot(db, lot.id)
+        avail = max((lot.weight or 0.0) - total_alloc, 0.0)
+        if qty > avail + 1e-6:
+            return _alert_redirect(f"Lot {lot.lot_no}: Over-allocation. Available {avail:.1f} kg.", url="/rap")
+
+        # create a dispatch item line
+        unit_cost = float(lot.unit_cost or 0.0)
+        line_amt = unit_cost * qty
+        db.add(RAPDispatchItem(dispatch_id=disp.id, lot_id=lot.id, qty=qty, cost=unit_cost))
+
+        # also record a RAP allocation (DISPATCH) so RAP availability reduces
+        db.add(RAPAlloc(
+            rap_lot_id=rap.id,
+            date=d,
+            kind="DISPATCH",
+            qty=qty,
+            remarks=f"Dispatch #{disp.id}",
+            dest=disp.customer,
+        ))
+
+        # update RAPLot mirror (optimistic)
+        rap.available_qty = max(avail - qty, 0.0)
+        rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
+        db.add(rap)
+
+        total_qty += qty
+        total_cost += line_amt
+
+    # update header totals
+    disp.total_qty = total_qty
+    disp.total_cost = total_cost
+    db.add(disp)
     db.commit()
+
+    if total_qty <= 0:
+        return _alert_redirect("No valid quantities were entered.", url="/rap")
+
+    # open the multi-lot Dispatch Note
     return RedirectResponse(f"/rap/dispatch/pdf/{disp.id}", status_code=303)
+
 
 @app.get("/rap/dispatch/pdf/{disp_id}")
 def rap_dispatch_pdf(disp_id: int, db: Session = Depends(get_db)):
@@ -1805,6 +1890,10 @@ def rap_dispatch_pdf(disp_id: int, db: Session = Depends(get_db)):
     from reportlab.pdfgen import canvas
     c = canvas.Canvas(buf, pagesize=A4)
     draw_dispatch_note(c, disp, items, db)
+        # clickable "Back to RAP" text on the PDF (top-right)
+    c.setFont("Helvetica", 9)
+    c.drawRightString(20.0*cm, 1.2*cm, "Back to RAP")
+    c.linkURL("/rap", (18.5*cm, 0.9*cm, 20.0*cm, 1.3*cm), relative=1)
     c.showPage(); c.save()
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/pdf",
