@@ -63,36 +63,30 @@
     </div>
 
     <div class="card">
-      <h3>This Month – Cumulative Movements</h3>
-      <table style="width:auto">
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th class="right">KRIP (kg)</th>
-            <th class="right">KRFS (kg)</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Dispatch</td>
-            <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRIP'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
-            <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRFS'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
-          </tr>
-          <tr>
-            <td>Plant 2</td>
-            <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRIP'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
-            <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRFS'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <div style="margin-top:6px">
-      <a class="btn" href="/rap/dispatch/export">Download Dispatch Movements</a>
-      </div>
-      <a href="/rap/transfer/export" class="btn" target="_blank">
-      Download Plant-2 Transfers (CSV)
-      </a>
-    </div>
+  <h3>This Month – Cumulative Movements</h3>
+  <table style="width:auto">
+    <thead>
+      <tr><th>Type</th><th class="right">KRIP (kg)</th><th class="right">KRFS (kg)</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Dispatch</td>
+        <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRIP'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
+        <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRFS'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
+      </tr>
+      <tr>
+        <td>Plant 2</td>
+        <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRIP'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
+        <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRFS'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap">
+    <a class="btn" href="/rap/dispatch/export">Download Dispatch Movements (CSV)</a>
+    <a class="btn ghost" href="/rap/transfer/export">Download Plant-2 Transfers (CSV)</a>
   </div>
+</div>
 
   <!-- Full-width: Create Dispatch Note (multi-lot) -->
   <div class="card">
