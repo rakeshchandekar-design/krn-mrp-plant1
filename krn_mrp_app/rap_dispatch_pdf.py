@@ -4,13 +4,13 @@ import datetime as dt
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 
-def _logo_path() -> str:
-    """Return an existing path to the KRN logo."""
-    base = os.path.dirname(os.path.abspath(_file_))  # <— fix here
+# rap_dispatch_pdf.py  (top of file)
+
+def _logo_path():
+    base = os.path.dirname(os.path.abspath(__file__))   # ← correct magic var
     p1 = os.path.join(base, "static", "KRN_Logo.png")
     p2 = os.path.join(base, "..", "static", "KRN_Logo.png")
     return p1 if os.path.exists(p1) else p2
-
 def _header(c, title: str):
     width, height = A4
     logo = _logo_path()
