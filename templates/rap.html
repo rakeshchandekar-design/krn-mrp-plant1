@@ -162,11 +162,11 @@
             <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
             <td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>
             <td class="right">{{ '%.2f' % ((lot.unit_cost or 0) * (r.available_qty or 0)) }}</td>
-            <td>
-              <span class="muted">Trace</span> |
-              <span class="muted">PDF</span> |
-              <span class="muted">QA</span>
-            </td>
+           <td>
+           <a href="/lot/{{ lot.id }}/trace" target="_blank">Trace</a> |
+           <a href="/lot/{{ lot.id }}/pdf"   target="_blank">PDF</a> |
+           <a href="/lot/{{ lot.id }}/qa"    target="_blank">QA</a>
+           </td>
             <td>
               <!-- Per-lot = Plant 2 transfer only -->
               <form method="post" action="/rap/allocate" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
