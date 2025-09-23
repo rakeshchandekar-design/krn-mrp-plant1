@@ -1693,7 +1693,57 @@ def rap_export(db: Session = Depends(get_db)):
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="rap_stock.csv"'}
     )
+    
+# ---------- CSV export: all DISPATCH movements (till date) ----------
+@app.get("/rap/dispatch/export")
+def rap_dispatch_export(db: Session = Depends(get_db)):
+    """
+    Exports all DISPATCH movements (till date) with lot info.
+    Columns: date, lot_no, grade, qty, unit_cost, value, customer, remarks, alloc_id
+    """
+    out = io.StringIO()
+    out.write("Date,Lot No,Grade,Qty (kg),Unit Cost,Value,Customer,Remarks,Alloc ID\n")
+    rows = (
+        db.query(RAPAlloc, RAPLot, Lot)
+          .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
+          .join(Lot, RAPLot.lot_id == Lot.id)
+          .filter(RAPAlloc.kind == "DISPATCH")
+          .order_by(RAPAlloc.date.desc(), RAPAlloc.id.desc())
+          .all()
+    )
+    for alloc, rap, lot in rows:
+        qty = float(alloc.qty or 0.0)
+        unit = float(lot.unit_cost or 0.0)
+        val = qty * unit
+        out.write(f"{(alloc.date or dt.date.today()).isoformat()},{lot.lot_no},{lot.grade or ''},{qty:.1f},{unit:.2f},{val:.2f},{alloc.dest or ''},{(alloc.remarks or '').replace(',', ' ')},{alloc.id}\n")
+    data = out.getvalue().encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="dispatch_movements.csv"'}
+    )
 
+# ---------- CSV export for Plant-2 transfers ----------
+@app.get("/rap/transfer/export")
+def rap_transfer_export(db: Session = Depends(get_db)):
+    import csv, io
+    from fastapi.responses import StreamingResponse
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Date", "Lot", "Grade", "Qty (kg)", "Value (₹)"])
+
+    q = db.query(RAPAlloc, RAPLot, Lot).join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id).join(Lot, RAPLot.lot_id == Lot.id) \
+           .filter(RAPAlloc.kind == "PLANT2").order_by(RAPAlloc.date)
+
+    for alloc, rap, lot in q:
+        value = round(alloc.qty * lot.unit_cost, 2) if lot.unit_cost else 0
+        writer.writerow([alloc.date.isoformat(), lot.lot_no, lot.grade, alloc.qty, value])
+
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="text/csv",
+                             headers={"Content-Disposition": "attachment; filename=plant2_transfers.csv"})
+        
 # -------------------------------------------------
 # Lot quick views used by RAP "Docs" column
 # -------------------------------------------------
