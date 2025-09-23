@@ -1763,7 +1763,7 @@ def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
         if not h:
             continue
         notes = getattr(h, "qa_notes", "") or ""
-        lines.append(f"<tr><td>{h.heat_no}</td><td>{h.qa_status or '-'}</td><td>{notes}</td></tr>")
+        lines.append(f"Heat {h.heat_no}: QA={getattr(h,'qa_status','-')} | Notes={getattr(h,'qa_notes','')}")
     lines.append("</tbody></table>")
     lines.append('<p style="margin-top:12px"><a href="/rap">← Back to RAP</a></p>')
     return HTMLResponse("".join(lines))
@@ -1855,100 +1855,102 @@ def rap_dispatch_new(request: Request, db: Session = Depends(get_db)):
 
 # ---------- Multi-lot dispatch: create items + reduce RAP availability ----------
 @app.post("/rap/dispatch/save")
-async def rap_dispatch_save(
+def rap_dispatch_save(
     request: Request,
-    date: str = Form(...),
     customer: str = Form(...),
-    lot_ids: List[int] = Form(default=[]),
-    db: Session = Depends(get_db),
+    date: str = Form(...),
+    db: Session = Depends(get_db)
 ):
-    # validate date (today or last 3 days; no future)
-    try:
-        d = dt.date.fromisoformat(date)
-    except Exception:
-        return _alert_redirect("Invalid date.", url="/rap")
-    today = dt.date.today()
-    if d > today or d < (today - dt.timedelta(days=3)):
-        return _alert_redirect("Date must be today or within the last 3 days.", url="/rap")
+    # Gather selected lots and quantities from form
+    # NOTE: Starlette provides request.form() as async, but when called inside a sync
+    # path function FastAPI runs it in a threadpool. This is safe here.
+    form = request.scope.get("_form")  # try cache first
+    if form is None:
+        form = request._dict.get("form") if hasattr(request, "_dict") else None
+    if form is None:
+        # Fallback: re-parse in a lightweight way
+        import urllib.parse
+        body = request._body if hasattr(request, "_body") else None
+        if body is None:
+            body = b""
+        form = urllib.parse.parse_qs(body.decode("utf-8"), keep_blank_values=True)
 
-    if not (customer and customer.strip()):
-        return _alert_redirect("Customer is required.", url="/rap")
+    # Extract lot ids (checkbox list) and per-lot qtys
+    def getall(key):  # works both for dict(list) and FormData
+        v = form.get(key, [])
+        return v if isinstance(v, list) else [v]
+
+    raw_ids = getall("lot_ids")
+    lot_ids = []
+    for v in raw_ids:
+        try:
+            lot_ids.append(int(v))
+        except Exception:
+            pass
 
     if not lot_ids:
         return _alert_redirect("Select at least one lot.", url="/rap")
 
-    # create dispatch header
-    disp = RAPDispatch(date=d, customer=customer.strip(), grade="KRIP", total_qty=0.0, total_cost=0.0)
-    db.add(disp); db.flush()
-
-    # read per-lot quantities from the form (fields look like qty_<rap_lot_id>)
-    form = await request.form()
-    total_qty = 0.0
-    total_cost = 0.0
-
+    # Map RAPLot id -> qty
+    qty_map = {}
     for rid in lot_ids:
+        q = form.get(f"qty_{rid}", ["0"])[0]
         try:
-            rid_int = int(rid)
+            qty_map[rid] = max(float(q or 0), 0.0)
         except Exception:
-            continue
+            qty_map[rid] = 0.0
 
-        qty_str = form.get(f"qty_{rid_int}", "") or "0"
-        try:
-            qty = float(qty_str)
-        except Exception:
-            qty = 0.0
-        if qty <= 0:
-            continue
-
-        # find RAPLot + base Lot
-        rap = db.get(RAPLot, rid_int)
+    # Validate single grade
+    grades = set()
+    items = []
+    for rid in lot_ids:
+        rap = db.get(RAPLot, rid)
         if not rap:
             continue
         lot = db.get(Lot, rap.lot_id)
-        if not lot or (lot.qa_status or "") != "APPROVED":
+        if not lot:
             continue
+        grades.add(lot.grade or "KRIP")
+        qty = min(float(rap.available_qty or 0.0), float(qty_map.get(rid, 0.0)))
+        if qty > 0:
+            items.append((rap, lot, qty))
+    if len(grades) > 1:
+        return _alert_redirect("Please select lots of a single grade (KRIP or KRFS).", url="/rap")
+    if not items:
+        return _alert_redirect("Enter quantity for at least one selected lot.", url="/rap")
 
-        # re-compute available
-        total_alloc = rap_total_alloc_qty_for_lot(db, lot.id)
-        avail = max((lot.weight or 0.0) - total_alloc, 0.0)
-        if qty > avail + 1e-6:
-            return _alert_redirect(f"Lot {lot.lot_no}: Over-allocation. Available {avail:.1f} kg.", url="/rap")
+    # Create dispatch header
+    try:
+        d = dt.date.fromisoformat(date)
+    except Exception:
+        d = dt.date.today()
+    disp = RAPDispatch(date=d, customer=customer, grade=(list(grades)[0]), total_qty=0, total_cost=0)
+    db.add(disp); db.flush()
 
-        # create a dispatch item line
-        unit_cost = float(lot.unit_cost or 0.0)
-        line_amt = unit_cost * qty
-        db.add(RAPDispatchItem(dispatch_id=disp.id, lot_id=lot.id, qty=qty, cost=unit_cost))
+    # Create items and corresponding RAP allocations (DISPATCH)
+    total_qty = 0.0
+    total_cost = 0.0
+    for rap, lot, qty in items:
+        unit = float(lot.unit_cost or 0.0)
+        total_qty += qty
+        total_cost += qty * unit
+        db.add(RAPDispatchItem(dispatch_id=disp.id, lot_id=lot.id, qty=qty, cost=unit))
 
-        # also record a RAP allocation (DISPATCH) so RAP availability reduces
+        # Allocation record
         db.add(RAPAlloc(
-            rap_lot_id=rap.id,
-            date=d,
-            kind="DISPATCH",
-            qty=qty,
-            remarks=f"Dispatch #{disp.id}",
-            dest=disp.customer,
+            rap_lot_id=rap.id, date=d, kind="DISPATCH", qty=qty, remarks="Dispatch (multi-lot)", dest=customer
         ))
-
-        # update RAPLot mirror (optimistic)
-        rap.available_qty = max(avail - qty, 0.0)
+        # Mirror RAPLot
+        rap.available_qty = max(float(rap.available_qty or 0.0) - qty, 0.0)
         rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
         db.add(rap)
 
-        total_qty += qty
-        total_cost += line_amt
-
-    # update header totals
     disp.total_qty = total_qty
     disp.total_cost = total_cost
-    db.add(disp)
-    db.commit()
+    db.add(disp); db.commit()
 
-    if total_qty <= 0:
-        return _alert_redirect("No valid quantities were entered.", url="/rap")
-
-    # open the multi-lot Dispatch Note
+    # Show the multi-lot dispatch note
     return RedirectResponse(f"/rap/dispatch/pdf/{disp.id}", status_code=303)
-
 
 @app.get("/rap/dispatch/pdf/{disp_id}")
 def rap_dispatch_pdf(disp_id: int, db: Session = Depends(get_db)):
