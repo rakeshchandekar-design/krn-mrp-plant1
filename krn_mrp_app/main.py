@@ -1566,18 +1566,22 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
     for kind, grade, qty in trend:
         kpi_trends[kind][grade or "KRIP"] = float(qty or 0)
 
+        # compute date boundaries for the allocation form
+    today_iso = today.isoformat()
+    min_date_iso = (today - dt.timedelta(days=3)).isoformat()
+
     # Render
-    return templates.TemplateResponse(
+        return templates.TemplateResponse(
         "rap.html",
         {
             "request": request,
             "rows": rap_rows,
             "kpi": kpi,
             "kpi_trends": kpi_trends,
-            "today": today.isoformat(),
-        },
+            "today": today_iso,
+            "min_date": min_date_iso,
+        }
     )
-
 
 # ---------- CSV export for RAP ----------
 @app.get("/rap/export")
