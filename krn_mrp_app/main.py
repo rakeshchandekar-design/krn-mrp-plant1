@@ -1277,6 +1277,8 @@ def atom_page(
         pass
     except NameError:
         last5 = []  # e.g. [{"date": "2025-09-24", "actual": 0.0, "target": atom_capacity, ...}, ...]
+    atom_last5 = last5
+
 
     # month-to-date atomization balance block
     try:
