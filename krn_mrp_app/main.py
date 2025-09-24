@@ -1291,11 +1291,11 @@ def atom_page(
             "oversize_kg": 0.0,  # or use this one—match your template key
             "conv_pct": 0.0,
         }
-    # heat_grades
+    # --- ensure heat_grades is defined for the template ---
     try:
-        heat_grades = grades
-    except NameError:
-        heat_grades = {}
+        heat_grades_map = {h.id: ('KRFS' if getattr(h, 'grade', None) == 'KRFS' else 'KRIP') for h in heats}
+    except Exception:
+        heat_grades_map = {}
 
     return templates.TemplateResponse(
         "atomization.html",
