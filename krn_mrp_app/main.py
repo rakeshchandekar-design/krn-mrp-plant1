@@ -1250,7 +1250,8 @@ def atom_page(
         "oversize_kg": 0.0,
         "conv_pct": 0.0,
     }
-
+    today = dt.date.today()
+    today_iso = today.isoformat()
     return templates.TemplateResponse(
         "atomization.html",
         {
