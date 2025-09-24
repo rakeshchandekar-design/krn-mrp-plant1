@@ -1391,8 +1391,8 @@ async def atom_new(
             "error_msg": error_msg,
             # new:
             "atom_bal": atom_bal,
-        },
-    )
+        },
+    )
 
 
 
@@ -1479,7 +1479,7 @@ def atomization_oversize_export(db: Session = Depends(get_db)):
         io.StringIO(buf.getvalue()),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="atom_oversize_mtd.csv"'},
-    )
+    )
     
 # -------------------------------------------------
 # QA Dashboard
