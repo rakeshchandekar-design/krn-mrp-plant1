@@ -664,10 +664,11 @@ def _get_atomization_balance(db, month_start, month_end):
     )
 
     return SimpleNamespace(
-        feed_kg=float(feed_kg or 0.0),
-        produced_kg=float(produced_kg or 0.0),
-        oversize_kg=float(oversize_kg or 0.0),
-    )
+    feed_kg=float(feed_kg or 0.0),
+    produced_kg=float(produced_kg or 0.0),
+    oversize_kg=float(oversize_kg or 0.0),
+)
+
 
 # -------------------------------------------------
 # Health + Setup + Home
