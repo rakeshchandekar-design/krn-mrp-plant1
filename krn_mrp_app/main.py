@@ -711,44 +711,48 @@ def ensure_rap_lot(db: Session, lot: Lot) -> RAPLot:
     return rap
 
 # ---- Atomization balance helper (month-to-date) ----
-def _get_atomization_balance(db, month_start, month_end):
+def _get_atomization_balance(db: Session, month_start: dt.date, month_end: dt.date):
     """
-    Returns a simple Namespace-like object with:
-      feed_kg      -> sum of HeatAlloc.qty that went into lots created this month
-      produced_kg  -> sum of Lot.weight for lots created this month
-      oversize_kg  -> sum of Lot.oversize_kg for lots created this month
+    Month-to-date Atomization balance using existing schema:
+
+      produced_kg : sum of Lot.weight for lots whose date (parsed from lot_no)
+                    lies in [month_start, month_end)
+      feed_kg     : sum of LotHeat.qty for those lots (heat qty allocated into them)
+      oversize_kg : 0.0 unless your Lot model actually has an 'oversize_kg' column,
+                    in which case it will be summed too.
     """
     from types import SimpleNamespace
 
-    # Adjust the model/table names to your schema if needed:
-    # - HeatAlloc: allocations from heats to lots (qty, lot_id)
-    # - Lot: has created_at/date, weight, oversize_kg
-    # If your date field is different, update the filters accordingly.
+    # 1) collect lots that belong to the month (date inferred from lot_no)
+    lots = db.query(Lot).all()
+    month_lot_ids: List[int] = []
+    produced_kg = 0.0
+    oversize_kg = 0.0
 
-    feed_kg = (
-        db.query(func.coalesce(func.sum(HeatAlloc.qty), 0.0))
-          .join(Lot, Lot.id == HeatAlloc.lot_id)
-          .filter(Lot.created_at >= month_start, Lot.created_at < month_end)
-          .scalar()
-    )
+    for lot in lots:
+        d = lot_date_from_no(lot.lot_no) or dt.date.min
+        if month_start <= d < month_end:
+            month_lot_ids.append(lot.id)
+            produced_kg += float(lot.weight or 0.0)
+            if hasattr(lot, "oversize_kg"):
+                oversize_kg += float(getattr(lot, "oversize_kg") or 0.0)
 
-    produced_kg = (
-        db.query(func.coalesce(func.sum(Lot.weight), 0.0))
-          .filter(Lot.created_at >= month_start, Lot.created_at < month_end)
-          .scalar()
-    )
-
-    oversize_kg = (
-        db.query(func.coalesce(func.sum(Lot.oversize_kg), 0.0))
-          .filter(Lot.created_at >= month_start, Lot.created_at < month_end)
-          .scalar()
-    )
+    # 2) sum feed (allocations) for those lots
+    if month_lot_ids:
+        feed_kg = (
+            db.query(func.coalesce(func.sum(LotHeat.qty), 0.0))
+              .filter(LotHeat.lot_id.in_(month_lot_ids))
+              .scalar()
+            or 0.0
+        )
+    else:
+        feed_kg = 0.0
 
     return SimpleNamespace(
-    feed_kg=float(feed_kg or 0.0),
-    produced_kg=float(produced_kg or 0.0),
-    oversize_kg=float(oversize_kg or 0.0),
-)
+        feed_kg=float(feed_kg),
+        produced_kg=float(produced_kg),
+        oversize_kg=float(oversize_kg),
+    )
 
 
 # -------------------------------------------------
