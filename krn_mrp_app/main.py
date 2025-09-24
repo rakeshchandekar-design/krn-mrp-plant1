@@ -1118,8 +1118,6 @@ def qa_heat_save(
 # -------------------------------------------------
 # Atomization (ENHANCED — additions only; existing allocation UI untouched)
 # -------------------------------------------------
-# Atomization (ENHANCED — additions only; existing allocation UI untouched)
-# -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(
     request: Request,
@@ -1206,6 +1204,21 @@ def atom_page(
     # NEW: read error banner text (if redirected with ?err=...)
     err = request.query_params.get("err")
 
+    from types import SimpleNamespace
+
+    today = dt.date.today()
+    month_start = today.replace(day=1)
+    month_end = (month_start + dt.timedelta(days=32)).replace(day=1)
+
+    try:
+        atom_bal = _get_atomization_balance(db, month_start, month_end)
+        # add a convenience field for % conversion if you want it:
+        tot_feed = (atom_bal.feed_kg or 0.0)
+        tot_prod = (atom_bal.produced_kg or 0.0)
+        atom_bal.conv_pct = (100.0 * tot_prod / tot_feed) if tot_feed > 0 else 0.0
+    except Exception:
+        atom_bal = SimpleNamespace(feed_kg=0.0, produced_kg=0.0, oversize_kg=0.0, conv_pct=0.0)
+
     return templates.TemplateResponse(
         "atomization.html",
         {
@@ -1222,6 +1235,7 @@ def atom_page(
             "atom_capacity": DAILY_CAPACITY_ATOM_KG,
             "atom_stock": stock,
             "lots_stock": lots_stock,
+            "atom_bal": atom_bal,
             "error_msg": err,   # <-- DO NOT MISS THIS
         }
     )
