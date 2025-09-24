@@ -539,29 +539,41 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
 
 # -------------------------------------------------
-# Startup (migrations with small retry)
+# Startup (non-fatal migrations for deploy)
 # -------------------------------------------------
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, InterfaceError
 import time
 
 @app.on_event("startup")
 def _startup_migrate():
-    last_exc = None
-    for attempt in range(3):
+    """
+    Try to run migrations a few times, but NEVER crash the app if the DB is
+    unreachable at build/startup time. This lets Render finish the deploy so
+    your code changes (incl. Atomization page) actually go live.
+    """
+    tries = 3
+    for i in range(tries):
         try:
-            migrate_schema(engine)              # your helper
-            Base.metadata.create_all(bind=engine)
+            migrate_schema(engine)                  # your existing helper
+            Base.metadata.create_all(bind=engine)   # ORM tables if missing
+            print("✅ Startup migrations done.")
             return
-        except OperationalError as e:
-            last_exc = e
-            # reset pool and backoff; DB might still be waking up
+        except (OperationalError, InterfaceError) as e:
+            print(f"⚠ DB not reachable (attempt {i+1}/{tries}): {e}")
+            # drop pool + backoff; DB may still be waking up / DNS flaky
             try:
                 engine.dispose()
             except Exception:
                 pass
-            time.sleep(2 * (attempt + 1))
-    if last_exc:
-        raise last_exc
+            time.sleep(2 * (i + 1))
+        except Exception as e:
+            # Any other migration error shouldn't block deploy either
+            print(f"⚠ Startup migration skipped due to error: {e}")
+            return
+
+    # If all retries failed, continue without raising so deploy succeeds
+    print("⚠ DB unreachable at startup after retries. Skipping migrations; app will still start.")
+    return
 
 # -------------------------------------------------
 # DB dependency with preflight ping + retry
