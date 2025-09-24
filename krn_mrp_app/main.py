@@ -1920,6 +1920,11 @@ def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
     html.append("</table><p><a href='/rap'>← Back to RAP</a></p>")
     return HTMLResponse("".join(html))
 
+@app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
+def qa_lot_alias(lot_id: int, db: Session = Depends(get_db)):
+    # call the existing view so behavior stays identical
+    return lot_qa_view(lot_id, db)
+
 @app.get("/lot/{lot_id}/pdf")
 def lot_pdf_view(lot_id: int, db: Session = Depends(get_db)):
     """Minimal 1-page summary PDF for the lot (separate from Dispatch Note)."""
