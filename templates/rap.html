@@ -102,38 +102,6 @@
     </div>
   </div>
 
-  <!-- NEW: Atomization Balance (safe defaults if server hasn't supplied atom_mtd) -->
-  {% set M = atom_mtd or {'feed': 0, 'rap': 0, 'oversize': 0, 'conv': 0} %}
-  <div class="card" style="margin-top:12px">
-    <h3>Atomization Balance — Month to Date</h3>
-    <table style="width:auto">
-      <thead>
-        <tr><th>Metric</th><th class="right">Kg</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Feed from Melting</td>
-          <td class="right">{{ '%.1f' % (M.get('feed', 0) or 0) }}</td>
-        </tr>
-        <tr>
-          <td>RAP Produced</td>
-          <td class="right">{{ '%.1f' % (M.get('rap', 0) or 0) }}</td>
-        </tr>
-        <tr>
-          <td>+20 / Dryer Oversize</td>
-          <td class="right">{{ '%.1f' % (M.get('oversize', 0) or 0) }}</td>
-        </tr>
-      </tbody>
-      <tfoot>
-        <tr>
-          <th>Conversion to RAP</th>
-          <th class="right">{{ '%.1f' % (M.get('conv', 0) or 0) }}%</th>
-        </tr>
-      </tfoot>
-    </table>
-    <div class="muted">Feed = sum of heat allocations into lots created this month.</div>
-  </div>
-
   <!-- Row 2: Create Dispatch Note (full width) -->
   <div class="card">
     <h3>Create Dispatch Note (Multi-lot)</h3>
