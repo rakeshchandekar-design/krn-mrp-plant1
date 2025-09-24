@@ -26,7 +26,6 @@ from reportlab.pdfgen import canvas
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
 from sqlalchemy.orm import joinedload  # eager load
-from sqlalchemy.engine.url import make_url
 
 # -------------------------------------------------
 # Costing constants (baseline)
@@ -44,42 +43,22 @@ POWER_TARGET_KWH_PER_TON = 560.0    # target kWh/ton
 DAILY_CAPACITY_ATOM_KG = 6000.0     # atomization 24h capacity
 
 # -------------------------------------------------
-# Database config (robust for Render Postgres + SQLite)
+# Database config
 # -------------------------------------------------
-RAW_DB_URL = os.getenv("DATABASE_URL", "sqlite:///./krn_mrp.db")
+def _normalize_db_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    if url.startswith("postgresql://") and "+psycopg" not in url:
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
 
-if RAW_DB_URL.startswith("sqlite"):
-    # local file DB
-    DATABASE_URL = RAW_DB_URL
-    engine = create_engine(
-        DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        pool_pre_ping=True,
-        future=True,
-    )
-else:
-    # Render Postgres (or any Postgres URL)
-    url = make_url(RAW_DB_URL)
+DATABASE_URL = _normalize_db_url(os.getenv("DATABASE_URL", "sqlite:///./krn_mrp.db"))
 
-    # upgrade driver name if needed
-    if url.drivername in ("postgres", "postgresql"):
-        url = url.set(drivername="postgresql+psycopg")
-
-    # force SSL
-    q = dict(url.query)
-    if "sslmode" not in q:
-        q["sslmode"] = "require"
-    url = url.set(query=q)
-
-    engine = create_engine(
-        str(url),
-        pool_pre_ping=True,
-        pool_recycle=300,   # recycle stale conns
-        pool_size=5,
-        max_overflow=5,
-        future=True,
-    )
-
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    pool_pre_ping=True,
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
@@ -539,94 +518,22 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
 
 # -------------------------------------------------
-# Startup (non-fatal migrations for deploy)
+# Startup
 # -------------------------------------------------
-from sqlalchemy.exc import OperationalError, InterfaceError
-import time
-
 @app.on_event("startup")
 def _startup_migrate():
-    """
-    Try to run migrations a few times, but NEVER crash the app if the DB is
-    unreachable at build/startup time. This lets Render finish the deploy so
-    your code changes (incl. Atomization page) actually go live.
-    """
-    tries = 3
-    for i in range(tries):
-        try:
-            migrate_schema(engine)                  # your existing helper
-            Base.metadata.create_all(bind=engine)   # ORM tables if missing
-            print("✅ Startup migrations done.")
-            return
-        except (OperationalError, InterfaceError) as e:
-            print(f"⚠ DB not reachable (attempt {i+1}/{tries}): {e}")
-            # drop pool + backoff; DB may still be waking up / DNS flaky
-            try:
-                engine.dispose()
-            except Exception:
-                pass
-            time.sleep(2 * (i + 1))
-        except Exception as e:
-            # Any other migration error shouldn't block deploy either
-            print(f"⚠ Startup migration skipped due to error: {e}")
-            return
-
-    # If all retries failed, continue without raising so deploy succeeds
-    print("⚠ DB unreachable at startup after retries. Skipping migrations; app will still start.")
-    return
+    Base.metadata.create_all(bind=engine)
+    migrate_schema(engine)
 
 # -------------------------------------------------
-# DB dependency with preflight ping + retry
+# DB dependency
 # -------------------------------------------------
-from contextlib import contextmanager
-from sqlalchemy.exc import OperationalError, InterfaceError
-from sqlalchemy import text
-
-def _open_session_with_ping(max_tries: int = 3, backoff: float = 1.5):
-    """
-    Open a Session and ensure it's usable by running SELECT 1.
-    Retries a few times on transient connection failures.
-    """
-    last_exc = None
-    for attempt in range(max_tries):
-        db = SessionLocal()
-        try:
-            # quick ping so we fail fast if the pool handed us a bad conn
-            db.execute(text("SELECT 1"))
-            return db
-        except (OperationalError, InterfaceError) as e:
-            last_exc = e
-            try:
-                db.close()
-            except Exception:
-                pass
-            # drop pool so new connections are created next try
-            try:
-                engine.dispose()
-            except Exception:
-                pass
-            time.sleep(backoff * (attempt + 1))
-    if last_exc:
-        raise last_exc
-
 def get_db():
-    db = _open_session_with_ping()
+    db = SessionLocal()
     try:
         yield db
-        # if your handlers do write operations, commit here is safe;
-        # if you already commit inside handlers, you can keep it as is.
-        # db.commit()
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        raise
     finally:
-        try:
-            db.close()
-        except Exception:
-            pass
+        db.close()
 
 # -------------------------------------------------
 # Helpers
@@ -721,50 +628,6 @@ def ensure_rap_lot(db: Session, lot: Lot) -> RAPLot:
     rap = RAPLot(lot_id=lot.id, available_qty=current_avail, status=("CLOSED" if current_avail <= 1e-6 else "OPEN"))
     db.add(rap); db.flush()
     return rap
-
-# ---- Atomization balance helper (month-to-date) ----
-def _get_atomization_balance(db: Session, month_start: dt.date, month_end: dt.date):
-    """
-    Month-to-date Atomization balance using existing schema:
-
-      produced_kg : sum of Lot.weight for lots whose date (parsed from lot_no)
-                    lies in [month_start, month_end)
-      feed_kg     : sum of LotHeat.qty for those lots (heat qty allocated into them)
-      oversize_kg : 0.0 unless your Lot model actually has an 'oversize_kg' column,
-                    in which case it will be summed too.
-    """
-    from types import SimpleNamespace
-
-    # 1) collect lots that belong to the month (date inferred from lot_no)
-    lots = db.query(Lot).all()
-    month_lot_ids: List[int] = []
-    produced_kg = 0.0
-    oversize_kg = 0.0
-
-    for lot in lots:
-        d = lot_date_from_no(lot.lot_no) or dt.date.min
-        if month_start <= d < month_end:
-            month_lot_ids.append(lot.id)
-            produced_kg += float(lot.weight or 0.0)
-            if hasattr(lot, "oversize_kg"):
-                oversize_kg += float(getattr(lot, "oversize_kg") or 0.0)
-
-    # 2) sum feed (allocations) for those lots
-    if month_lot_ids:
-        feed_kg = (
-            db.query(func.coalesce(func.sum(LotHeat.qty), 0.0))
-              .filter(LotHeat.lot_id.in_(month_lot_ids))
-              .scalar()
-            or 0.0
-        )
-    else:
-        feed_kg = 0.0
-
-    return SimpleNamespace(
-        feed_kg=float(feed_kg),
-        produced_kg=float(produced_kg),
-        oversize_kg=float(oversize_kg),
-    )
 
 
 # -------------------------------------------------
@@ -1255,149 +1118,113 @@ def qa_heat_save(
 # -------------------------------------------------
 # Atomization (ENHANCED — additions only; existing allocation UI untouched)
 # -------------------------------------------------
+# Atomization (ENHANCED — additions only; existing allocation UI untouched)
+# -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(
     request: Request,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    reset: Optional[str] = None,
-    db: Session = Depends(get_db),
+    start: Optional[str] = None,   # YYYY-MM-DD (for toolbar on atomization page)
+    end: Optional[str] = None,     # YYYY-MM-DD
+    db: Session = Depends(get_db)
 ):
-    # --- Dates & filters ---
-    today = dt.date.today()
-    today_iso = today.isoformat()
-
-    # Lots list date-range (for the bottom "Lots" table + CSV)
-    # If reset=1 -> show all lots with non-zero weight (server-side)
-    start_date = None
-    end_date = None
-    if reset != "1":
-        try:
-            start_date = dt.date.fromisoformat(start) if start else today
-        except Exception:
-            start_date = today
-        try:
-            end_date = dt.date.fromisoformat(end) if end else today
-        except Exception:
-            end_date = today
-
-    # --- Heats to allocate from (top Create Lot table) ---
-    # You may already have your own preferred heat query; keep it simple & broad here.
-    heats = (
+    # Only APPROVED heats
+    heats_all = (
         db.query(Heat)
-        .options(joinedload(Heat.rm_consumptions))
+        .filter(Heat.qa_status == "APPROVED")
         .order_by(Heat.id.desc())
         .all()
     )
 
-    # --- Compute heat_grades (KRIP vs KRFS) for template ---
-    heat_grades: Dict[int, str] = {}
-    for h in heats:
-        # KRFS if any RM consumption is FeSi; else KRIP
-        is_krfs = any((rm.rm_type or "").strip().lower() == "fesi" for rm in (h.rm_consumptions or []))
-        heat_grades[h.id] = "KRFS" if is_krfs else "KRIP"
+    # Availability + grade
+    available_map = {h.id: heat_available(db, h) for h in heats_all}
+    grades = {h.id: heat_grade(h) for h in heats_all}
 
-    # --- Available map per heat (actual_output - allocated qty) ---
-    used_per_heat = dict(
-        db.query(LotHeat.heat_id, func.coalesce(func.sum(LotHeat.qty), 0.0))
-        .group_by(LotHeat.heat_id)
-        .all()
+    # Hide zero-available heats
+    heats = [h for h in heats_all if (available_map.get(h.id) or 0.0) > 0.0001]
+
+    lots = db.query(Lot).order_by(Lot.id.desc()).all()
+
+    # ----- KPIs & last-5-days for Atomization -----
+    today = dt.date.today()
+
+    # production today = sum of lot weights created today
+    lots_with_dates = [(lot, lot_date_from_no(lot.lot_no) or today) for lot in lots]
+    prod_today = sum((lot.weight or 0.0) for lot, d in lots_with_dates if d == today)
+    eff_today = (100.0 * prod_today / DAILY_CAPACITY_ATOM_KG) if DAILY_CAPACITY_ATOM_KG > 0 else 0.0
+
+    last5 = []
+    for i in range(4, -1, -1):
+        d = today - dt.timedelta(days=i)
+        actual = sum((lot.weight or 0.0) for lot, dd in lots_with_dates if dd == d)
+        target = atom_day_target_kg(db, d)
+        last5.append({"date": d.isoformat(), "actual": actual, "target": target})
+
+    # Live stock of lots (WIP) = ALL atomization lots (any QA) - RAP allocations (only approved lots allocate)
+    stock = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
+
+    # Preload RAP allocations per lot id (for speed)
+    # We only ever create RAP entries for APPROVED lots, but we subtract allocs from total WIP as requested.
+    rap_alloc_by_lot: Dict[int, float] = {}
+    rap_pairs = (
+        db.query(RAPLot.lot_id, func.coalesce(func.sum(RAPAlloc.qty), 0.0))
+          .join(RAPAlloc, RAPAlloc.rap_lot_id == RAPLot.id, isouter=True)
+          .group_by(RAPLot.lot_id)
+          .all()
     )
-    available_map: Dict[int, float] = {}
-    for h in heats:
-        used = float(used_per_heat.get(h.id, 0.0) or 0.0)
-        avail = max(float(h.actual_output or 0.0) - used, 0.0)
-        available_map[h.id] = avail
+    for lid, s in rap_pairs:
+        rap_alloc_by_lot[int(lid)] = float(s or 0.0)
 
-    # --- Live Stock – Lots Available (KRIP / KRFS totals regardless of QA) ---
-    lots_q = db.query(Lot)
-    if reset != "1" and start_date and end_date:
-        # your lots filter section uses dates for display; if you already filter elsewhere, you can remove this filter
-        pass
-
-    # Totals by grade and value (qty * unit_cost)
-    krip_qty = db.query(func.coalesce(func.sum(Lot.weight), 0.0)).filter((Lot.grade == "KRIP") | (Lot.grade.is_(None))).scalar() or 0.0
-    krip_val = db.query(func.coalesce(func.sum((Lot.weight or 0) * (Lot.unit_cost or 0)), 0.0)).filter((Lot.grade == "KRIP") | (Lot.grade.is_(None))).scalar() or 0.0
-    krfs_qty = db.query(func.coalesce(func.sum(Lot.weight), 0.0)).filter(Lot.grade == "KRFS").scalar() or 0.0
-    krfs_val = db.query(func.coalesce(func.sum((Lot.weight or 0) * (Lot.unit_cost or 0)), 0.0)).filter(Lot.grade == "KRFS").scalar() or 0.0
-    lots_stock = type("X", (), dict(krip_qty=krip_qty, krip_val=krip_val, krfs_qty=krfs_qty, krfs_val=krfs_val))
-
-    # --- Lots table data (bottom) ---
-    lots_query = db.query(Lot).order_by(Lot.id.desc())
-    if reset != "1" and start_date and end_date:
-        # If you maintain created_at/date field, filter here; otherwise leave full
-        # lots_query = lots_query.filter( Lot.created_at.between(start_date, end_date) )
-        pass
-    lots = lots_query.all()
-
-    # --- Atomization “Today efficiency” & “Last 5 days” (safe defaults) ---
-    # If you already have your own logic, you can wire it here; otherwise give harmless values to avoid template errors.
-    try:
-        # Today efficiency: actual / target * 100 using atom_day_target_kg helper if available
-        day_target = atom_day_target_kg(db, today) if "atom_day_target_kg" in globals() else DAILY_CAPACITY_ATOM_KG
-        # actual atomized today = sum of lot weights created today (if you have a date field)
-        # Without a created_at field, default to 0
-        actual_today = 0.0
-        atom_eff_today = (actual_today / day_target * 100.0) if day_target > 0 else 0.0
-    except Exception:
-        atom_eff_today = 0.0
-
-    try:
-        # Last 5 days rows: list of objects with date, actual, target
-        atom_last5 = []
-        for i in range(5):
-            d = today - dt.timedelta(days=i)
-            t = atom_day_target_kg(db, d) if "atom_day_target_kg" in globals() else DAILY_CAPACITY_ATOM_KG
-            # If you track per-day atomized total, compute it; else 0
-            atom_last5.append(type("Row", (), dict(date=d.isoformat(), actual=0.0, target=t)))
-        atom_last5.reverse()
-    except Exception:
-        atom_last5 = []
-
-    # --- Atomization Balance — Month to Date (safe default) ---
-    try:
-        month_start = today.replace(day=1)
-        month_end = (month_start + dt.timedelta(days=32)).replace(day=1)
-        if "_get_atomization_balance" in globals():
-            atom_bal = _get_atomization_balance(db, month_start, month_end)
+    for lot in lots:
+        gross = float(lot.weight or 0.0)
+        rap_taken = rap_alloc_by_lot.get(lot.id, 0.0)
+        qty = max(gross - rap_taken, 0.0)
+        if qty <= 0:
+            continue
+        val = qty * float(lot.unit_cost or 0.0)
+        if (lot.grade or "KRIP") == "KRFS":
+            stock["KRFS_qty"] += qty; stock["KRFS_val"] += val
         else:
-            atom_bal = type("B", (), dict(feed_kg=0.0, produced_kg=0.0, oversize_kg=0.0))
-    except Exception:
-        atom_bal = type("B", (), dict(feed_kg=0.0, produced_kg=0.0, oversize_kg=0.0))
+            stock["KRIP_qty"] += qty; stock["KRIP_val"] += val
 
-    # --- Rows for RAP “Create Dispatch Note / Plant-2 transfers” table (if you reuse it here) ---
-    # If your template expects 'rows' to be RAPLot entries with .lot etc., keep your existing query.
-    # Otherwise, provide an empty list to avoid KeyErrors.
+    # NEW: lowercase keys for the template (fixes NameError)
+    lots_stock = {
+        "krip_qty": stock.get("KRIP_qty", 0.0),
+        "krip_val": stock.get("KRIP_val", 0.0),
+        "krfs_qty": stock.get("KRFS_qty", 0.0),
+        "krfs_val": stock.get("KRFS_val", 0.0),
+    }
+
+    # Date range defaults for the toolbar above Lots table
+    s = start or today.isoformat()
+    e = end or today.isoformat()
     try:
-        rows = (
-            db.query(RAPLot)
-            .options(joinedload(RAPLot.lot))
-            .order_by(RAPLot.id.desc())
-            .all()
-        )
+        s_date = dt.date.fromisoformat(s)
+        e_date = dt.date.fromisoformat(e)
     except Exception:
-        rows = []
+        s_date, e_date = today, today  # kept for future use
 
-    # --- Render ---
+    # NEW: read error banner text (if redirected with ?err=...)
+    err = request.query_params.get("err")
+
     return templates.TemplateResponse(
         "atomization.html",
         {
             "request": request,
-            "today": today,
-            "today_iso": today_iso,
-            "start": start_date.isoformat() if start_date else "",
-            "end": end_date.isoformat() if end_date else "",
             "heats": heats,
-            "heat_grades": heat_grades,       # <- ensures your template never crashes here
-            "available_map": available_map,
             "lots": lots,
+            "heat_grades": grades,
+            "available_map": available_map,
+            "today_iso": today.isoformat(),
+            "start": s,
+            "end": e,
+            "atom_eff_today": eff_today,
+            "atom_last5": last5,
+            "atom_capacity": DAILY_CAPACITY_ATOM_KG,
+            "atom_stock": stock,
             "lots_stock": lots_stock,
-            "atom_eff_today": atom_eff_today, # <- used by your KPI card
-            "atom_last5": atom_last5,         # <- used by your “Last 5 Days” table
-            "atom_bal": atom_bal,             # <- used by the “Atomization Balance — MTD” card
-            "rows": rows,                     # if template references it
-                },
-        )
+            "error_msg": err,   # <-- DO NOT MISS THIS
+        }
+    )
 
 
 def _redir_err(msg: str) -> RedirectResponse:
@@ -1502,32 +1329,6 @@ async def atom_new(
         db.rollback()
         return _alert_redirect(f"Unexpected error while creating lot: {type(e).__name__}")
 
-    # Month window (M to date)
-    today = dt.date.today()
-    month_start = today.replace(day=1)
-    month_end = (month_start + dt.timedelta(days=32)).replace(day=1)  # first of next month
-
-    atom_bal = _get_atomization_balance(db, month_start, month_end)
-
-    return templates.TemplateResponse(
-      "atomization.html",
-      {
-        "request": request,
-        # all your existing context vars...
-        "lots_stock": lots_stock,
-        "heats": heats,
-        "lots": lots,
-        "start": start_val,
-        "end": end_val,
-        "today_iso": today.isoformat(),
-        "atom_capacity": atom_capacity,
-        "atom_eff_today": atom_eff_today,
-        "atom_last5": atom_last5,
-        "error_msg": error_msg,
-        # new:
-        "atom_bal": atom_bal,
-      },
-    )
 
 
 
@@ -1579,43 +1380,6 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
-# ---------- CSV export for atomization oversize (NEW) ----------
-@app.get("/atomization/oversize/export")
-def atomization_oversize_export(db: Session = Depends(get_db)):
-    import csv, io
-    from fastapi.responses import StreamingResponse
-
-    today = dt.date.today()
-    month_start = today.replace(day=1)
-    month_end = (month_start + dt.timedelta(days=32)).replace(day=1)
-
-    q = (
-        db.query(Lot)
-          .filter(Lot.created_at >= month_start, Lot.created_at < month_end)
-          .filter((Lot.oversize_kg.isnot(None)) & (Lot.oversize_kg > 0))
-          .order_by(Lot.created_at.asc(), Lot.id.asc())
-          .all()
-    )
-
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["Date", "Lot", "Grade", "Oversize (kg)", "Lot Weight (kg)"])
-    for lot in q:
-        w.writerow([
-            (getattr(lot, "created_at", None) or today).isoformat(),
-            lot.lot_no or "",
-            lot.grade or "",
-            f"{float(lot.oversize_kg or 0):.1f}",
-            f"{float(lot.weight or 0):.1f}",
-        ])
-
-    buf.seek(0)
-    return StreamingResponse(
-        io.StringIO(buf.getvalue()),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="atom_oversize_mtd.csv"'},
-    )
-    
 # -------------------------------------------------
 # QA Dashboard
 # -------------------------------------------------
