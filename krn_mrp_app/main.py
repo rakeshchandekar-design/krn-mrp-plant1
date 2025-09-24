@@ -1252,6 +1252,13 @@ def atom_page(
     }
     today = dt.date.today()
     today_iso = today.isoformat()
+
+    # capacity for the “Production Efficiency (Today)” card
+    try:
+        atom_capacity = DAILY_CAPACITY_ATOM_KG
+    except NameError:
+        atom_capacity = 6000  # fallback default
+
     return templates.TemplateResponse(
         "atomization.html",
         {
