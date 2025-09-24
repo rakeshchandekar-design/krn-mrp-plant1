@@ -629,6 +629,45 @@ def ensure_rap_lot(db: Session, lot: Lot) -> RAPLot:
     db.add(rap); db.flush()
     return rap
 
+# ---- Atomization balance helper (month-to-date) ----
+def _get_atomization_balance(db, month_start, month_end):
+    """
+    Returns a simple Namespace-like object with:
+      feed_kg      -> sum of HeatAlloc.qty that went into lots created this month
+      produced_kg  -> sum of Lot.weight for lots created this month
+      oversize_kg  -> sum of Lot.oversize_kg for lots created this month
+    """
+    from types import SimpleNamespace
+
+    # Adjust the model/table names to your schema if needed:
+    # - HeatAlloc: allocations from heats to lots (qty, lot_id)
+    # - Lot: has created_at/date, weight, oversize_kg
+    # If your date field is different, update the filters accordingly.
+
+    feed_kg = (
+        db.query(func.coalesce(func.sum(HeatAlloc.qty), 0.0))
+          .join(Lot, Lot.id == HeatAlloc.lot_id)
+          .filter(Lot.created_at >= month_start, Lot.created_at < month_end)
+          .scalar()
+    )
+
+    produced_kg = (
+        db.query(func.coalesce(func.sum(Lot.weight), 0.0))
+          .filter(Lot.created_at >= month_start, Lot.created_at < month_end)
+          .scalar()
+    )
+
+    oversize_kg = (
+        db.query(func.coalesce(func.sum(Lot.oversize_kg), 0.0))
+          .filter(Lot.created_at >= month_start, Lot.created_at < month_end)
+          .scalar()
+    )
+
+    return SimpleNamespace(
+        feed_kg=float(feed_kg or 0.0),
+        produced_kg=float(produced_kg or 0.0),
+        oversize_kg=float(oversize_kg or 0.0),
+    )
 
 # -------------------------------------------------
 # Health + Setup + Home
@@ -1329,6 +1368,32 @@ async def atom_new(
         db.rollback()
         return _alert_redirect(f"Unexpected error while creating lot: {type(e).__name__}")
 
+    # Month window (M to date)
+    today = dt.date.today()
+    month_start = today.replace(day=1)
+    month_end = (month_start + dt.timedelta(days=32)).replace(day=1)  # first of next month
+
+    atom_bal = _get_atomization_balance(db, month_start, month_end)
+
+    return templates.TemplateResponse(
+        "atomization.html",
+        {
+            "request": request,
+            # all your existing context vars...
+            "lots_stock": lots_stock,
+            "heats": heats,
+            "lots": lots,
+            "start": start_val,
+            "end": end_val,
+            "today_iso": today.isoformat(),
+            "atom_capacity": atom_capacity,
+            "atom_eff_today": atom_eff_today,
+            "atom_last5": atom_last5,
+            "error_msg": error_msg,
+            # new:
+            "atom_bal": atom_bal,
+        },
+    )
 
 
 
@@ -1380,6 +1445,43 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
+# ---------- CSV export for atomization oversize (NEW) ----------
+@app.get("/atomization/oversize/export")
+def atomization_oversize_export(db: Session = Depends(get_db)):
+    import csv, io
+    from fastapi.responses import StreamingResponse
+
+    today = dt.date.today()
+    month_start = today.replace(day=1)
+    month_end = (month_start + dt.timedelta(days=32)).replace(day=1)
+
+    q = (
+        db.query(Lot)
+          .filter(Lot.created_at >= month_start, Lot.created_at < month_end)
+          .filter((Lot.oversize_kg.isnot(None)) & (Lot.oversize_kg > 0))
+          .order_by(Lot.created_at.asc(), Lot.id.asc())
+          .all()
+    )
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Date", "Lot", "Grade", "Oversize (kg)", "Lot Weight (kg)"])
+    for lot in q:
+        w.writerow([
+            (getattr(lot, "created_at", None) or today).isoformat(),
+            lot.lot_no or "",
+            lot.grade or "",
+            f"{float(lot.oversize_kg or 0):.1f}",
+            f"{float(lot.weight or 0):.1f}",
+        ])
+
+    buf.seek(0)
+    return StreamingResponse(
+        io.StringIO(buf.getvalue()),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="atom_oversize_mtd.csv"'},
+    )
+    
 # -------------------------------------------------
 # QA Dashboard
 # -------------------------------------------------
