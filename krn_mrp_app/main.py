@@ -1268,6 +1268,8 @@ def atom_page(
         pass
     except NameError:
         eff_today = 0.0
+    # alias to match the name you use in the template context
+    atom_eff_today = eff_today
 
     # last 5 days production rows (list of dicts with date/actual/target)
     try:
