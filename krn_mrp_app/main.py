@@ -1244,37 +1244,31 @@ def atom_page(
     # NEW: read error banner text (if redirected with ?err=...)
     err = request.query_params.get("err")
     # --- Atomization balance (safe defaults to avoid template crash) ---
-atom_bal = {
-    "feed_kg": 0.0,
-    "rap_kg": 0.0,
-    "oversize_kg": 0.0,
-    "conv_pct": 0.0,
-}
+    atom_bal = {
+        "feed_kg": 0.0,
+        "rap_kg": 0.0,
+        "oversize_kg": 0.0,
+        "conv_pct": 0.0,
+    }
+
     return templates.TemplateResponse(
         "atomization.html",
         {
             "request": request,
+            "today_iso": today_iso,
             "heats": heats,
             "lots": lots,
-            "heat_grades": grades,
-            "available_map": available_map,
-            "today_iso": today.isoformat(),
-            "start": s,
-            "end": e,
-            "atom_eff_today": eff_today,
-            "atom_last5": last5,
-            "atom_capacity": DAILY_CAPACITY_ATOM_KG,
-            "atom_stock": stock,
             "lots_stock": lots_stock,
+            "atom_capacity": atom_capacity,
+            "atom_eff_today": atom_eff_today,
+            "atom_last5": atom_last5,
             "atom_bal": atom_bal,
-            "error_msg": err,   # <-- DO NOT MISS THIS
-        }
+        },
     )
 
 
 def _redir_err(msg: str) -> RedirectResponse:
     return RedirectResponse(f"/atomization?err={quote(msg)}", status_code=303)
-
 @app.post("/atomization/new")
 async def atom_new(
     request: Request,
@@ -1382,23 +1376,23 @@ async def atom_new(
     atom_bal = _get_atomization_balance(db, month_start, month_end)
 
     return templates.TemplateResponse(
-        "atomization.html",
-        {
-            "request": request,
-            # all your existing context vars...
-            "lots_stock": lots_stock,
-            "heats": heats,
-            "lots": lots,
-            "start": start_val,
-            "end": end_val,
-            "today_iso": today.isoformat(),
-            "atom_capacity": atom_capacity,
-            "atom_eff_today": atom_eff_today,
-            "atom_last5": atom_last5,
-            "error_msg": error_msg,
-            # new:
-            "atom_bal": atom_bal,
-        },
+      "atomization.html",
+      {
+        "request": request,
+        # all your existing context vars...
+        "lots_stock": lots_stock,
+        "heats": heats,
+        "lots": lots,
+        "start": start_val,
+        "end": end_val,
+        "today_iso": today.isoformat(),
+        "atom_capacity": atom_capacity,
+        "atom_eff_today": atom_eff_today,
+        "atom_last5": atom_last5,
+        "error_msg": error_msg,
+        # new:
+        "atom_bal": atom_bal,
+      },
     )
 
 
