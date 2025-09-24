@@ -136,7 +136,9 @@
     </div>
   </div>
 
-  <div class="grid-1">
+  <div class="row">
+  <!-- Left column: Live Stock -->
+  <div class="col-md-6">
     <div class="card">
       <h3>Live Stock – Lots Available</h3>
       <table style="width:auto">
@@ -166,6 +168,33 @@
       </div>
     </div>
   </div>
+
+  <!-- Right column: Atomization Balance -->
+  <div class="col-md-6">
+    {% if atom_bal is defined and atom_bal %}
+    <div class="card">
+      <h3>Atomization Balance — Month to Date</h3>
+      <table style="width:auto">
+        <tbody>
+          <tr><th>Feed (kg)</th><td class="right">{{ '%.1f' % (atom_bal.feed_kg or 0) }}</td></tr>
+          <tr><th>Produced (kg)</th><td class="right">{{ '%.1f' % (atom_bal.produced_kg or 0) }}</td></tr>
+          <tr><th>+20 / Dryer Oversize (kg)</th><td class="right">{{ '%.1f' % (atom_bal.oversize_kg or 0) }}</td></tr>
+        </tbody>
+      </table>
+      <div class="muted">
+        Conversion efficiency = {{ '%.1f' % (atom_bal.conv_pct or 0) }}%
+      </div>
+      <div style="margin-top:6px;">
+        <a class="btn btn-sm btn-outline-secondary"
+           href="/atomization/csv/oversize"
+           target="_blank">
+          Download CSV (+20 / Dryer Oversize)
+        </a>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
 
   <!-- Create Lot (existing) -->
   <div class="card">
