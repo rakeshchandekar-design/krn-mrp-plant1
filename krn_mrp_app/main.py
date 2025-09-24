@@ -1279,7 +1279,6 @@ def atom_page(
         last5 = []  # e.g. [{"date": "2025-09-24", "actual": 0.0, "target": atom_capacity, ...}, ...]
     atom_last5 = last5
 
-
     # month-to-date atomization balance block
     try:
         # atom_bal is defined earlier so this just makes sure it's valid
@@ -1292,6 +1291,11 @@ def atom_page(
             "oversize_kg": 0.0,  # or use this one—match your template key
             "conv_pct": 0.0,
         }
+    # heat_grades
+    try:
+        heat_grades = grades
+    except NameError:
+        heat_grades = {}
 
     return templates.TemplateResponse(
         "atomization.html",
