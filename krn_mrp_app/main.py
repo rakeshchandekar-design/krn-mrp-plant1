@@ -1243,7 +1243,13 @@ def atom_page(
 
     # NEW: read error banner text (if redirected with ?err=...)
     err = request.query_params.get("err")
-
+    # --- Atomization balance (safe defaults to avoid template crash) ---
+atom_bal = {
+    "feed_kg": 0.0,
+    "rap_kg": 0.0,
+    "oversize_kg": 0.0,
+    "conv_pct": 0.0,
+}
     return templates.TemplateResponse(
         "atomization.html",
         {
@@ -1260,6 +1266,7 @@ def atom_page(
             "atom_capacity": DAILY_CAPACITY_ATOM_KG,
             "atom_stock": stock,
             "lots_stock": lots_stock,
+            "atom_bal": atom_bal,
             "error_msg": err,   # <-- DO NOT MISS THIS
         }
     )
