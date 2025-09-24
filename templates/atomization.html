@@ -8,14 +8,14 @@
     .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
     .brand .name{font-weight:600;font-size:26px;line-height:48px;margin:0}
     .brand img{height:48px}
-    {% if error_msg %}
-  <div style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;
-              padding:10px 12px;border-radius:8px;margin:8px 0 12px 0;">
-    <strong>Error:</strong> {{ error_msg }}
-  </div>
-{% endif %}
+
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
     .grid-1{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:12px}
+
+    /* NEW: two-column helper that collapses on small screens */
+    .grid-2{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:12px}
+    @media (min-width: 900px){ .grid-2{ grid-template-columns: 1fr 1fr; } }
+
     .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px}
     .card h3{margin:0 0 8px 0;font-size:14px}
     .card h2{margin:0 0 8px 0;font-size:18px}
@@ -35,6 +35,7 @@
     .badge-info{background:#0ea5e9}
     .alloc-hdr{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:6px 0}
   </style>
+
   <script>
     function fetchLotsRange(){
       const s=document.getElementById('lots_start').value;
@@ -72,13 +73,25 @@
       document.getElementById('allocTotal').textContent=total.toFixed(1);
       document.getElementById('remTotal').textContent=(Math.max(0, maxW-total)).toFixed(1);
     }
-    function clampAlloc(el, maxVal){
-      let v=parseFloat(el.value||'0');
-      if(isNaN(v) || v<0){ v=0; }
-      if(v>maxVal){ v=maxVal; }
-      el.value=v;
-      updateAlloc();
-    }
+    function clampAlloc(el, maxVal) {
+  // Fallback if maxVal missing or not a number
+  maxVal = (typeof maxVal === "number" && !isNaN(maxVal)) ? maxVal : 0;
+
+  let v = parseFloat(el.value || "0");
+
+  if (isNaN(v) || v < 0) {
+    v = 0;
+  }
+  if (v > maxVal) {
+    v = maxVal;
+  }
+
+  // Round to 1 decimal place, to match step="0.1"
+  v = Math.round(v * 10) / 10;
+
+  el.value = v;
+  updateAlloc();
+}
     document.addEventListener('DOMContentLoaded', ()=>{
       updateAlloc();
       const w=document.getElementById('lot_weight');
@@ -91,6 +104,13 @@
     <div class="name">KRN Alloys Pvt. Ltd</div>
     <img src="/static/KRN_Logo.png" alt="KRN">
   </div>
+
+  {% if error_msg %}
+  <div style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;
+              padding:10px 12px;border-radius:8px;margin:8px 0 12px 0;">
+    <strong>Error:</strong> {{ error_msg }}
+  </div>
+  {% endif %}
 
   <h1>Atomization</h1>
   <p><a class="btn-link" href="/">Home</a></p>
@@ -136,9 +156,9 @@
     </div>
   </div>
 
-  <div class="row">
-  <!-- Left column: Live Stock -->
-  <div class="col-md-6">
+  <!-- TWO-COLUMN SECTION: Live Stock (left) + Atomization Balance (right) -->
+  <div class="grid-2">
+    <!-- Live Stock -->
     <div class="card">
       <h3>Live Stock – Lots Available</h3>
       <table style="width:auto">
@@ -167,36 +187,26 @@
         Note: numbers are <strong>net of RAP allocations</strong> (Dispatch / Plant-2). They include lots of any QA status.
       </div>
     </div>
-  </div>
 
-  <!-- Right column: Atomization Balance -->
-  <div class="col-md-6">
-    {% if atom_bal is defined and atom_bal %}
+    <!-- Atomization Balance -->
+    {% set bal = atom_bal or {'feed_kg':0, 'produced_kg':0, 'oversize_kg':0, 'conv_pct':0} %}
     <div class="card">
       <h3>Atomization Balance — Month to Date</h3>
       <table style="width:auto">
         <tbody>
-          <tr><th>Feed (kg)</th><td class="right">{{ '%.1f' % (atom_bal.feed_kg or 0) }}</td></tr>
-          <tr><th>Produced (kg)</th><td class="right">{{ '%.1f' % (atom_bal.produced_kg or 0) }}</td></tr>
-          <tr><th>+20 / Dryer Oversize (kg)</th><td class="right">{{ '%.1f' % (atom_bal.oversize_kg or 0) }}</td></tr>
+          <tr><th>Feed (kg)</th><td class="right">{{ '%.1f' % (bal.feed_kg or 0) }}</td></tr>
+          <tr><th>Produced (kg)</th><td class="right">{{ '%.1f' % (bal.produced_kg or 0) }}</td></tr>
+          <tr><th>+20 / Dryer Oversize (kg)</th><td class="right">{{ '%.1f' % (bal.oversize_kg or 0) }}</td></tr>
         </tbody>
       </table>
-      <div class="muted">
-        Conversion efficiency = {{ '%.1f' % (atom_bal.conv_pct or 0) }}%
-      </div>
+      <div class="muted">Conversion to RAP = {{ '%.1f' % (bal.conv_pct or 0) }}%</div>
       <div style="margin-top:6px;">
-        <a class="btn btn-sm btn-outline-secondary"
-           href="/atomization/csv/oversize"
-           target="_blank">
-          Download CSV (+20 / Dryer Oversize)
-        </a>
+        <a class="btn" href="/atomization/csv/oversize" target="_blank">Download CSV (+20 / Dryer Oversize)</a>
       </div>
     </div>
-    {% endif %}
-  </div>
-</div>
+  </div>
 
-  <!-- Create Lot (existing) -->
+  <!-- Create Lot -->
   <div class="card">
     <h2 style="margin:0 0 8px 0;">Create Lot (Allocate from Approved Heats)</h2>
     <form method="post" action="/atomization/new">
@@ -206,7 +216,7 @@
           <input id="lot_weight" name="lot_weight" type="number" step="0.1" min="1" value="3000">
         </div>
 
-        <!-- NEW: required +20 / Dryer Oversize input (must be > 0) -->
+        <!-- required +20 / Dryer Oversize -->
         <div>
           <label>+20 / Dryer Oversize (kg)</label>
           <input id="oversize_kg" name="oversize_kg" type="number" step="0.01" min="0.01" value="0.01" required>
@@ -242,8 +252,11 @@
               <td class="right">{{ '%.1f' % kwhpt }}</td>
               <td><a class="btn ghost" href="/traceability/heat/{{ h.id }}">View</a></td>
               <td class="right" style="width:160px">
-                <input class="alloc-input" type="number" step="0.1" min="0" max="{{ '%.1f' % avail }}"
-                       name="alloc_{{ h.id }}" value="" oninput="clampAlloc(this, {{ '%.5f' % avail }})">
+                  <input class="alloc-input" type="number" step="0.1" min="0"
+       max="{{ (avail or 0.0)|round(1) }}"
+       name="alloc_{{ h.id }}" value=""
+       data-max="{{ (avail or 0.0)|default(0,true) }}"
+       oninput="clampAlloc(this, parseFloat(this.dataset.max))">
               </td>
             </tr>
           {% endfor %}
@@ -271,7 +284,7 @@
     </form>
   </div>
 
-  <!-- Lots (server provides filtered list; Reset shows all non-zero) -->
+  <!-- Lots -->
   <div class="card">
     <h2>Lots</h2>
     <div class="toolbar">
