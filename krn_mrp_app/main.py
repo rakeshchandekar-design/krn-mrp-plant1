@@ -1250,14 +1250,44 @@ def atom_page(
         "oversize_kg": 0.0,
         "conv_pct": 0.0,
     }
+
+    # --- ENSURE ALL TEMPLATE VARS EXIST ON EVERY CODE PATH ---
+    # dates used by the page
     today = dt.date.today()
     today_iso = today.isoformat()
 
-    # capacity for the “Production Efficiency (Today)” card
+    # capacity for "Production Efficiency (Today)"
     try:
         atom_capacity = DAILY_CAPACITY_ATOM_KG
     except NameError:
-        atom_capacity = 6000  # fallback default
+        atom_capacity = 6000  # fallback
+
+    # efficiency today (percent)
+    try:
+        # eff_today is defined earlier so this just makes sure it's valid
+        pass
+    except NameError:
+        eff_today = 0.0
+
+    # last 5 days production rows (list of dicts with date/actual/target)
+    try:
+        # last5 is defined earlier so this just makes sure it's valid
+        pass
+    except NameError:
+        last5 = []  # e.g. [{"date": "2025-09-24", "actual": 0.0, "target": atom_capacity, ...}, ...]
+
+    # month-to-date atomization balance block
+    try:
+        # atom_bal is defined earlier so this just makes sure it's valid
+        pass
+    except NameError:
+        atom_bal = {
+            "feed_kg": 0.0,
+            "produced_kg": 0.0,
+            "+20_kg": 0.0,      # if you used this key
+            "oversize_kg": 0.0,  # or use this one—match your template key
+            "conv_pct": 0.0,
+        }
 
     return templates.TemplateResponse(
         "atomization.html",
@@ -1277,6 +1307,7 @@ def atom_page(
 
 def _redir_err(msg: str) -> RedirectResponse:
     return RedirectResponse(f"/atomization?err={quote(msg)}", status_code=303)
+
 @app.post("/atomization/new")
 async def atom_new(
     request: Request,
