@@ -26,6 +26,7 @@ from reportlab.pdfgen import canvas
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
 from sqlalchemy.orm import joinedload  # eager load
+from sqlalchemy.engine.url import make_url
 
 # -------------------------------------------------
 # Costing constants (baseline)
@@ -43,22 +44,42 @@ POWER_TARGET_KWH_PER_TON = 560.0    # target kWh/ton
 DAILY_CAPACITY_ATOM_KG = 6000.0     # atomization 24h capacity
 
 # -------------------------------------------------
-# Database config
+# Database config (robust for Render Postgres + SQLite)
 # -------------------------------------------------
-def _normalize_db_url(url: str) -> str:
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql://", 1)
-    if url.startswith("postgresql://") and "+psycopg" not in url:
-        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
-    return url
+RAW_DB_URL = os.getenv("DATABASE_URL", "sqlite:///./krn_mrp.db")
 
-DATABASE_URL = _normalize_db_url(os.getenv("DATABASE_URL", "sqlite:///./krn_mrp.db"))
+if RAW_DB_URL.startswith("sqlite"):
+    # local file DB
+    DATABASE_URL = RAW_DB_URL
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        pool_pre_ping=True,
+        future=True,
+    )
+else:
+    # Render Postgres (or any Postgres URL)
+    url = make_url(RAW_DB_URL)
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
-    pool_pre_ping=True,
-)
+    # upgrade driver name if needed
+    if url.drivername in ("postgres", "postgresql"):
+        url = url.set(drivername="postgresql+psycopg")
+
+    # force SSL
+    q = dict(url.query)
+    if "sslmode" not in q:
+        q["sslmode"] = "require"
+    url = url.set(query=q)
+
+    engine = create_engine(
+        str(url),
+        pool_pre_ping=True,
+        pool_recycle=300,   # recycle stale conns
+        pool_size=5,
+        max_overflow=5,
+        future=True,
+    )
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
@@ -518,22 +539,82 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
 
 # -------------------------------------------------
-# Startup
+# Startup (migrations with small retry)
 # -------------------------------------------------
+from sqlalchemy.exc import OperationalError
+import time
+
 @app.on_event("startup")
 def _startup_migrate():
-    Base.metadata.create_all(bind=engine)
-    migrate_schema(engine)
+    last_exc = None
+    for attempt in range(3):
+        try:
+            migrate_schema(engine)              # your helper
+            Base.metadata.create_all(bind=engine)
+            return
+        except OperationalError as e:
+            last_exc = e
+            # reset pool and backoff; DB might still be waking up
+            try:
+                engine.dispose()
+            except Exception:
+                pass
+            time.sleep(2 * (attempt + 1))
+    if last_exc:
+        raise last_exc
 
 # -------------------------------------------------
-# DB dependency
+# DB dependency with preflight ping + retry
 # -------------------------------------------------
+from contextlib import contextmanager
+from sqlalchemy.exc import OperationalError, InterfaceError
+from sqlalchemy import text
+
+def _open_session_with_ping(max_tries: int = 3, backoff: float = 1.5):
+    """
+    Open a Session and ensure it's usable by running SELECT 1.
+    Retries a few times on transient connection failures.
+    """
+    last_exc = None
+    for attempt in range(max_tries):
+        db = SessionLocal()
+        try:
+            # quick ping so we fail fast if the pool handed us a bad conn
+            db.execute(text("SELECT 1"))
+            return db
+        except (OperationalError, InterfaceError) as e:
+            last_exc = e
+            try:
+                db.close()
+            except Exception:
+                pass
+            # drop pool so new connections are created next try
+            try:
+                engine.dispose()
+            except Exception:
+                pass
+            time.sleep(backoff * (attempt + 1))
+    if last_exc:
+        raise last_exc
+
 def get_db():
-    db = SessionLocal()
+    db = _open_session_with_ping()
     try:
         yield db
+        # if your handlers do write operations, commit here is safe;
+        # if you already commit inside handlers, you can keep it as is.
+        # db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass
 
 # -------------------------------------------------
 # Helpers
