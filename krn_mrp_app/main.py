@@ -1157,8 +1157,6 @@ def qa_heat_save(
 # -------------------------------------------------
 # Atomization (ENHANCED — additions only; existing allocation UI untouched)
 # -------------------------------------------------
-# Atomization (ENHANCED — additions only; existing allocation UI untouched)
-# -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(
     request: Request,
