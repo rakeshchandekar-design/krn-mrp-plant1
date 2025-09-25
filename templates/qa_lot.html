@@ -54,7 +54,7 @@
         {% for k,v in chem.items() %}
         <div>
           <label>{{ k }}</label>
-          <input type="number" name="{{ k }}" value="{{ v }}" step="0.001" min="0.0001" required>
+          <input type="number" name="{{ k }}" value="{{ v }}" step="0.001" min="0.0001" required {% if read_only %}readonly{% endif %}>
         </div>
         {% endfor %}
       </div>
@@ -63,9 +63,9 @@
     <div class="sec">
       <h3>Physical</h3>
       <label>AD</label>
-      <input type="number" name="ad" value="{{ phys.ad }}" step="0.001" min="0.0001" required>
+      <input type="number" name="ad" value="{{ phys.ad }}" step="0.001" min="0.0001" required {% if read_only %}readonly{% endif %}>
       <label>Flow</label>
-      <input type="number" name="flow" value="{{ phys.flow }}" step="0.001" min="0.0001" required>
+      <input type="number" name="flow" value="{{ phys.flow }}" step="0.001" min="0.0001" required {% if read_only %}readonly{% endif %}>
     </div>
 
     <div class="sec">
@@ -74,7 +74,7 @@
         {% for k,v in psd.items() %}
         <div>
           <label>{{ k }}</label>
-          <input type="number" name="{{ k }}" value="{{ v }}" step="0.001" min="0.0001" required>
+          <input type="number" name="{{ k }}" value="{{ v }}" step="0.001" min="0.0001" required {% if read_only %}readonly{% endif %}>
         </div>
         {% endfor %}
       </div>
@@ -82,17 +82,17 @@
 
     <div class="sec">
       <label>Decision</label>
-      <select name="decision">
+      <select name="decision" {% if read_only %}disabled{% endif %}>
         <option value="APPROVED" {% if lot.qa_status=='APPROVED' %}selected{% endif %}>APPROVED</option>
         <option value="REJECTED" {% if lot.qa_status=='REJECTED' %}selected{% endif %}>REJECTED</option>
         <option value="HOLD" {% if lot.qa_status=='HOLD' %}selected{% endif %}>HOLD</option>
       </select>
 
       <label>Remarks</label>
-      <input type="text" name="remarks" value="{{ lot.qa_remarks or '' }}">
+      <input type="text" name="remarks" value="{{ lot.qa_remarks or '' }}" {% if read_only %}readonly{% endif %}>
     </div>
 
-    <button class="btn" type="submit">Save</button>
+    {% if not read_only %}<button class="btn" type="submit">Save</button>{% endif %}
   </form>
 </body>
 </html>
