@@ -2,21 +2,53 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>KRN – Home</title>
+  <title>KRN – Plant 1</title>
   <style>
-    body{font-family:system-ui,Arial,sans-serif;margin:24px}
-    a.btn{display:inline-block;margin:6px 8px 6px 0;padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none}
+    body{font-family:system-ui,Arial,sans-serif;margin:24px;}
+    .brand{display:flex;align-items:center;gap:16px;margin-bottom:12px}
+    .brand img{height:56px}
+    h1{margin:0}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:16px}
+    .card{border:1px solid #e5e7eb;border-radius:12px;padding:14px}
+    .card h3{margin:0 0 8px 0}
+    a.btn{display:inline-block;margin-top:8px;padding:8px 12px;border-radius:10px;background:#111827;color:#fff;text-decoration:none}
+    .muted{color:#6b7280}
+    .badge{display:inline-block;padding:2px 8px;border-radius:12px;background:#e5e7eb}
   </style>
 </head>
 <body>
-  <h1>KRN Alloys Pvt. Ltd</h1>
-  <p>Choose a section:</p>
-  <p>
-  <a class="btn" href="/grn">Stores (GRN)</a>
-  <a class="btn" href="/melting">Melting</a>
-  <a class="btn" href="/atomization">Atomization</a>
-  <a class="btn" href="/rap">RAP</a>            <!-- 👈 add this -->
-  <a class="btn" href="/qa">QA</a>
-</p>
+  <div class="brand">
+    <img src="/static/KRN_Logo.png" alt="KRN">
+    <h1>KRN Alloys Pvt. Ltd – Plant 1</h1>
+  </div>
+
+  <p class="muted">Welcome{{ user and (", " ~ user) or "" }}. Role: <span class="badge">{{ role or 'guest' }}</span></p>
+
+  {% if not user %}
+    <p><a class="btn" href="/login">Login</a></p>
+  {% else %}
+    <p><a class="btn" href="/logout">Logout</a></p>
+  {% endif %}
+
+  <h2>Modules</h2>
+  <div class="grid">
+    <div class="card"><h3>Dashboard</h3><div class="muted">Admins & View (future)</div>
+      <a class="btn" href="/qa-dashboard">Open</a></div>
+
+    <div class="card"><h3>GRN</h3><div class="muted">Admin, Store</div>
+      <a class="btn" href="/grn">Open</a></div>
+
+    <div class="card"><h3>Melting</h3><div class="muted">Admin, Melting</div>
+      <a class="btn" href="/melting">Open</a></div>
+
+    <div class="card"><h3>Atomization</h3><div class="muted">Admin, Atom</div>
+      <a class="btn" href="/atomization">Open</a></div>
+
+    <div class="card"><h3>RAP</h3><div class="muted">Admin, RAP</div>
+      <a class="btn" href="/rap">Open</a></div>
+
+    <div class="card"><h3>QA</h3><div class="muted">Admin, QA</div>
+      <a class="btn" href="/qa-dashboard">Open</a></div>
+  </div>
 </body>
 </html>
