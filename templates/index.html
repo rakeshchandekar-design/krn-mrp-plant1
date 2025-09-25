@@ -1,170 +1,243 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
   <meta charset="utf-8">
-  <title>KRN – Home</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-
+  <title>KRN — Plant 1</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     :root{
-      --brand:#0f172a;      /* KRN dark blue */
-      --accent:#ff8a00;     /* KRN orange */
-      --ink:#111827;
-      --muted:#6b7280;
-      --br:#e5e7eb;
-      --bg:#f8fafc;
+      --krn-blue:#0B2C52;      /* brand deep blue */
+      --krn-orange:#F37021;    /* brand orange */
+      --bg:#FFF7F3;            /* soft brand-tinted background */
       --card:#ffffff;
+      --muted:#6b7280;
+      --ring:rgba(11,44,82,.12);
     }
     *{box-sizing:border-box}
-    body{margin:24px;font-family:system-ui,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+    body{
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      margin:0;
+      background:var(--bg);
+      color:#111827;
+    }
+    /* header */
+    .header{
+      display:flex;align-items:center;gap:14px;
+      padding:16px 22px;
+      background:#fff;
+      border-bottom:4px solid var(--krn-orange);
+      position:sticky;top:0;z-index:10;
+    }
+    .brand{
+      display:flex;align-items:center;gap:12px;flex:1;
+    }
+    .brand h1{
+      margin:0;
+      font-size:28px;
+      color:var(--krn-blue);
+      letter-spacing:.3px;
+      font-weight:800;
+    }
+    .tagline{
+      margin:2px 0 0 0;
+      color:#8a94a6;
+      font-weight:500;
+    }
+    .btn{
+      display:inline-flex;align-items:center;justify-content:center;
+      padding:10px 16px;border-radius:10px;border:none;
+      background:var(--krn-blue);color:#fff;text-decoration:none;
+      font-weight:600;cursor:pointer;transition:.2s;
+      box-shadow:0 1px 2px var(--ring);
+    }
+    .btn:hover{background:var(--krn-orange)}
+    .btn:disabled{background:#c9ced6;color:#6b7280;cursor:not-allowed}
+    .btn.ghost{background:#f1f5f9;color:#111827}
+    .btn.ghost:hover{background:#e7edf4}
 
-    /* Header */
-    .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-    .brand{display:flex;align-items:center;gap:12px}
-    .brand img{height:44px}
-    .brand .title{font-weight:800;font-size:28px;letter-spacing:.2px;color:var(--brand)}
-    .sub{color:var(--muted);margin-top:2px}
+    /* page */
+    .wrap{max-width:1180px;margin:18px auto;padding:0 18px}
+    .panel{
+      background:var(--card);border:1px solid #e5e7eb;border-radius:14px;
+      padding:16px 18px;box-shadow:0 1px 2px var(--ring);
+    }
+    .welcome{margin:14px 0 22px 0}
+    .welcome p{margin:6px 0;color:#1f2937}
+    .muted{color:var(--muted)}
+    .role-badge{
+      display:inline-block;background:var(--krn-orange);color:#fff;
+      padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;
+      vertical-align:middle;margin:0 6px;
+    }
 
-    /* Welcome */
-    .welcome{background:var(--card);border:1px solid var(--br);border-radius:12px;padding:16px;margin-top:12px}
-    .role-pill{display:inline-block;padding:2px 10px;border-radius:999px;background:#eef2ff;color:#374151;font-size:12px;margin-left:6px}
+    /* modules grid */
+    h2{margin:18px 0 12px 0;font-size:28px;color:#111827}
+    .grid{
+      display:grid;grid-template-columns:repeat(12,1fr);gap:16px;
+    }
+    .col{grid-column:span 12}
+    @media (min-width:720px){ .col{grid-column:span 6} }
+    @media (min-width:1024px){ .col{grid-column:span 3} }
 
-    /* Buttons */
-    .btn{display:inline-block;padding:10px 16px;border-radius:10px;background:var(--brand);color:#fff;text-decoration:none;border:none;cursor:pointer}
-    .btn:hover{filter:brightness(0.95)}
-    .btn.ghost{background:#111827}
-    .btn.disabled{background:#e5e7eb;color:#9ca3af;cursor:not-allowed;pointer-events:none}
-    .logout{margin-left:12px}
-
-    /* Modules grid */
-    .modules{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin-top:18px}
-    .card{background:var(--card);border:1px solid var(--br);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}
-    .card h3{margin:0 0 2px 0}
-    .who{color:var(--muted);font-size:13px}
-    .footer{display:flex;align-items:center;gap:10px}
-    .cross{color:#ef4444}
-    .coming{color:var(--muted);font-size:12px;margin-left:6px}
+    .card{
+      background:var(--card);
+      border:1px solid var(--krn-blue); /* blue outline */
+      border-radius:14px;padding:16px;
+      min-height:140px;display:flex;flex-direction:column;justify-content:space-between;
+      box-shadow:0 1px 2px var(--ring);
+      transition:box-shadow .2s,border-color .2s,transform .05s;
+    }
+    .card:hover{border-color:var(--krn-orange);box-shadow:0 3px 12px rgba(243,112,33,.25)}
+    .card h3{margin:0 0 6px 0;font-size:20px}
+    .small{font-size:12px;color:var(--muted);margin-bottom:10px}
+    .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
+    .x{color:#ef4444}
+    .logo{height:44px}
   </style>
 </head>
 <body>
-
   <!-- Header -->
-  <div class="topbar">
+  <div class="header">
     <div class="brand">
-      <img src="/static/KRN_Logo.png" alt="KRN">
+      <img class="logo" src="/static/KRN_Logo.png" alt="KRN">
       <div>
-        <div class="title">KRN Alloys Pvt. Ltd – Plant 1</div>
-        <div class="sub">Manufacturing Resource & Quality Control Suite</div>
+        <h1>KRN Alloys Pvt. Ltd – Plant 1</h1>
+        <div class="tagline">Manufacturing Resource &amp; Quality Control Suite</div>
       </div>
     </div>
 
-    <div>
-      {% if request.session.get('user') %}
-        <span class="who">Signed in as <strong>{{ request.session.get('user') }}</strong></span>
-        <a class="btn logout" href="/logout">Logout</a>
-      {% else %}
-        <a class="btn" href="/login">Login</a>
-      {% endif %}
-    </div>
+    {% if (role or 'guest') == 'guest' %}
+      <a class="btn" href="/login">Login</a>
+    {% else %}
+      <a class="btn ghost" href="/logout">Logout</a>
+    {% endif %}
   </div>
 
-  <!-- Welcome -->
-  <div class="welcome">
-    <p style="margin:0 0 8px 0">
-      Welcome to the KRN MRP/QA application. This system unifies GRN tracking, Melting and
-      Atomization production, RAP availability, and QA certification—so every lot and heat
-      stays traceable from raw material to dispatch.
-    </p>
-    <p style="margin:0">
-      Your current role is <span class="role-pill">{{ role }}</span>. Modules below are enabled based
-      on your permissions. Disabled buttons indicate areas outside your access scope.
-    </p>
+  <div class="wrap">
+    <!-- Welcome / role panel -->
+    <div class="panel welcome">
+      <p><strong>Welcome to the KRN MRP/QA application.</strong> This system unifies GRN tracking, Melting and Atomization production, RAP availability, and QA certification—so every lot and heat remains traceable from raw material to dispatch.</p>
+      <p>Designed for Plant-1 operations, the suite reduces manual effort, safeguards costing &amp; QA data, and gives each team a focused workspace.</p>
+      <p>Your current role is <span class="role-badge">{{ role or 'guest' }}</span>. Modules below are enabled based on your permissions. Disabled buttons indicate areas outside your access scope.</p>
+    </div>
+
+    <h2>Modules</h2>
+    <div class="grid">
+      {# helpers #}
+      {% set r = (role or 'guest') %}
+      {% set can_grn     = r in ['admin','store'] %}
+      {% set can_melting = r in ['admin','melting'] %}
+      {% set can_atom    = r in ['admin','atom'] %}
+      {% set can_rap     = r in ['admin','rap'] %}
+      {% set can_qa      = r in ['admin','qa'] %}
+
+      <!-- Dashboard (placeholder) -->
+      <div class="col">
+        <div class="card">
+          <div>
+            <h3>Dashboard</h3>
+            <div class="small">Admins &amp; View (coming soon)</div>
+          </div>
+          <div class="row">
+            <button class="btn" disabled>Open</button>
+            <div class="small x">×</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- GRN -->
+      <div class="col">
+        <div class="card">
+          <div>
+            <h3>GRN</h3>
+            <div class="small">Admin, Store</div>
+          </div>
+          <div class="row">
+            {% if can_grn %}
+              <a class="btn" href="/grn">Open</a>
+            {% else %}
+              <button class="btn" disabled>Open</button>
+            {% endif %}
+            <div class="small {% if can_grn %}muted{% else %}x{% endif %}">{% if can_grn %}✓{% else %}×{% endif %}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Melting -->
+      <div class="col">
+        <div class="card">
+          <div>
+            <h3>Melting</h3>
+            <div class="small">Admin, Melting</div>
+          </div>
+          <div class="row">
+            {% if can_melting %}
+              <a class="btn" href="/melting">Open</a>
+            {% else %}
+              <button class="btn" disabled>Open</button>
+            {% endif %}
+            <div class="small {% if can_melting %}muted{% else %}x{% endif %}">{% if can_melting %}✓{% else %}×{% endif %}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Atomization -->
+      <div class="col">
+        <div class="card">
+          <div>
+            <h3>Atomization</h3>
+            <div class="small">Admin, Atom</div>
+          </div>
+          <div class="row">
+            {% if can_atom %}
+              <a class="btn" href="/atomization">Open</a>
+            {% else %}
+              <button class="btn" disabled>Open</button>
+            {% endif %}
+            <div class="small {% if can_atom %}muted{% else %}x{% endif %}">{% if can_atom %}✓{% else %}×{% endif %}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RAP -->
+      <div class="col">
+        <div class="card">
+          <div>
+            <h3>RAP</h3>
+            <div class="small">Admin, RAP</div>
+          </div>
+          <div class="row">
+            {% if can_rap %}
+              <a class="btn" href="/rap">Open</a>
+            {% else %}
+              <button class="btn" disabled>Open</button>
+            {% endif %}
+            <div class="small {% if can_rap %}muted{% else %}x{% endif %}">{% if can_rap %}✓{% else %}×{% endif %}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- QA -->
+      <div class="col">
+        <div class="card">
+          <div>
+            <h3>QA</h3>
+            <div class="small">Admin, QA</div>
+          </div>
+          <div class="row">
+            {% if can_qa %}
+              <a class="btn" href="/qa-dashboard">Open</a>
+            {% else %}
+              <button class="btn" disabled>Open</button>
+            {% endif %}
+            <div class="small {% if can_qa %}muted{% else %}x{% endif %}">{% if can_qa %}✓{% else %}×{% endif %}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer-ish hint -->
+    <p class="small muted" style="margin:22px 6px">Tip: If a module is disabled here, it will also be blocked when accessed directly by URL.</p>
   </div>
-
-  <h2 style="margin:20px 0 10px 0">Modules</h2>
-
-  <div class="modules">
-
-    <!-- Dashboard (future) -->
-    <div class="card">
-      <h3>Dashboard</h3>
-      <div class="who">Admins &amp; View (coming soon)</div>
-      <div class="footer">
-        {% if role in ['admin','view'] %}
-          <span class="btn disabled">Open</span>
-          <span class="coming">Coming soon</span>
-        {% else %}
-          <span class="btn disabled">Open</span><span class="cross">✗</span>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- GRN -->
-    <div class="card">
-      <h3>GRN</h3>
-      <div class="who">Admin, Store</div>
-      <div class="footer">
-        {% if role in ['admin','store'] %}
-          <a class="btn" href="/grn">Open</a>
-        {% else %}
-          <span class="btn disabled">Open</span><span class="cross">✗</span>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- Melting -->
-    <div class="card">
-      <h3>Melting</h3>
-      <div class="who">Admin, Melting</div>
-      <div class="footer">
-        {% if role in ['admin','melting'] %}
-          <a class="btn" href="/melting">Open</a>
-        {% else %}
-          <span class="btn disabled">Open</span><span class="cross">✗</span>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- Atomization -->
-    <div class="card">
-      <h3>Atomization</h3>
-      <div class="who">Admin, Atom</div>
-      <div class="footer">
-        {% if role in ['admin','atom'] %}
-          <a class="btn" href="/atomization">Open</a>
-        {% else %}
-          <span class="btn disabled">Open</span><span class="cross">✗</span>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- RAP -->
-    <div class="card">
-      <h3>RAP</h3>
-      <div class="who">Admin, RAP</div>
-      <div class="footer">
-        {% if role in ['admin','rap'] %}
-          <a class="btn" href="/rap">Open</a>
-        {% else %}
-          <span class="btn disabled">Open</span><span class="cross">✗</span>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- QA -->
-    <div class="card">
-      <h3>QA</h3>
-      <div class="who">Admin, QA</div>
-      <div class="footer">
-        {% if role in ['admin','qa'] %}
-          <a class="btn" href="/qa-dashboard">Open</a>
-        {% else %}
-          <span class="btn disabled">Open</span><span class="cross">✗</span>
-        {% endif %}
-      </div>
-    </div>
-
-  </div>
-
 </body>
 </html>
