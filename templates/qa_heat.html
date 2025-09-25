@@ -4,31 +4,53 @@
   <meta charset="utf-8">
   <title>QA – Heat</title>
   <style>
-    body{font-family:system-ui,Arial,sans-serif; margin:20px;}
-    .badge{display:inline-block; padding:2px 8px; border-radius:12px; font-size:12px; color:#fff}
+    body{font-family:system-ui,Arial,sans-serif;margin:20px}
+    .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .brand .name{font-weight:600;font-size:22px;margin:0}
+    .brand img{height:40px}
+    .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
     .badge-success{background:#16a34a}
     .badge-info{background:#0ea5e9}
-    label{display:block; margin-top:8px}
+    label{display:block;margin-top:8px}
     input{padding:4px 6px}
-    .row{display:flex; gap:12px; flex-wrap:wrap}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
     .row > div{min-width:120px}
-    .btn{margin-top:16px; padding:8px 14px; border-radius:8px; background:#111827; color:#fff; border:none}
+    .btn{margin-top:16px;padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none}
     a.btn-link{display:inline-block;margin-bottom:10px}
   </style>
+  <script>
+    function validateNumericRequiredPositive(form){
+      const nums = form.querySelectorAll('input[type="number"][required]');
+      for (const el of nums){
+        const v = parseFloat(el.value);
+        if (!isFinite(v) || v <= 0){
+          alert("All fields must be numeric decimals greater than 0.");
+          el.focus();
+          return false;
+        }
+      }
+      return true;
+    }
+  </script>
 </head>
 <body>
+  <div class="brand">
+    <div class="name">KRN Alloys Pvt. Ltd</div>
+    <img src="/static/KRN_Logo.png" alt="KRN">
+  </div>
+
   <h2>QA – Heat {{ heat.heat_no }}
     {% if grade == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>
     {% else %}<span class="badge badge-success">KRIP</span>{% endif %}
   </h2>
-  <p><a class="btn-link" href="/qa">Back</a></p>
+  <p><a class="btn-link" href="/qa-dashboard">Back</a></p>
 
-  <form method="post">
+  <form method="post" onsubmit="return validateNumericRequiredPositive(this)">
     <div class="row">
       {% for key,val in chem.items() %}
       <div>
         <label>{{ key }}</label>
-        <input type="text" name="{{ key }}" value="{{ val }}">
+        <input type="number" name="{{ key }}" value="{{ val }}" step="0.001" min="0.0001" required>
       </div>
       {% endfor %}
     </div>
