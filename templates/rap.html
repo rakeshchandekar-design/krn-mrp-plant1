@@ -44,7 +44,7 @@
     <a class="btn ghost" href="/">Home</a>
   </p>
 
-  <!-- Row 1: KPIs -->
+  <!-- Row 1: KPIs (left) + Month-to-date (right) -->
   <div class="grid">
     <div class="card">
       <h3>RAP KPIs</h3>
@@ -101,7 +101,7 @@
     </div>
   </div>
 
-  <!-- Atomization Balance -->
+  <!-- Atomization Balance (safe defaults if server hasn't supplied atom_mtd) -->
   {% set M = atom_mtd or {'feed': 0, 'rap': 0, 'oversize': 0, 'conv': 0} %}
   <div class="card" style="margin-top:12px">
     <h3>Atomization Balance — Month to Date</h3>
@@ -121,14 +121,113 @@
     <div class="muted">Feed = sum of heat allocations into lots created this month.</div>
   </div>
 
-  <!-- Dispatch Note -->
+  <!-- Row 2: Create Dispatch Note (full width) -->
   <div class="card">
     <h3>Create Dispatch Note (Multi-lot)</h3>
-    <!-- form unchanged -->
-    {{!-- your dispatch form block remains here --}}
+    <form id="dispatchForm" method="post" action="/rap/dispatch/save">
+      <label>Date:
+        <input type="date" name="date" value="{{ today }}" max="{{ today }}" min="{{ min_date }}" required>
+      </label>
+      <label>Customer:
+        <input type="text" name="customer" required>
+      </label>
+      <label style="margin-left:8px;">Total Dispatch Qty (kg):
+        <input type="number" step="0.1" min="0" name="total_qty" id="total_qty" placeholder="e.g. 250.0" required>
+      </label>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Select</th>
+            <th>Lot</th>
+            <th>Grade</th>
+            <th class="right">Available</th>
+            <th>Qty to Dispatch</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows if (r.available_qty or 0) > 0 %}
+          <tr>
+            <td><input type="checkbox" class="pick" name="lot_ids" value="{{ r.id }}"></td>
+            <td>{{ r.lot.lot_no }}</td>
+            <td class="lot-grade">{{ r.lot.grade or 'KRIP' }}</td>
+            <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
+            <td>
+              <input type="number"
+                     class="dq"
+                     step="0.1"
+                     min="0"
+                     max="{{ '%.1f' % (r.available_qty or 0) }}"
+                     name="qty_{{ r.id }}"
+                     placeholder="Qty">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <button class="btn" type="submit">Generate Dispatch Note</button>
+    </form>
+
+    <script>
+      (function () {
+        const form = document.getElementById('dispatchForm');
+        const totalEl = document.getElementById('total_qty');
+
+        function selectedRows() {
+          const out = [];
+          document.querySelectorAll('input.pick').forEach(cb => {
+            if (cb.checked) {
+              const row = cb.closest('tr');
+              const qtyEl = row.querySelector('input.dq');
+              const gEl = row.querySelector('.lot-grade');
+              out.push({
+                qty: parseFloat(qtyEl.value || '0'),
+                grade: (gEl ? gEl.textContent : 'KRIP').trim()
+              });
+            }
+          });
+          return out;
+        }
+
+        form.addEventListener('submit', function (e) {
+          const picks = selectedRows();
+          if (picks.length === 0) {
+            e.preventDefault();
+            alert('Select at least one lot.');
+            return;
+          }
+          for (const p of picks) {
+            if (!(p.qty > 0)) {
+              e.preventDefault();
+              alert('Enter quantity for every selected lot.');
+              return;
+            }
+          }
+          const gset = new Set(picks.map(p => p.grade));
+          if (gset.size > 1) {
+            e.preventDefault();
+            alert('Please select lots of a single grade (KRIP or KRFS) in one dispatch.');
+            return;
+          }
+          const want = parseFloat(totalEl.value || '0');
+          const have = picks.reduce((s, p) => s + p.qty, 0);
+          if (!(want > 0)) {
+            e.preventDefault();
+            alert('Enter Total Dispatch Qty.');
+            return;
+          }
+          if (Math.abs(want - have) > 0.05) {
+            e.preventDefault();
+            alert(`Total Dispatch Qty (${want.toFixed(1)}) must equal the sum of selected lot quantities (${have.toFixed(1)}).`);
+            return;
+          }
+        });
+      })();
+    </script>
   </div>
 
-  <!-- Transfers to Plant 2 -->
+  <!-- Row 3: RAP Lots – Transfers to Plant 2 (full width) -->
   <div class="card">
     <h2 style="margin:0 0 8px 0;">RAP Lots – Transfers to Plant 2</h2>
     <table>
@@ -165,7 +264,8 @@
               {% if role == 'admin' %}
                 {{ '%.2f' % ((lot.unit_cost or 0) * (r.available_qty or 0)) }}
               {% else %}
-                {{ '%.2f' % (r.available_qty or 0) }}
+                <!-- keep column alignment for non-admin -->
+                —
               {% endif %}
             </td>
             <td>
