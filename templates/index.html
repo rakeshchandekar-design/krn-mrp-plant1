@@ -7,7 +7,6 @@
   <style>
     :root{
       --krn-blue:#0e2a47;      /* brand dark blue */
-      --krn-blue-600:#173a63;
       --krn-orange:#f59e0b;    /* brand accent */
       --ink:#111827;
       --muted:#6b7280;
@@ -45,12 +44,32 @@
     .grid{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:16px}
     @media (max-width:1024px){.grid{grid-template-columns:repeat(2,minmax(220px,1fr))}}
     @media (max-width:600px){.grid{grid-template-columns:1fr}}
-    .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px}
+    .card{
+      background:var(--tile);   /* same warm background as hero */
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:14px;
+      display:flex;
+      flex-direction:column;
+      gap:10px
+    }
     .card h3{margin:2px 0 4px 0;font-size:22px}
     .sub{color:var(--muted);font-size:13px}
     .foot{display:flex;align-items:center;justify-content:space-between;margin-top:6px}
-    .open{padding:10px 14px;border-radius:12px;border:1px solid var(--krn-blue);background:var(--krn-blue);color:#fff;cursor:pointer}
-    .open.ghost{background:#eef2ff;color:var(--krn-blue);border-color:#c7d2fe}
+    .open{
+      padding:10px 14px;
+      border-radius:12px;
+      border:1px solid var(--krn-blue);
+      background:var(--krn-blue);
+      color:#fff;
+      cursor:pointer;
+      transition:background .2s ease
+    }
+    .open:hover:not(:disabled){
+      background:var(--krn-orange); /* hover orange */
+      border-color:var(--krn-orange);
+      color:#fff;
+    }
     .open:disabled{background:#e5e7eb;border-color:#e5e7eb;color:#6b7280;cursor:not-allowed}
     .deny{color:#ef4444;font-size:18px;user-select:none}
     .pill{display:inline-block;padding:2px 8px;border:1px solid #fee2e2;border-radius:999px;color:#991b1b;background:#fef2f2;font-size:12px}
@@ -91,8 +110,7 @@
     <h2>Modules</h2>
 
     <section class="grid">
-
-      <!-- Dashboard (coming soon; never links out) -->
+      <!-- Dashboard -->
       {% set allow = role in ['admin','view'] %}
       <div class="card">
         <h3>Dashboard</h3>
@@ -110,7 +128,7 @@
         <div class="sub">Admin, Store</div>
         <div class="foot">
           {% if allow %}
-            <a class="open ghost" href="/grn">Open</a>
+            <a class="open" href="/grn">Open</a>
           {% else %}
             <button class="open" disabled>Open</button><span class="deny">✗</span>
           {% endif %}
@@ -124,7 +142,7 @@
         <div class="sub">Admin, Melting</div>
         <div class="foot">
           {% if allow %}
-            <a class="open ghost" href="/melting">Open</a>
+            <a class="open" href="/melting">Open</a>
           {% else %}
             <button class="open" disabled>Open</button><span class="deny">✗</span>
           {% endif %}
@@ -138,7 +156,7 @@
         <div class="sub">Admin, Atom</div>
         <div class="foot">
           {% if allow %}
-            <a class="open ghost" href="/atomization">Open</a>
+            <a class="open" href="/atomization">Open</a>
           {% else %}
             <button class="open" disabled>Open</button><span class="deny">✗</span>
           {% endif %}
@@ -152,7 +170,7 @@
         <div class="sub">Admin, RAP</div>
         <div class="foot">
           {% if allow %}
-            <a class="open ghost" href="/rap">Open</a>
+            <a class="open" href="/rap">Open</a>
           {% else %}
             <button class="open" disabled>Open</button><span class="deny">✗</span>
           {% endif %}
@@ -166,13 +184,12 @@
         <div class="sub">Admin, QA</div>
         <div class="foot">
           {% if allow %}
-            <a class="open ghost" href="/qa-dashboard">Open</a>
+            <a class="open" href="/qa-dashboard">Open</a>
           {% else %}
             <button class="open" disabled>Open</button><span class="deny">✗</span>
           {% endif %}
         </div>
       </div>
-
     </section>
 
     {% if role == 'guest' %}
