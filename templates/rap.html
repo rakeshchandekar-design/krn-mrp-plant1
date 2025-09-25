@@ -8,7 +8,29 @@
     .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .brand .name { font-weight: 600; font-size: 26px; line-height: 48px; margin: 0; }
     .brand img { height: 48px; }
-    /* … rest unchanged … */
+
+    .toolbar-head { margin: 6px 0 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+    .card h3 { margin: 0 0 8px 0; font-size: 14px; }
+
+    .btn { padding: 8px 14px; border-radius: 8px; background: #111827; color: #fff; border: none; cursor: pointer; text-decoration: none; display: inline-block; }
+    .btn.ghost { background: #e5e7eb; color: #111827; }
+
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
+    th { background: #f3f4f6; }
+    .right { text-align: right; }
+
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; color: #fff; }
+    .badge-success { background: #16a34a; }
+    .badge-info { background: #0ea5e9; }
+
+    .muted { color: #6b7280; font-size: 12px; }
+    .toolbar { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+
+    input, select { padding: 4px 6px; }
   </style>
 </head>
 <body>
@@ -23,31 +45,212 @@
     <a class="btn ghost" href="/">Home</a>
   </p>
 
-  <!-- KPIs + MTD + balance unchanged -->
+  <!-- Row 1: KPIs (left) + Month-to-date (right) -->
+  <div class="grid">
+    <div class="card">
+      <h3>RAP KPIs</h3>
+      <table style="width:auto">
+        <thead>
+          <tr><th>Grade</th><th class="right">Available (kg)</th><th class="right">Value (₹)</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>KRIP</td>
+            <td class="right">{{ '%.1f' % (kpi.KRIP_qty or 0) }}</td>
+            <td class="right">{{ '%.2f' % (kpi.KRIP_val or 0) }}</td>
+          </tr>
+          <tr>
+            <td>KRFS</td>
+            <td class="right">{{ '%.1f' % (kpi.KRFS_qty or 0) }}</td>
+            <td class="right">{{ '%.2f' % (kpi.KRFS_val or 0) }}</td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <th>Total</th>
+            <th class="right">{{ '%.1f' % ((kpi.KRIP_qty or 0) + (kpi.KRFS_qty or 0)) }}</th>
+            <th class="right">{{ '%.2f' % ((kpi.KRIP_val or 0) + (kpi.KRFS_val or 0)) }}</th>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="muted">RAP available = Approved lot weight − allocations (Dispatch/Plant 2).</div>
+    </div>
 
-  <!-- Create Dispatch Note -->
+    <div class="card">
+      <h3>This Month – Cumulative Movements</h3>
+      <table style="width:auto">
+        <thead>
+          <tr><th>Type</th><th class="right">KRIP (kg)</th><th class="right">KRFS (kg)</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Dispatch</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRIP'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['DISPATCH']['KRFS'] if kpi_trends and kpi_trends.get('DISPATCH') else 0) or 0) }}</td>
+          </tr>
+          <tr>
+            <td>Plant 2</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRIP'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
+            <td class="right">{{ '%.1f' % ((kpi_trends['PLANT2']['KRFS'] if kpi_trends and kpi_trends.get('PLANT2') else 0) or 0) }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="toolbar">
+        <a class="btn" href="/rap/dispatch/export">Download Dispatch Movements (CSV)</a>
+        <a class="btn ghost" href="/rap/transfer/export">Download Plant-2 Transfers (CSV)</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- Atomization Balance (safe defaults if server hasn't supplied atom_mtd) -->
+  {% set M = atom_mtd or {'feed': 0, 'rap': 0, 'oversize': 0, 'conv': 0} %}
+  <div class="card" style="margin-top:12px">
+    <h3>Atomization Balance — Month to Date</h3>
+    <table style="width:auto">
+      <thead>
+        <tr><th>Metric</th><th class="right">Kg</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Feed from Melting</td><td class="right">{{ '%.1f' % (M.get('feed', 0) or 0) }}</td></tr>
+        <tr><td>RAP Produced</td><td class="right">{{ '%.1f' % (M.get('rap', 0) or 0) }}</td></tr>
+        <tr><td>+20 / Dryer Oversize</td><td class="right">{{ '%.1f' % (M.get('oversize', 0) or 0) }}</td></tr>
+      </tbody>
+      <tfoot>
+        <tr><th>Conversion to RAP</th><th class="right">{{ '%.1f' % (M.get('conv', 0) or 0) }}%</th></tr>
+      </tfoot>
+    </table>
+    <div class="muted">Feed = sum of heat allocations into lots created this month.</div>
+  </div>
+
+  <!-- Row 2: Create Dispatch Note (full width) -->
   <div class="card">
     <h3>Create Dispatch Note (Multi-lot)</h3>
     <form id="dispatchForm" method="post" action="/rap/dispatch/save">
       <fieldset {% if read_only %}disabled{% endif %}>
-        <!-- existing inputs + table unchanged -->
+        <label>Date:
+          <input type="date" name="date" value="{{ today }}" max="{{ today }}" min="{{ min_date }}" required>
+        </label>
+        <label>Customer:
+          <input type="text" name="customer" required>
+        </label>
+        <label style="margin-left:8px;">Total Dispatch Qty (kg):
+          <input type="number" step="0.1" min="0" name="total_qty" id="total_qty" placeholder="e.g. 250.0" required>
+        </label>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Select</th>
+              <th>Lot</th>
+              <th>Grade</th>
+              <th class="right">Available</th>
+              <th>Qty to Dispatch</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows if (r.available_qty or 0) > 0 %}
+            <tr>
+              <td><input type="checkbox" class="pick" name="lot_ids" value="{{ r.id }}"></td>
+              <td>{{ r.lot.lot_no }}</td>
+              <td class="lot-grade">{{ r.lot.grade or 'KRIP' }}</td>
+              <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
+              <td>
+                <input type="number"
+                       class="dq"
+                       step="0.1"
+                       min="0"
+                       max="{{ '%.1f' % (r.available_qty or 0) }}"
+                       name="qty_{{ r.id }}"
+                       placeholder="Qty">
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
 
         {% if not read_only %}
           <button class="btn" type="submit">Generate Dispatch Note</button>
         {% else %}
-          <p class="muted">Read-only: Dispatch note creation disabled.</p>
+          <p class="muted">Read-only: dispatch creation is disabled for viewer role.</p>
         {% endif %}
       </fieldset>
     </form>
+
+    <script>
+      (function () {
+        const form = document.getElementById('dispatchForm');
+        if (!form) return;
+        const totalEl = document.getElementById('total_qty');
+
+        function selectedRows() {
+          const out = [];
+          document.querySelectorAll('input.pick').forEach(cb => {
+            if (cb.checked) {
+              const row = cb.closest('tr');
+              const qtyEl = row.querySelector('input.dq');
+              const gEl = row.querySelector('.lot-grade');
+              out.push({
+                qty: parseFloat(qtyEl.value || '0'),
+                grade: (gEl ? gEl.textContent : 'KRIP').trim()
+              });
+            }
+          });
+          return out;
+        }
+
+        form.addEventListener('submit', function (e) {
+          {% if read_only %}
+          // Hard stop (defense-in-depth; server also blocks)
+          e.preventDefault();
+          alert('Read-only role: cannot create dispatch notes.');
+          return;
+          {% endif %}
+
+          const picks = selectedRows();
+          if (picks.length === 0) {
+            e.preventDefault();
+            alert('Select at least one lot.');
+            return;
+          }
+          for (const p of picks) {
+            if (!(p.qty > 0)) {
+              e.preventDefault();
+              alert('Enter quantity for every selected lot.');
+              return;
+            }
+          }
+          const gset = new Set(picks.map(p => p.grade));
+          if (gset.size > 1) {
+            e.preventDefault();
+            alert('Please select lots of a single grade (KRIP or KRFS) in one dispatch.');
+            return;
+          }
+          const want = parseFloat(totalEl.value || '0');
+          const have = picks.reduce((s, p) => s + p.qty, 0);
+          if (!(want > 0)) {
+            e.preventDefault();
+            alert('Enter Total Dispatch Qty.');
+            return;
+          }
+          if (Math.abs(want - have) > 0.05) {
+            e.preventDefault();
+            alert(`Total Dispatch Qty (${want.toFixed(1)}) must equal the sum of selected lot quantities (${have.toFixed(1)}).`);
+            return;
+          }
+        });
+      })();
+    </script>
   </div>
 
-  <!-- RAP Lots – Transfers to Plant 2 -->
+  <!-- Row 3: RAP Lots – Transfers to Plant 2 (full width) -->
   <div class="card">
     <h2 style="margin:0 0 8px 0;">RAP Lots – Transfers to Plant 2</h2>
     <table>
       <thead>
         <tr>
-          <th>Lot</th><th>Grade</th><th class="right">Lot Weight (kg)</th>
+          <th>Lot</th>
+          <th>Grade</th>
+          <th class="right">Lot Weight (kg)</th>
           <th class="right">Available (kg)</th>
           {% if role == 'admin' %}<th class="right">Cost/kg (₹)</th>{% endif %}
           <th class="right">Value (₹)</th>
@@ -60,29 +263,44 @@
           {% set lot = r.lot %}
           <tr>
             <td>{{ lot.lot_no }}</td>
-            <td>{% if (lot.grade or 'KRIP') == 'KRFS' %}<span class="badge badge-info">KRFS</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
+            <td>
+              {% if (lot.grade or 'KRIP') == 'KRFS' %}
+                <span class="badge badge-info">KRFS</span>
+              {% else %}
+                <span class="badge badge-success">KRIP</span>
+              {% endif %}
+            </td>
             <td class="right">{{ '%.1f' % (lot.weight or 0) }}</td>
             <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
-            {% if role == 'admin' %}<td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>{% endif %}
-            <td class="right">{% if role == 'admin' %}{{ '%.2f' % ((lot.unit_cost or 0) * (r.available_qty or 0)) }}{% else %}—{% endif %}</td>
+            {% if role == 'admin' %}
+              <td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>
+            {% endif %}
+            <td class="right">
+              {% if role == 'admin' %}
+                {{ '%.2f' % ((lot.unit_cost or 0) * (r.available_qty or 0)) }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
             <td>
               <a href="/lot/{{ lot.id }}/trace" target="_blank">Trace</a> |
               <a href="/lot/{{ lot.id }}/pdf" target="_blank">PDF</a> |
               <a href="/lot/{{ lot.id }}/qa" target="_blank">QA</a>
             </td>
             <td>
-              {% if not read_only %}
-                <form method="post" action="/rap/allocate" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              <form method="post" action="/rap/allocate" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                <fieldset {% if read_only %}disabled{% endif %} style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;border:none;margin:0;padding:0">
                   <input type="hidden" name="rap_lot_id" value="{{ r.id }}">
                   <input type="hidden" name="kind" value="PLANT2">
                   <input type="date" name="date" max="{{ today }}" min="{{ min_date }}" required>
                   <input type="number" step="0.1" min="0" max="{{ '%.1f' % (r.available_qty or 0) }}" name="qty" placeholder="Qty (kg)" required>
                   <input type="text" name="remarks" placeholder="remarks">
-                  <button class="btn" type="submit">Allocate</button>
-                </form>
-              {% else %}
-                <p class="muted">Read-only: Allocation disabled.</p>
-              {% endif %}
+                  {% if not read_only %}
+                    <button class="btn" type="submit">Allocate</button>
+                  {% endif %}
+                </fieldset>
+                {% if read_only %}<span class="muted">Read-only</span>{% endif %}
+              </form>
             </td>
           </tr>
         {% endfor %}
