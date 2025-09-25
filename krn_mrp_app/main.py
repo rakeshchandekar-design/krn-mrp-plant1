@@ -568,7 +568,7 @@ USER_DB = {
     "rap":     {"password": "rap",     "role": "rap"},
     "qa":      {"password": "qa",      "role": "qa"},
     # optional read-only viewer role (future)
-    "KRN":    {"password": "KRN",    "role": "view"},
+    "krn":    {"password": "krn",    "role": "view"},
 }
 
 def current_username(request: Request) -> str:
