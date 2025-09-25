@@ -19,19 +19,28 @@
     th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
     th{background:#f3f4f6}
     .right{text-align:right}
+    .muted{color:#6b7280;font-size:13px}
+    .note{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:6px;padding:6px 10px;margin-top:6px}
   </style>
   <script>
-    // default sensibly: if minutes > 0, require kind & remarks
     function syncReq(){
-      const m=document.getElementById('m'); const k=document.getElementById('k'); const r=document.getElementById('r');
-      const on=(parseInt(m.value||'0',10)>0); k.required=on; r.required=on;
+      const m=document.getElementById('m'); 
+      const k=document.getElementById('k'); 
+      const r=document.getElementById('r');
+      if(!m || !k || !r) return;
+      const on=(parseInt(m.value||'0',10)>0); 
+      k.required=on; 
+      r.required=on;
     }
     document.addEventListener('DOMContentLoaded',()=> {
-      const m=document.getElementById('m'); if(m){ m.addEventListener('input', syncReq); syncReq(); }
+      const m=document.getElementById('m'); 
+      if(m){ m.addEventListener('input', syncReq); syncReq(); }
     });
   </script>
 </head>
 <body>
+  {% set read_only = is_read_only(request) %}
+
   <div class="brand">
     <div class="name">KRN Alloys Pvt. Ltd</div>
     <img src="/static/KRN_Logo.png" alt="KRN">
@@ -44,30 +53,37 @@
   <div class="card">
     <h2>Add day-level downtime</h2>
     <form method="post" action="/melting/downtime">
-      <div class="row">
-        <div>
-          <label>Date</label>
-          <input type="date" name="date" value="{{ today }}" required>
+      <fieldset {% if read_only %}disabled{% endif %}>
+        <div class="row">
+          <div>
+            <label>Date</label>
+            <input type="date" name="date" value="{{ today }}" required>
+          </div>
+          <div>
+            <label>Minutes</label>
+            <input id="m" type="number" name="minutes" min="0" step="1" value="0" required>
+          </div>
+          <div>
+            <label>Kind</label>
+            <select id="k" name="kind">
+              <option value="PRODUCTION">Production</option>
+              <option value="MAINTENANCE">Maintenance</option>
+              <option value="POWER">Power</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:240px">
+            <label>Remarks</label>
+            <input id="r" type="text" name="remarks" placeholder="optional">
+          </div>
         </div>
-        <div>
-          <label>Minutes</label>
-          <input id="m" type="number" name="minutes" min="0" step="1" value="0" required>
-        </div>
-        <div>
-          <label>Kind</label>
-          <select id="k" name="kind">
-            <option value="PRODUCTION">Production</option>
-            <option value="MAINTENANCE">Maintenance</option>
-            <option value="POWER">Power</option>
-            <option value="OTHER">Other</option>
-          </select>
-        </div>
-        <div style="flex:1;min-width:240px">
-          <label>Remarks</label>
-          <input id="r" type="text" name="remarks" placeholder="optional">
-        </div>
-      </div>
-      <p><button class="btn" type="submit">Save</button></p>
+      </fieldset>
+
+      {% if not read_only %}
+        <p><button class="btn" type="submit">Save</button></p>
+      {% else %}
+        <p class="note">Saving is disabled in view-only mode.</p>
+      {% endif %}
     </form>
   </div>
 
