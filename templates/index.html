@@ -26,9 +26,18 @@
     .brand .t1{font-weight:800;font-size:28px;letter-spacing:.2px;color:var(--krn-blue)}
     .brand .t2{margin-top:2px;font-size:14px;color:#738295}
     .head .actions{display:flex;gap:8px}
-    .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
-    .btn.primary{background:var(--krn-blue);color:#fff;border-color:var(--krn-blue)}
-    .btn.ghost{background:#fff}
+
+    /* Header buttons */
+    .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1px solid var(--line);cursor:pointer}
+    .btn.primary{
+      background:var(--krn-blue);
+      color:#fff;
+      border-color:var(--krn-blue);
+      transition:background .2s ease,border .2s ease;
+    }
+    .btn.primary:hover{background:var(--krn-orange);border-color:var(--krn-orange)}
+
+    .btn.ghost{background:#fff;color:var(--ink)}
     .btn:disabled{opacity:.45;cursor:not-allowed}
 
     /* Hero message */
@@ -45,7 +54,7 @@
     @media (max-width:1024px){.grid{grid-template-columns:repeat(2,minmax(220px,1fr))}}
     @media (max-width:600px){.grid{grid-template-columns:1fr}}
     .card{
-      background:var(--tile);   /* same warm background as hero */
+      background:var(--tile);
       border:1px solid var(--line);
       border-radius:16px;
       padding:14px;
@@ -56,6 +65,8 @@
     .card h3{margin:2px 0 4px 0;font-size:22px}
     .sub{color:var(--muted);font-size:13px}
     .foot{display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+
+    /* Module Open buttons */
     .open{
       padding:10px 14px;
       border-radius:12px;
@@ -63,14 +74,15 @@
       background:var(--krn-blue);
       color:#fff;
       cursor:pointer;
-      transition:background .2s ease
+      transition:background .2s ease,border .2s ease;
     }
     .open:hover:not(:disabled){
-      background:var(--krn-orange); /* hover orange */
+      background:var(--krn-orange);
       border-color:var(--krn-orange);
       color:#fff;
     }
     .open:disabled{background:#e5e7eb;border-color:#e5e7eb;color:#6b7280;cursor:not-allowed}
+
     .deny{color:#ef4444;font-size:18px;user-select:none}
     .pill{display:inline-block;padding:2px 8px;border:1px solid #fee2e2;border-radius:999px;color:#991b1b;background:#fef2f2;font-size:12px}
   </style>
@@ -87,7 +99,7 @@
     </div>
     <div class="actions">
       {% if role and role != 'guest' %}
-        <a class="btn ghost" href="/logout">Logout</a>
+        <a class="btn primary" href="/logout">Logout</a>
       {% else %}
         <a class="btn primary" href="/login">Login</a>
       {% endif %}
