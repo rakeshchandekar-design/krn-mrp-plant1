@@ -250,7 +250,7 @@
           <th>Grade</th>
           <th class="right">Lot Weight (kg)</th>
           <th class="right">Available (kg)</th>
-          <th class="right">Cost/kg (₹)</th>
+          {% if role == 'admin' %}<th class="right">Cost/kg (₹)</th>{% endif %}
           <th class="right">Value (₹)</th>
           <th>Docs</th>
           <th>Allocate</th>
@@ -270,8 +270,8 @@
             </td>
             <td class="right">{{ '%.1f' % (lot.weight or 0) }}</td>
             <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
-            <td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>
-            <td class="right">{{ '%.2f' % ((lot.unit_cost or 0) * (r.available_qty or 0)) }}</td>
+            {% if role == 'admin' %}<td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>{% endif %}
+            {% if role == 'admin' %}<td class="right">{{ '%.2f' % ((lot.unit_cost or 0) * (r.available_qty or 0)) }}</td>{% endif %}
             <td>
               <a href="/lot/{{ lot.id }}/trace" target="_blank">Trace</a> |
               <a href="/lot/{{ lot.id }}/pdf" target="_blank">PDF</a> |
