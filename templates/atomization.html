@@ -74,24 +74,14 @@
       document.getElementById('remTotal').textContent=(Math.max(0, maxW-total)).toFixed(1);
     }
     function clampAlloc(el, maxVal) {
-  // Fallback if maxVal missing or not a number
-  maxVal = (typeof maxVal === "number" && !isNaN(maxVal)) ? maxVal : 0;
-
-  let v = parseFloat(el.value || "0");
-
-  if (isNaN(v) || v < 0) {
-    v = 0;
-  }
-  if (v > maxVal) {
-    v = maxVal;
-  }
-
-  // Round to 1 decimal place, to match step="0.1"
-  v = Math.round(v * 10) / 10;
-
-  el.value = v;
-  updateAlloc();
-}
+      maxVal = (typeof maxVal === "number" && !isNaN(maxVal)) ? maxVal : 0;
+      let v = parseFloat(el.value || "0");
+      if (isNaN(v) || v < 0) v = 0;
+      if (v > maxVal) v = maxVal;
+      v = Math.round(v * 10) / 10; // 1 decimal
+      el.value = v;
+      updateAlloc();
+    }
     document.addEventListener('DOMContentLoaded', ()=>{
       updateAlloc();
       const w=document.getElementById('lot_weight');
@@ -100,6 +90,7 @@
   </script>
 </head>
 <body>
+  {% set read_only = is_read_only(request) %}
   <div class="brand">
     <div class="name">KRN Alloys Pvt. Ltd</div>
     <img src="/static/KRN_Logo.png" alt="KRN">
@@ -210,60 +201,66 @@
   <div class="card">
     <h2 style="margin:0 0 8px 0;">Create Lot (Allocate from Approved Heats)</h2>
     <form method="post" action="/atomization/new">
-      <div class="alloc-hdr">
-        <div>
-          <label>Lot Weight (kg)</label>
-          <input id="lot_weight" name="lot_weight" type="number" step="0.1" min="1" value="3000">
+      <fieldset {% if read_only %}disabled{% endif %}>
+        <div class="alloc-hdr">
+          <div>
+            <label>Lot Weight (kg)</label>
+            <input id="lot_weight" name="lot_weight" type="number" step="0.1" min="1" value="3000">
+          </div>
+
+          <!-- required +20 / Dryer Oversize -->
+          <div>
+            <label>+20 / Dryer Oversize (kg)</label>
+            <input id="oversize_kg" name="oversize_kg" type="number" step="0.01" min="0.01" value="0.01" required>
+          </div>
+
+          <div class="muted">Allocated: <strong id="allocTotal">0.0</strong> kg  |  Remaining: <strong id="remTotal">3000.0</strong> kg</div>
         </div>
 
-        <!-- required +20 / Dryer Oversize -->
-        <div>
-          <label>+20 / Dryer Oversize (kg)</label>
-          <input id="oversize_kg" name="oversize_kg" type="number" step="0.01" min="0.01" value="0.01" required>
-        </div>
-
-        <div class="muted">Allocated: <strong id="allocTotal">0.0</strong> kg  |  Remaining: <strong id="remTotal">3000.0</strong> kg</div>
-      </div>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Heat</th>
-            <th>Type</th>
-            <th class="right">Output (kg)</th>
-            <th class="right">Available (kg)</th>
-            {% if role == 'admin' %}<th class="right">Cost/kg (₹)</th>{% endif %}
-            <th class="right">kWh/ton</th>
-            <th>Trace</th>
-            <th class="right">Allocate (kg)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for h in heats %}
-            {% set g = heat_grades.get(h.id) %}
-            {% set avail = (available_map.get(h.id) or 0.0) %}
-            {% set kwhpt = ( (h.power_kwh or 0) > 0 and (h.actual_output or 0) > 0 ) and ( (h.power_kwh / h.actual_output) * 1000 ) or 0 %}
+        <table>
+          <thead>
             <tr>
-              <td>{{ h.heat_no }}</td>
-              <td>{% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
-              <td class="right">{{ '%.1f' % (h.actual_output or 0) }}</td>
-              <td class="right">{{ '%.1f' % avail }}</td>
-              {% if role == 'admin' %}<td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>{% endif %}
-              <td class="right">{{ '%.1f' % kwhpt }}</td>
-              <td><a class="btn ghost" href="/traceability/heat/{{ h.id }}">View</a></td>
-              <td class="right" style="width:160px">
-                  <input class="alloc-input" type="number" step="0.1" min="0"
-       max="{{ (avail or 0.0)|round(1) }}"
-       name="alloc_{{ h.id }}" value=""
-       data-max="{{ (avail or 0.0)|default(0,true) }}"
-       oninput="clampAlloc(this, parseFloat(this.dataset.max))">
-              </td>
+              <th>Heat</th>
+              <th>Type</th>
+              <th class="right">Output (kg)</th>
+              <th class="right">Available (kg)</th>
+              {% if role == 'admin' %}<th class="right">Cost/kg (₹)</th>{% endif %}
+              <th class="right">kWh/ton</th>
+              <th>Trace</th>
+              <th class="right">Allocate (kg)</th>
             </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {% for h in heats %}
+              {% set g = heat_grades.get(h.id) %}
+              {% set avail = (available_map.get(h.id) or 0.0) %}
+              {% set kwhpt = ( (h.power_kwh or 0) > 0 and (h.actual_output or 0) > 0 ) and ( (h.power_kwh / h.actual_output) * 1000 ) or 0 %}
+              <tr>
+                <td>{{ h.heat_no }}</td>
+                <td>{% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
+                <td class="right">{{ '%.1f' % (h.actual_output or 0) }}</td>
+                <td class="right">{{ '%.1f' % avail }}</td>
+                {% if role == 'admin' %}<td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>{% endif %}
+                <td class="right">{{ '%.1f' % kwhpt }}</td>
+                <td><a class="btn ghost" href="/traceability/heat/{{ h.id }}">View</a></td>
+                <td class="right" style="width:160px">
+                    <input class="alloc-input" type="number" step="0.1" min="0"
+                      max="{{ (avail or 0.0)|round(1) }}"
+                      name="alloc_{{ h.id }}" value=""
+                      data-max="{{ (avail or 0.0)|default(0,true) }}"
+                      oninput="clampAlloc(this, parseFloat(this.dataset.max))">
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
 
-      <p><button class="btn" type="submit">Create Lot</button></p>
+        {% if not read_only %}
+          <p><button class="btn" type="submit">Create Lot</button></p>
+        {% else %}
+          <p class="muted">Read-only: lot creation is disabled for viewer role.</p>
+        {% endif %}
+      </fieldset>
 
       <!-- Guard: oversize must be > 0 -->
       <script>
