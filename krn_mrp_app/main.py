@@ -1420,79 +1420,75 @@ def atom_downtime_export(db: Session = Depends(get_db)):
 @app.get("/qa-dashboard", response_class=HTMLResponse)
 def qa_dashboard(
     request: Request,
-    start: Optional[str] = None,   # YYYY-MM-DD
-    end: Optional[str] = None,     # YYYY-MM-DD
+    start: Optional[str] = None,
+    end: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    heats = db.query(Heat).order_by(Heat.id.desc()).all()
-    lots  = db.query(Lot ).order_by(Lot.id.desc()).all()
-    heat_grades = {h.id: heat_grade(h) for h in heats}
-
-    # ---- date range (default = today..today) ----
     today = dt.date.today()
-    s = start or today.isoformat()
-    e = end   or today.isoformat()
-    try:
-        s_date = dt.date.fromisoformat(s)
-        e_date = dt.date.fromisoformat(e)
-    except Exception:
-        s_date, e_date = today, today
 
-    # Helpers to parse dates from numbers already in your helpers
-    def _hdate(h: Heat) -> dt.date:
+    # resolve range (default = today)
+    s_iso = start or today.isoformat()
+    e_iso = end or today.isoformat()
+    try:
+        s_date = dt.date.fromisoformat(s_iso)
+        e_date = dt.date.fromisoformat(e_iso)
+    except Exception:
+        s_date = e_date = today
+        s_iso = e_iso = today.isoformat()
+
+    # load all, then filter by date for table sections
+    heats_all = db.query(Heat).order_by(Heat.id.desc()).all()
+    lots_all  = db.query(Lot).order_by(Lot.id.desc()).all()
+
+    def _hd(h: Heat) -> dt.date:
         return heat_date_from_no(h.heat_no) or today
-    def _ldate(l: Lot) -> dt.date:
+
+    def _ld(l: Lot) -> dt.date:
         return lot_date_from_no(l.lot_no) or today
 
-    # Rows that fall within the chosen range
-    heats_in = [h for h in heats if s_date <= _hdate(h) <= e_date]
-    lots_in  = [l for l in lots  if s_date <= _ldate(l) <= e_date]
+    heats_vis = [h for h in heats_all if s_date <= _hd(h) <= e_date]
+    lots_vis  = [l for l in lots_all  if s_date <= _ld(l) <= e_date]
 
-    # ---- KPIs (This Month) : sums by QA status for both Melting(heats) + Atomization(lots)
-    month_start = today.replace(day=1)
-    next_month  = (month_start + dt.timedelta(days=32)).replace(day=1)
-    month_end   = next_month - dt.timedelta(days=1)
+    # KPI (This Month) – based on the month of the END date
+    month_start = e_date.replace(day=1)
+    month_end   = (month_start + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
+    lots_this_month = [l for l in lots_all if month_start <= _ld(l) <= month_end]
 
-    def _in_month(d: dt.date) -> bool:
-        return month_start <= d <= month_end
-
-    # Weights: heats -> actual_output ; lots -> weight
-    def _sum_heats(status: str) -> float:
-        return sum(float(h.actual_output or 0.0) for h in heats if (h.qa_status or "") == status and _in_month(_hdate(h)))
     def _sum_lots(status: str) -> float:
-        return sum(float(l.weight        or 0.0) for l in lots  if (l.qa_status or "") == status and _in_month(_ldate(l)))
+        s = status.upper()
+        return sum(float(l.weight or 0.0) for l in lots_this_month if (l.qa_status or "").upper() == s)
 
-    kpi_approved = _sum_heats("APPROVED") + _sum_lots("APPROVED")
-    kpi_hold     = _sum_heats("HOLD")     + _sum_lots("HOLD")
-    kpi_reject   = _sum_heats("REJECTED") + _sum_lots("REJECTED")
+    kpi = {
+        "approved_kg": _sum_lots("APPROVED"),
+        "hold_kg": _sum_lots("HOLD"),
+        "rejected_kg": _sum_lots("REJECTED"),
+    }
 
-    # ---- Queue (counts) over the selected range
-    pending_count = sum(1 for h in heats_in if (h.qa_status or "") == "PENDING") + \
-                    sum(1 for l in lots_in  if (l.qa_status or "") == "PENDING")
-    todays_count  = sum(1 for h in heats if _hdate(h) == today and (h.qa_status or "") != "PENDING") + \
-                    sum(1 for l in lots  if _ldate(l) == today and (l.qa_status or "") != "PENDING")
+    # QA queue counters
+    pending_count = (
+        sum(1 for h in heats_all if (h.qa_status or "").upper() == "PENDING") +
+        sum(1 for l in lots_all  if (l.qa_status or "").upper() == "PENDING")
+    )
+    todays_count = (
+        sum(1 for h in heats_all if _hd(h) == today and (h.qa_status or "").upper() != "PENDING") +
+        sum(1 for l in lots_all  if _ld(l) == today and (l.qa_status or "").upper() != "PENDING")
+    )
+
+    heat_grades = {h.id: heat_grade(h) for h in heats_vis}
 
     return templates.TemplateResponse(
         "qa_dashboard.html",
         {
             "request": request,
-            "heats": heats_in,           # table respects date range
-            "lots": lots_in,             # table respects date range
+            "heats": heats_vis,
+            "lots": lots_vis,
             "heat_grades": heat_grades,
-
-            # toolbar state
-            "start": s,
-            "end": e,
+            "kpi": kpi,
+            "pending_count": pending_count,
+            "todays_count": todays_count,
+            "start": s_iso,
+            "end": e_iso,
             "today_iso": today.isoformat(),
-
-            # KPIs
-            "kpi_approved": kpi_approved,
-            "kpi_hold": kpi_hold,
-            "kpi_reject": kpi_reject,
-
-            # queue cards
-            "qa_pending_count": pending_count,
-            "qa_today_count": todays_count,
         },
     )
 
