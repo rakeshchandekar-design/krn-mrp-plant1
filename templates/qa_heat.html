@@ -17,6 +17,7 @@
     .row > div{min-width:120px}
     .btn{margin-top:16px;padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none}
     a.btn-link{display:inline-block;margin-bottom:10px}
+    .muted{color:#6b7280;font-size:12px}
   </style>
   <script>
     function validateNumericRequiredPositive(form){
@@ -34,40 +35,51 @@
   </script>
 </head>
 <body>
+  {% set read_only = is_read_only(request) %}
+
   <div class="brand">
     <div class="name">KRN Alloys Pvt. Ltd</div>
     <img src="/static/KRN_Logo.png" alt="KRN">
   </div>
 
   <h2>QA – Heat {{ heat.heat_no }}
-    {% if grade == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>
-    {% else %}<span class="badge badge-success">KRIP</span>{% endif %}
+    {% if grade == 'KRFS' %}
+      <span class="badge badge-info">KRFS (FeSi)</span>
+    {% else %}
+      <span class="badge badge-success">KRIP</span>
+    {% endif %}
   </h2>
   <p><a class="btn-link" href="/qa-dashboard">Back</a></p>
 
   <form method="post" onsubmit="return validateNumericRequiredPositive(this)">
-    <div class="row">
-      {% for key,val in chem.items() %}
-      <div>
-        <label>{{ key }}</label>
-        <input type="number" name="{{ key }}" value="{{ val }}" step="0.001" min="0.0001" required {% if read_only %}readonly{% endif %}>
+    <fieldset {% if read_only %}disabled{% endif %}>
+      <div class="row">
+        {% for key,val in chem.items() %}
+        <div>
+          <label>{{ key }}</label>
+          <input type="number" name="{{ key }}" value="{{ val }}" step="0.001" min="0.0001" required {% if read_only %}readonly{% endif %}>
+        </div>
+        {% endfor %}
       </div>
-      {% endfor %}
-    </div>
 
-    <label>Decision</label>
-    <select name="decision" {% if read_only %}disabled{% endif %}>
-      <option value="APPROVED">APPROVED</option>
-      <option value="REJECTED">REJECTED</option>
-      <option value="HOLD">HOLD</option>
-    </select>
+      <label>Decision</label>
+      <select name="decision" {% if read_only %}disabled{% endif %}>
+        <option value="APPROVED">APPROVED</option>
+        <option value="REJECTED">REJECTED</option>
+        <option value="HOLD">HOLD</option>
+      </select>
 
-    <label>Remarks</label>
-    <input type="text" name="remarks" value="" {% if read_only %}readonly{% endif %}>
+      <label>Remarks</label>
+      <input type="text" name="remarks" value="" {% if read_only %}readonly{% endif %}>
 
-    <div>
-      {% if not read_only %}<button class="btn" type="submit">Save</button>{% endif %}
-    </div>
+      <div>
+        {% if not read_only %}
+          <button class="btn" type="submit">Save</button>
+        {% else %}
+          <p class="muted">Read-only: saving is disabled for viewer role.</p>
+        {% endif %}
+      </div>
+    </fieldset>
   </form>
 </body>
 </html>
