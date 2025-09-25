@@ -50,22 +50,24 @@
       {% for key,val in chem.items() %}
       <div>
         <label>{{ key }}</label>
-        <input type="number" name="{{ key }}" value="{{ val }}" step="0.001" min="0.0001" required>
+        <input type="number" name="{{ key }}" value="{{ val }}" step="0.001" min="0.0001" required {% if read_only %}readonly{% endif %}>
       </div>
       {% endfor %}
     </div>
 
     <label>Decision</label>
-    <select name="decision">
+    <select name="decision" {% if read_only %}disabled{% endif %}>
       <option value="APPROVED">APPROVED</option>
       <option value="REJECTED">REJECTED</option>
       <option value="HOLD">HOLD</option>
     </select>
 
     <label>Remarks</label>
-    <input type="text" name="remarks" value="">
+    <input type="text" name="remarks" value="" {% if read_only %}readonly{% endif %}>
 
-    <div><button class="btn" type="submit">Save</button></div>
+    <div>
+      {% if not read_only %}<button class="btn" type="submit">Save</button>{% endif %}
+    </div>
   </form>
 </body>
 </html>
