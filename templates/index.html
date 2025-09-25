@@ -1,54 +1,170 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>KRN – Plant 1</title>
+  <title>KRN – Home</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
   <style>
-    body{font-family:system-ui,Arial,sans-serif;margin:24px;}
-    .brand{display:flex;align-items:center;gap:16px;margin-bottom:12px}
-    .brand img{height:56px}
-    h1{margin:0}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:16px}
-    .card{border:1px solid #e5e7eb;border-radius:12px;padding:14px}
-    .card h3{margin:0 0 8px 0}
-    a.btn{display:inline-block;margin-top:8px;padding:8px 12px;border-radius:10px;background:#111827;color:#fff;text-decoration:none}
-    .muted{color:#6b7280}
-    .badge{display:inline-block;padding:2px 8px;border-radius:12px;background:#e5e7eb}
+    :root{
+      --brand:#0f172a;      /* KRN dark blue */
+      --accent:#ff8a00;     /* KRN orange */
+      --ink:#111827;
+      --muted:#6b7280;
+      --br:#e5e7eb;
+      --bg:#f8fafc;
+      --card:#ffffff;
+    }
+    *{box-sizing:border-box}
+    body{margin:24px;font-family:system-ui,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+
+    /* Header */
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand img{height:44px}
+    .brand .title{font-weight:800;font-size:28px;letter-spacing:.2px;color:var(--brand)}
+    .sub{color:var(--muted);margin-top:2px}
+
+    /* Welcome */
+    .welcome{background:var(--card);border:1px solid var(--br);border-radius:12px;padding:16px;margin-top:12px}
+    .role-pill{display:inline-block;padding:2px 10px;border-radius:999px;background:#eef2ff;color:#374151;font-size:12px;margin-left:6px}
+
+    /* Buttons */
+    .btn{display:inline-block;padding:10px 16px;border-radius:10px;background:var(--brand);color:#fff;text-decoration:none;border:none;cursor:pointer}
+    .btn:hover{filter:brightness(0.95)}
+    .btn.ghost{background:#111827}
+    .btn.disabled{background:#e5e7eb;color:#9ca3af;cursor:not-allowed;pointer-events:none}
+    .logout{margin-left:12px}
+
+    /* Modules grid */
+    .modules{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin-top:18px}
+    .card{background:var(--card);border:1px solid var(--br);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}
+    .card h3{margin:0 0 2px 0}
+    .who{color:var(--muted);font-size:13px}
+    .footer{display:flex;align-items:center;gap:10px}
+    .cross{color:#ef4444}
+    .coming{color:var(--muted);font-size:12px;margin-left:6px}
   </style>
 </head>
 <body>
-  <div class="brand">
-    <img src="/static/KRN_Logo.png" alt="KRN">
-    <h1>KRN Alloys Pvt. Ltd – Plant 1</h1>
+
+  <!-- Header -->
+  <div class="topbar">
+    <div class="brand">
+      <img src="/static/KRN_Logo.png" alt="KRN">
+      <div>
+        <div class="title">KRN Alloys Pvt. Ltd – Plant 1</div>
+        <div class="sub">Manufacturing Resource & Quality Control Suite</div>
+      </div>
+    </div>
+
+    <div>
+      {% if request.session.get('user') %}
+        <span class="who">Signed in as <strong>{{ request.session.get('user') }}</strong></span>
+        <a class="btn logout" href="/logout">Logout</a>
+      {% else %}
+        <a class="btn" href="/login">Login</a>
+      {% endif %}
+    </div>
   </div>
 
-  <p class="muted">Welcome{{ user and (", " ~ user) or "" }}. Role: <span class="badge">{{ role or 'guest' }}</span></p>
-
-  {% if not user %}
-    <p><a class="btn" href="/login">Login</a></p>
-  {% else %}
-    <p><a class="btn" href="/logout">Logout</a></p>
-  {% endif %}
-
-  <h2>Modules</h2>
-  <div class="grid">
-    <div class="card"><h3>Dashboard</h3><div class="muted">Admins & View (future)</div>
-      <a class="btn" href="/qa-dashboard">Open</a></div>
-
-    <div class="card"><h3>GRN</h3><div class="muted">Admin, Store</div>
-      <a class="btn" href="/grn">Open</a></div>
-
-    <div class="card"><h3>Melting</h3><div class="muted">Admin, Melting</div>
-      <a class="btn" href="/melting">Open</a></div>
-
-    <div class="card"><h3>Atomization</h3><div class="muted">Admin, Atom</div>
-      <a class="btn" href="/atomization">Open</a></div>
-
-    <div class="card"><h3>RAP</h3><div class="muted">Admin, RAP</div>
-      <a class="btn" href="/rap">Open</a></div>
-
-    <div class="card"><h3>QA</h3><div class="muted">Admin, QA</div>
-      <a class="btn" href="/qa-dashboard">Open</a></div>
+  <!-- Welcome -->
+  <div class="welcome">
+    <p style="margin:0 0 8px 0">
+      Welcome to the KRN MRP/QA application. This system unifies GRN tracking, Melting and
+      Atomization production, RAP availability, and QA certification—so every lot and heat
+      stays traceable from raw material to dispatch.
+    </p>
+    <p style="margin:0">
+      Your current role is <span class="role-pill">{{ role }}</span>. Modules below are enabled based
+      on your permissions. Disabled buttons indicate areas outside your access scope.
+    </p>
   </div>
+
+  <h2 style="margin:20px 0 10px 0">Modules</h2>
+
+  <div class="modules">
+
+    <!-- Dashboard (future) -->
+    <div class="card">
+      <h3>Dashboard</h3>
+      <div class="who">Admins &amp; View (coming soon)</div>
+      <div class="footer">
+        {% if role in ['admin','view'] %}
+          <span class="btn disabled">Open</span>
+          <span class="coming">Coming soon</span>
+        {% else %}
+          <span class="btn disabled">Open</span><span class="cross">✗</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- GRN -->
+    <div class="card">
+      <h3>GRN</h3>
+      <div class="who">Admin, Store</div>
+      <div class="footer">
+        {% if role in ['admin','store'] %}
+          <a class="btn" href="/grn">Open</a>
+        {% else %}
+          <span class="btn disabled">Open</span><span class="cross">✗</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Melting -->
+    <div class="card">
+      <h3>Melting</h3>
+      <div class="who">Admin, Melting</div>
+      <div class="footer">
+        {% if role in ['admin','melting'] %}
+          <a class="btn" href="/melting">Open</a>
+        {% else %}
+          <span class="btn disabled">Open</span><span class="cross">✗</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Atomization -->
+    <div class="card">
+      <h3>Atomization</h3>
+      <div class="who">Admin, Atom</div>
+      <div class="footer">
+        {% if role in ['admin','atom'] %}
+          <a class="btn" href="/atomization">Open</a>
+        {% else %}
+          <span class="btn disabled">Open</span><span class="cross">✗</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- RAP -->
+    <div class="card">
+      <h3>RAP</h3>
+      <div class="who">Admin, RAP</div>
+      <div class="footer">
+        {% if role in ['admin','rap'] %}
+          <a class="btn" href="/rap">Open</a>
+        {% else %}
+          <span class="btn disabled">Open</span><span class="cross">✗</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- QA -->
+    <div class="card">
+      <h3>QA</h3>
+      <div class="who">Admin, QA</div>
+      <div class="footer">
+        {% if role in ['admin','qa'] %}
+          <a class="btn" href="/qa-dashboard">Open</a>
+        {% else %}
+          <span class="btn disabled">Open</span><span class="cross">✗</span>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+
 </body>
 </html>
