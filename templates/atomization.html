@@ -232,7 +232,7 @@
             <th>Type</th>
             <th class="right">Output (kg)</th>
             <th class="right">Available (kg)</th>
-            <th class="right">Cost/kg (₹)</th>
+            {% if role == 'admin' %}<th class="right">Cost/kg (₹)</th>{% endif %}
             <th class="right">kWh/ton</th>
             <th>Trace</th>
             <th class="right">Allocate (kg)</th>
@@ -248,7 +248,7 @@
               <td>{% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
               <td class="right">{{ '%.1f' % (h.actual_output or 0) }}</td>
               <td class="right">{{ '%.1f' % avail }}</td>
-              <td class="right">{{ '%.2f' % (h.unit_cost or 0) }}</td>
+              {% if role == 'admin' %}<td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>{% endif %}
               <td class="right">{{ '%.1f' % kwhpt }}</td>
               <td><a class="btn ghost" href="/traceability/heat/{{ h.id }}">View</a></td>
               <td class="right" style="width:160px">
@@ -305,7 +305,7 @@
           <th>Lot</th>
           <th>Grade</th>
           <th class="right">Weight (kg)</th>
-          <th class="right">Cost/kg (₹)</th>
+          {% if role == 'admin' %}<th class="right">Cost/kg (₹)</th>{% endif %}
           <th>QA</th>
           <th>Trace</th>
           <th>PDF</th>
@@ -318,7 +318,7 @@
             <td>{{ lot.lot_no }}</td>
             <td>{% if (lot.grade or 'KRIP') == 'KRFS' %}<span class="badge badge-info">KRFS</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
             <td class="right">{{ '%.1f' % (lot.weight or 0) }}</td>
-            <td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>
+            {% if role == 'admin' %}<td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>{% endif %}
             <td>{{ lot.qa_status or '' }}</td>
             <td><a class="btn ghost" href="/traceability/lot/{{ lot.id }}">Trace</a></td>
             <td><a class="btn" href="/pdf/lot/{{ lot.id }}">PDF</a></td>
