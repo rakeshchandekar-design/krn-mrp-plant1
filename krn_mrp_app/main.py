@@ -2,6 +2,8 @@ import os, io, datetime as dt
 from typing import Optional, Dict, List, Tuple
 from urllib.parse import quote
 from enum import Enum
+from starlette.middleware.sessions import SessionMiddleware
+import secrets
 
 # FastAPI
 from fastapi import FastAPI, Request, Form, Depends, Response
@@ -511,11 +513,35 @@ if not os.path.isdir(STATIC_DIR):
     STATIC_DIR = os.path.join(BASE_DIR, "..", "static")
 
 app = FastAPI()
+# session middleware (keep the secret; regenerate for production)
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_hex(16)))
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 # expose python builtins to Jinja
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
+
+# ---- Users: username = department; default password = same as username ----
+# Change passwords here later.
+USER_DB = {
+    "admin":   {"password": "admin",   "role": "admin"},
+    "store":   {"password": "store",   "role": "store"},
+    "melting": {"password": "melting", "role": "melting"},
+    "atom":    {"password": "atom",    "role": "atom"},
+    "rap":     {"password": "rap",     "role": "rap"},
+    "qa":      {"password": "qa",      "role": "qa"},
+    # optional read-only viewer role (future)
+    "KRN":    {"password": "KRN",    "role": "view"},
+}
+
+def current_username(request: Request) -> str:
+    return (getattr(request, "session", {}) or {}).get("user", "") or ""
+
+def current_role(request: Request) -> str:
+    return (getattr(request, "session", {}) or {}).get("role", "guest") or "guest"
+
+def role_allowed(request: Request, allowed: set[str]) -> bool:
+    return current_role(request) in allowed
 
 # -------------------------------------------------
 # Startup
@@ -538,6 +564,57 @@ def get_db():
 # -------------------------------------------------
 # Helpers
 # -------------------------------------------------
+def _lot_default_chemistry(db: Session, lot: Lot) -> Dict[str, Optional[float]]:
+    """
+    Default chemistry for a lot:
+      - If any single heat contributes > 60% of the lot weight, use THAT heat's chemistry.
+      - Else use a WEIGHTED AVERAGE of all heats' chemistry by their allocation qty.
+    Returns dict with numeric floats or None for keys: c, si, s, p, cu, ni, mn, fe
+    """
+    # gather allocations
+    allocs = list(getattr(lot, "heats", []) or [])
+    total = sum(float(getattr(a, "qty", 0.0) or 0.0) for a in allocs) or 0.0
+    if total <= 0:
+        return {k: None for k in ["c","si","s","p","cu","ni","mn","fe"]}
+
+    # check 60% rule
+    for a in allocs:
+        share = float(a.qty or 0.0) / total
+        if share > 0.60:
+            h = db.get(Heat, a.heat_id)
+            chem = getattr(h, "chemistry", None)
+            if not chem:
+                continue
+            out = {}
+            for k in ["c","si","s","p","cu","ni","mn","fe"]:
+                try:
+                    out[k] = float(getattr(chem, k) or "")
+                except Exception:
+                    out[k] = None
+            return out
+
+    # weighted average
+    sums = {k: 0.0 for k in ["c","si","s","p","cu","ni","mn","fe"]}
+    have_any = False
+    for a in allocs:
+        if (a.qty or 0) <= 0:
+            continue
+        h = db.get(Heat, a.heat_id)
+        chem = getattr(h, "chemistry", None)
+        if not chem:
+            continue
+        w = float(a.qty or 0.0)
+        for k in list(sums.keys()):
+            try:
+                v = float(getattr(chem, k) or "")
+                sums[k] += v * w
+                have_any = True
+            except Exception:
+                pass
+    if not have_any or total <= 0:
+        return {k: None for k in ["c","si","s","p","cu","ni","mn","fe"]}
+    return {k: (sums[k] / total) for k in sums.keys()}
+
 def heat_grade(heat: Heat) -> str:
     for cons in heat.rm_consumptions:
         if cons.rm_type == "FeSi":
@@ -629,6 +706,23 @@ def ensure_rap_lot(db: Session, lot: Lot) -> RAPLot:
     db.add(rap); db.flush()
     return rap
 
+@app.get("/login", response_class=HTMLResponse)
+def login_form(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request, "err": request.query_params.get("err", "")})
+
+@app.post("/login")
+async def login_post(request: Request, username: str = Form(...), password: str = Form(...)):
+    u = (USER_DB.get((username or "").strip().lower()) or {})
+    if not u or u.get("password") != (password or ""):
+        return RedirectResponse("/login?err=Invalid+credentials", status_code=303)
+    request.session["user"] = username.strip().lower()
+    request.session["role"] = u.get("role", "guest")
+    return RedirectResponse("/", status_code=303)
+
+@app.get("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/", status_code=303)
 
 # -------------------------------------------------
 # Health + Setup + Home
@@ -645,7 +739,11 @@ def setup(db: Session = Depends(get_db)):
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "user": current_username(request), "role": current_role(request)}
+    )
+
 
 # -------------------------------------------------
 # GRN (unchanged)
@@ -658,6 +756,9 @@ def grn_list(
     end: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
+    if not role_allowed(request, {"admin", "store"}):
+        return RedirectResponse("/login", status_code=303)
+
     q = db.query(GRN)
     if report:
         if start:
@@ -681,6 +782,7 @@ def grn_list(
         "grn.html",
         {
             "request": request,
+            "role": current_role(request),
             "grns": grns,
             "prices": rm_price_defaults(),
             "report": report,
@@ -792,6 +894,9 @@ def melting_page(
     all: Optional[int] = 0,        # if 1 => show all heats with available > 0
     db: Session = Depends(get_db),
 ):
+    if not role_allowed(request, {"admin", "melting"}):
+        return RedirectResponse("/login", status_code=303)
+
     heats: List[Heat] = (
         db.query(Heat)
         .options(joinedload(Heat.rm_consumptions).joinedload(HeatRM.grn))
@@ -876,6 +981,7 @@ def melting_page(
         "melting.html",
         {
             "request": request,
+            "role": current_role(request),
             "rm_types": RM_TYPES,
             "pending": visible_heats,
             "heat_grades": {r["heat"].id: r["grade"] for r in rows},
@@ -1078,10 +1184,14 @@ def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
         chem = HeatChem(heat=heat)
         db.add(chem); db.commit(); db.refresh(chem)
 
+    ro = not role_allowed(request, {"admin", "qa"})
+
     return templates.TemplateResponse(
         "qa_heat.html",
         {
             "request": request,
+            "read_only": ro,
+            "role": current_role(request),
             "heat": heat,
             "chem": {
                 "C": (chem.c or ""),
@@ -1108,6 +1218,10 @@ def qa_heat_save(
     heat = db.get(Heat, heat_id)
     if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
+    
+    if not role_allowed(request, {"admin", "qa"}):
+        return PlainTextResponse("Forbidden", status_code=403)
+
 
     # strict numeric, non-blank, > 0
     fields = {"C": C, "Si": Si, "S": S, "P": P, "Cu": Cu, "Ni": Ni, "Mn": Mn, "Fe": Fe}
@@ -1145,6 +1259,9 @@ def atom_page(
     end: Optional[str] = None,     # YYYY-MM-DD
     db: Session = Depends(get_db)
 ):
+    if not role_allowed(request, {"admin", "atom"}):
+        return RedirectResponse("/login", status_code=303)
+
     # Only APPROVED heats
     heats_all = (
         db.query(Heat)
@@ -1243,6 +1360,7 @@ def atom_page(
         "atomization.html",
         {
             "request": request,
+            "role": current_role(request),
             "heats": heats,
             "lots": lots,
             "heat_grades": grades,
@@ -1424,6 +1542,9 @@ def qa_dashboard(
     end: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
+    if not role_allowed(request, {"admin", "qa"}):
+        return RedirectResponse("/login", status_code=303)
+
     today = dt.date.today()
 
     # resolve range (default = today)
@@ -1480,6 +1601,7 @@ def qa_dashboard(
           "qa_dashboard.html",
         {
             "request": request,
+            "role": current_role(request),
             "heats": heats_vis,
             "lots": lots_vis,
             "heat_grades": heat_grades,
@@ -1688,6 +1810,8 @@ def atom_downtime_add(
 # -------------------------------------------------
 @app.get("/rap", response_class=HTMLResponse)
 def rap_page(request: Request, db: Session = Depends(get_db)):
+    if not role_allowed(request, {"admin", "rap"}):
+        return RedirectResponse("/login", status_code=303)
     """
     Show APPROVED atomization lots in RAP, ensure RAPLot rows exist,
     and compute grade-wise available KPIs.
@@ -1751,6 +1875,7 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
         "rap.html",
         {
             "request": request,
+            "role": current_role(request),
             "rows": rap_rows,
             "kpi": kpi,
             "kpi_trends": kpi_trends,
@@ -2084,123 +2209,84 @@ def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
 
 @app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
 def qa_lot_form(lot_id: int, request: Request, db: Session = Depends(get_db)):
+    """
+    Editable Lot QA form for QA/Admin; everyone else read-only.
+    Prefills chemistry using 60% rule else weighted average.
+    """
     lot = db.get(Lot, lot_id)
     if not lot:
         return PlainTextResponse("Lot not found", status_code=404)
 
-    # existing QA blocks (or blanks for template)
-    chem = lot.chemistry or LotChem(lot=lot)
-    phys = lot.phys or LotPhys(lot=lot)
-    psd  = lot.psd or LotPSD(lot=lot)
+    ro = not role_allowed(request, {"admin", "qa"})  # read-only for non QA/Admin
 
-    # ----- prefill chemistry by rule -----
-    # If one heat >=60% of lot.weight and has chemistry => use that heat's chem.
-    # Else => weighted average of heats used in this lot.
-    allocs = db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()
-    total = float(lot.weight or 0.0)
-    winner_heat_id = None
-    if total > 0:
-        for a in allocs:
-            if float(a.qty or 0.0) / total >= 0.60:
-                winner_heat_id = a.heat_id
-                break
-
-    def _to_float(s):
-        try:
-            return float(s)
-        except Exception:
-            return None
-
-    auto = {k: "" for k in ["C","Si","S","P","Cu","Ni","Mn","Fe"]}
-    if winner_heat_id:
-        h = db.get(Heat, int(winner_heat_id))
-        if h and h.chemistry:
-            auto = {
-                "C":  h.chemistry.c  or "",
-                "Si": h.chemistry.si or "",
-                "S":  h.chemistry.s  or "",
-                "P":  h.chemistry.p  or "",
-                "Cu": h.chemistry.cu or "",
-                "Ni": h.chemistry.ni or "",
-                "Mn": h.chemistry.mn or "",
-                "Fe": h.chemistry.fe or "",
-            }
+    # existing or default chemistry
+    if lot.chemistry:
+        chem_defaults = {}
+        for k in ["c","si","s","p","cu","ni","mn","fe"]:
+            try:
+                chem_defaults[k] = float(getattr(lot.chemistry, k) or "")
+            except Exception:
+                chem_defaults[k] = None
     else:
-        # weighted average
-        sums = {k: 0.0 for k in ["c","si","s","p","cu","ni","mn","fe"]}
-        wt = 0.0
-        for a in allocs:
-            q = float(a.qty or 0.0)
-            h = db.get(Heat, a.heat_id)
-            if not (h and h.chemistry and q > 0):
-                continue
-            for k in list(sums.keys()):
-                v = _to_float(getattr(h.chemistry, k) or "")
-                if v is not None:
-                    sums[k] += v * q
-            wt += q
-        if wt > 0:
-            auto = {
-                "C":  f"{sums['c']/wt:.4f}",
-                "Si": f"{sums['si']/wt:.4f}",
-                "S":  f"{sums['s']/wt:.4f}",
-                "P":  f"{sums['p']/wt:.4f}",
-                "Cu": f"{sums['cu']/wt:.4f}",
-                "Ni": f"{sums['ni']/wt:.4f}",
-                "Mn": f"{sums['mn']/wt:.4f}",
-                "Fe": f"{sums['fe']/wt:.4f}",
-            }
+        chem_defaults = _lot_default_chemistry(db, lot)
 
-    # prefer existing saved chem over auto if present
-    chem_dict = {
-        "C":  (chem.c  or auto["C"]),
-        "Si": (chem.si or auto["Si"]),
-        "S":  (chem.s  or auto["S"]),
-        "P":  (chem.p  or auto["P"]),
-        "Cu": (chem.cu or auto["Cu"]),
-        "Ni": (chem.ni or auto["Ni"]),
-        "Mn": (chem.mn or auto["Mn"]),
-        "Fe": (chem.fe or auto["Fe"]),
-    }
+    # ensure phys/psd objects exist for form rendering
+    phys = lot.phys or LotPhys(lot=lot, ad="", flow="")
+    psd  = lot.psd  or LotPSD(lot=lot, p212="", p180="", n180p150="", n150p75="", n75p45="", n45="")
 
-    grade = (lot.grade or "KRIP")
     return templates.TemplateResponse(
         "qa_lot.html",
         {
             "request": request,
+            "read_only": ro,
+            "role": current_role(request),
             "lot": lot,
-            "grade": grade,
-            "chem": chem_dict,
-            "phys": {"ad": (phys.ad or ""), "flow": (phys.flow or "")},
-            "psd": {
-                "p212": (psd.p212 or ""), "p180": (psd.p180 or ""),
-                "n180p150": (psd.n180p150 or ""), "n150p75": (psd.n150p75 or ""),
-                "n75p45": (psd.n75p45 or ""), "n45": (psd.n45 or "")
+            "grade": (lot.grade or "KRIP"),
+            "chem": {
+                "C":  "" if chem_defaults["c"]  is None else f"{chem_defaults['c']:.4f}",
+                "Si": "" if chem_defaults["si"] is None else f"{chem_defaults['si']:.4f}",
+                "S":  "" if chem_defaults["s"]  is None else f"{chem_defaults['s']:.4f}",
+                "P":  "" if chem_defaults["p"]  is None else f"{chem_defaults['p']:.4f}",
+                "Cu": "" if chem_defaults["cu"] is None else f"{chem_defaults['cu']:.4f}",
+                "Ni": "" if chem_defaults["ni"] is None else f"{chem_defaults['ni']:.4f}",
+                "Mn": "" if chem_defaults["mn"] is None else f"{chem_defaults['mn']:.4f}",
+                "Fe": "" if chem_defaults["fe"] is None else f"{chem_defaults['fe']:.4f}",
             },
-        }
+            "phys": {"ad": phys.ad or "", "flow": phys.flow or ""},
+            "psd": {
+                "p212": psd.p212 or "", "p180": psd.p180 or "",
+                "n180p150": psd.n180p150 or "", "n150p75": psd.n150p75 or "",
+                "n75p45": psd.n75p45 or "", "n45": psd.n45 or "",
+            },
+        },
     )
 
 @app.post("/qa/lot/{lot_id}")
 def qa_lot_save(
     lot_id: int,
-    # Chemistry
-    C: str = Form(...), Si: str = Form(...), S: str = Form(...), P: str = Form(...),
-    Cu: str = Form(...), Ni: str = Form(...), Mn: str = Form(...), Fe: str = Form(...),
-    # Physical
-    ad: str = Form(...), flow: str = Form(...),
-    # PSD
-    p212: str = Form(...), p180: str = Form(...), n180p150: str = Form(...),
-    n150p75: str = Form(...), n75p45: str = Form(...), n45: str = Form(...),
-    # Decision
-    decision: str = Form(...), remarks: str = Form(""),
+    # chemistry
+    C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
+    Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
+    # physical
+    ad: str = Form(""), flow: str = Form(""),
+    # psd
+    p212: str = Form(""), p180: str = Form(""), n180p150: str = Form(""),
+    n150p75: str = Form(""), n75p45: str = Form(""), n45: str = Form(""),
+    # decision
+    decision: str = Form("APPROVED"), remarks: str = Form(""),
+    request: Request = None,
     db: Session = Depends(get_db),
 ):
+    # access gate: only admin/qa can save
+    if not role_allowed(request, {"admin", "qa"}):
+        return PlainTextResponse("Forbidden", status_code=403)
+
     lot = db.get(Lot, lot_id)
     if not lot:
         return PlainTextResponse("Lot not found", status_code=404)
 
-    # helper: force numeric > 0 for all provided fields
-    def must_num_gt_zero(name: str, val: str) -> float:
+    # strict numeric validations (non-blank, numeric, > 0) for ALL fields
+    def _req_pos_float(name: str, val: str) -> float:
         s = (val or "").strip()
         try:
             f = float(s)
@@ -2211,53 +2297,50 @@ def qa_lot_save(
         return f
 
     try:
-        chem_vals = {
-            "C":  must_num_gt_zero("C", C),
-            "Si": must_num_gt_zero("Si", Si),
-            "S":  must_num_gt_zero("S", S),
-            "P":  must_num_gt_zero("P", P),
-            "Cu": must_num_gt_zero("Cu", Cu),
-            "Ni": must_num_gt_zero("Ni", Ni),
-            "Mn": must_num_gt_zero("Mn", Mn),
-            "Fe": must_num_gt_zero("Fe", Fe),
+        chem_fields = {
+            "C": _req_pos_float("C", C), "Si": _req_pos_float("Si", Si),
+            "S": _req_pos_float("S", S), "P": _req_pos_float("P", P),
+            "Cu": _req_pos_float("Cu", Cu), "Ni": _req_pos_float("Ni", Ni),
+            "Mn": _req_pos_float("Mn", Mn), "Fe": _req_pos_float("Fe", Fe),
         }
-        ad_v   = must_num_gt_zero("AD", ad)
-        flow_v = must_num_gt_zero("Flow", flow)
-        psd_vals = {
-            "p212": must_num_gt_zero("+212", p212),
-            "p180": must_num_gt_zero("+180", p180),
-            "n180p150": must_num_gt_zero("-180+150", n180p150),
-            "n150p75":  must_num_gt_zero("-150+75", n150p75),
-            "n75p45":   must_num_gt_zero("-75+45", n75p45),
-            "n45":      must_num_gt_zero("-45", n45),
+        phys_ad   = _req_pos_float("AD", ad)
+        phys_flow = _req_pos_float("Flow", flow)
+        psd_fields = {
+            "p212": _req_pos_float("+212", p212),
+            "p180": _req_pos_float("+180", p180),
+            "n180p150": _req_pos_float("-180+150", n180p150),
+            "n150p75":  _req_pos_float("-150+75", n150p75),
+            "n75p45":   _req_pos_float("-75+45", n75p45),
+            "n45":      _req_pos_float("-45", n45),
         }
-    except ValueError as ex:
-        return PlainTextResponse(str(ex), status_code=400)
+    except ValueError as ve:
+        return PlainTextResponse(str(ve), status_code=400)
 
-    # upsert chemistry/phys/psd
+    # upsert LotChem / LotPhys / LotPSD
     lchem = lot.chemistry or LotChem(lot=lot)
-    lchem.c  = f"{chem_vals['C']:.4f}";   lchem.si = f"{chem_vals['Si']:.4f}"
-    lchem.s  = f"{chem_vals['S']:.4f}";   lchem.p  = f"{chem_vals['P']:.4f}"
-    lchem.cu = f"{chem_vals['Cu']:.4f}";  lchem.ni = f"{chem_vals['Ni']:.4f}"
-    lchem.mn = f"{chem_vals['Mn']:.4f}";  lchem.fe = f"{chem_vals['Fe']:.4f}"
+    lchem.c  = f"{chem_fields['C']:.4f}";   lchem.si = f"{chem_fields['Si']:.4f}"
+    lchem.s  = f"{chem_fields['S']:.4f}";   lchem.p  = f"{chem_fields['P']:.4f}"
+    lchem.cu = f"{chem_fields['Cu']:.4f}";  lchem.ni = f"{chem_fields['Ni']:.4f}"
+    lchem.mn = f"{chem_fields['Mn']:.4f}";  lchem.fe = f"{chem_fields['Fe']:.4f}"
 
     lphys = lot.phys or LotPhys(lot=lot)
-    lphys.ad = f"{ad_v:.4f}"
-    lphys.flow = f"{flow_v:.4f}"
+    lphys.ad = f"{phys_ad:.4f}"
+    lphys.flow = f"{phys_flow:.4f}"
 
     lpsd = lot.psd or LotPSD(lot=lot)
-    lpsd.p212 = f"{psd_vals['p212']:.4f}"
-    lpsd.p180 = f"{psd_vals['p180']:.4f}"
-    lpsd.n180p150 = f"{psd_vals['n180p150']:.4f}"
-    lpsd.n150p75  = f"{psd_vals['n150p75']:.4f}"
-    lpsd.n75p45   = f"{psd_vals['n75p45']:.4f}"
-    lpsd.n45      = f"{psd_vals['n45']:.4f}"
+    lpsd.p212 = f"{psd_fields['p212']:.4f}"
+    lpsd.p180 = f"{psd_fields['p180']:.4f}"
+    lpsd.n180p150 = f"{psd_fields['n180p150']:.4f}"
+    lpsd.n150p75  = f"{psd_fields['n150p75']:.4f}"
+    lpsd.n75p45   = f"{psd_fields['n75p45']:.4f}"
+    lpsd.n45      = f"{psd_fields['n45']:.4f}"
 
-    lot.qa_status = (decision or "APPROVED").upper()
+    lot.qa_status  = (decision or "APPROVED").upper()
     lot.qa_remarks = remarks or ""
 
-    db.add_all([lot, lchem, lphys, lpsd]); db.commit()
+    db.add_all([lchem, lphys, lpsd, lot]); db.commit()
     return RedirectResponse("/qa-dashboard", status_code=303)
+
 
 @app.get("/lot/{lot_id}/pdf")
 def lot_pdf_view(lot_id: int, db: Session = Depends(get_db)):
