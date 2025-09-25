@@ -40,6 +40,7 @@
   </script>
 </head>
 <body>
+  {% set read_only = is_read_only(request) %}
   <!-- brand row -->
   <div class="brand">
     <p class="name">KRN Alloys Pvt. Ltd</p>
@@ -49,7 +50,9 @@
   <h1>Stores – GRN</h1>
 
   <p>
-    <a class="btn" href="/grn/new">New GRN</a>
+    {% if not read_only %}
+      <a class="btn" href="/grn/new">New GRN</a>
+    {% endif %}
     <a class="btn" href="/">Home</a>
     <a class="btn" href="javascript:void(0)" onclick="goToday()">Today</a>
 
