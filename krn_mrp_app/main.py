@@ -1099,7 +1099,8 @@ def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
 
 @app.post("/qa/heat/{heat_id}")
 def qa_heat_save(
-    heat_id: int, C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
+    heat_id: int,
+    C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
     Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
     decision: str = Form("APPROVED"), remarks: str = Form(""),
     db: Session = Depends(get_db),
@@ -1108,12 +1109,31 @@ def qa_heat_save(
     if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
 
+    # strict numeric, non-blank, > 0
+    fields = {"C": C, "Si": Si, "S": S, "P": P, "Cu": Cu, "Ni": Ni, "Mn": Mn, "Fe": Fe}
+    parsed: Dict[str, float] = {}
+    for k, v in fields.items():
+        s = (v or "").strip()
+        try:
+            val = float(s)
+        except Exception:
+            return PlainTextResponse(f"{k} must be a number > 0.", status_code=400)
+        if val <= 0:
+            return PlainTextResponse(f"{k} must be > 0.", status_code=400)
+        parsed[k] = val
+
     chem = heat.chemistry or HeatChem(heat=heat)
-    chem.c = C; chem.si = Si; chem.s = S; chem.p = P
-    chem.cu = Cu; chem.ni = Ni; chem.mn = Mn; chem.fe = Fe
-    heat.qa_status = decision; heat.qa_remarks = remarks
+    chem.c  = f"{parsed['C']:.4f}";   chem.si = f"{parsed['Si']:.4f}"
+    chem.s  = f"{parsed['S']:.4f}";   chem.p  = f"{parsed['P']:.4f}"
+    chem.cu = f"{parsed['Cu']:.4f}";  chem.ni = f"{parsed['Ni']:.4f}"
+    chem.mn = f"{parsed['Mn']:.4f}";  chem.fe = f"{parsed['Fe']:.4f}"
+
+    heat.qa_status = (decision or "APPROVED").upper()
+    heat.qa_remarks = remarks or ""
+
     db.add_all([chem, heat]); db.commit()
-    return RedirectResponse("/melting", status_code=303)
+    return RedirectResponse("/qa-dashboard", status_code=303)
+
 
 # -------------------------------------------------
 # Atomization (ENHANCED — additions only; existing allocation UI untouched)
@@ -1398,11 +1418,119 @@ def atom_downtime_export(db: Session = Depends(get_db)):
 # QA Dashboard
 # -------------------------------------------------
 @app.get("/qa-dashboard", response_class=HTMLResponse)
-def qa_dashboard(request: Request, db: Session = Depends(get_db)):
-    heats = db.query(Heat).order_by(Heat.id.desc()).all()
-    lots = db.query(Lot).order_by(Lot.id.desc()).all()
+def qa_dashboard(
+    request: Request,
+    start: Optional[str] = None,   # YYYY-MM-DD
+    end: Optional[str] = None,     # YYYY-MM-DD
+    db: Session = Depends(get_db)
+):
+    today = dt.date.today()
+
+    # date window (defaults = today)
+    s = start or today.isoformat()
+    e = end or today.isoformat()
+    try:
+        s_date = dt.date.fromisoformat(s)
+        e_date = dt.date.fromisoformat(e)
+    except Exception:
+        s_date, e_date = today, today
+
+    # filter heats/lots by date parsed from number/name
+    all_heats = db.query(Heat).order_by(Heat.id.desc()).all()
+    def _hdate(h: Heat) -> dt.date:
+        return heat_date_from_no(h.heat_no) or today
+    heats = [h for h in all_heats if s_date <= _hdate(h) <= e_date]
+
+    all_lots = db.query(Lot).order_by(Lot.id.desc()).all()
+    def _ldate(l: Lot) -> dt.date:
+        return lot_date_from_no(l.lot_no or "") or today
+    lots = [l for l in all_lots if s_date <= _ldate(l) <= e_date]
+
+    # KPIs (month-to-date)
+    month_start = today.replace(day=1)
+    m_lots = [l for l in all_lots if (lot_date_from_no(l.lot_no or "") or today) >= month_start]
+    kpi_approved = sum(float(l.weight or 0.0) for l in m_lots if (l.qa_status or "").upper() == "APPROVED")
+    kpi_hold     = sum(float(l.weight or 0.0) for l in m_lots if (l.qa_status or "").upper() == "HOLD")
+    kpi_rejected = sum(float(l.weight or 0.0) for l in m_lots if (l.qa_status or "").upper() == "REJECTED")
+
+    # Right KPIs
+    pending_qa = len([l for l in all_lots if (l.qa_status or "PENDING").upper() == "PENDING"])
+    todays_qa  = len([l for l in all_lots if _ldate(l) == today])
+
     heat_grades = {h.id: heat_grade(h) for h in heats}
-    return templates.TemplateResponse("qa_dashboard.html", {"request": request, "heats": heats, "lots": lots, "heat_grades": heat_grades})
+
+    return templates.TemplateResponse(
+        "qa_dashboard.html",
+        {
+            "request": request,
+            "heats": heats,
+            "lots": lots,
+            "heat_grades": heat_grades,
+            "start": s,
+            "end": e,
+            # KPIs for the page header blocks
+            "kpi_approved": kpi_approved,
+            "kpi_hold": kpi_hold,
+            "kpi_rejected": kpi_rejected,
+            "pending_qa": pending_qa,
+            "todays_qa": todays_qa,
+            "today_iso": today.isoformat(),
+        }
+    )
+
+@app.get("/qa/export")
+def qa_export(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    today = dt.date.today()
+    s = dt.date.fromisoformat(start) if start else today
+    e = dt.date.fromisoformat(end) if end else today
+
+    heats = db.query(Heat).order_by(Heat.id.asc()).all()
+    lots  = db.query(Lot).order_by(Lot.id.asc()).all()
+
+    out = io.StringIO()
+    out.write("TYPE,ID/NO,Date,Grade/NA,QA,Fields...\n")
+
+    # Heats
+    for h in heats:
+        d = heat_date_from_no(h.heat_no) or today
+        if not (s <= d <= e): continue
+        g = heat_grade(h)
+        c = h.chemistry
+        fields = []
+        if c:
+            fields = [f"C={c.c or ''}", f"Si={c.si or ''}", f"S={c.s or ''}", f"P={c.p or ''}",
+                      f"Cu={c.cu or ''}", f"Ni={c.ni or ''}", f"Mn={c.mn or ''}", f"Fe={c.fe or ''}"]
+        out.write(f"HEAT,{h.heat_no},{d.isoformat()},{g},{h.qa_status or ''},{' '.join(fields)}\n")
+
+    # Lots
+    for l in lots:
+        d = lot_date_from_no(l.lot_no or "") or today
+        if not (s <= d <= e): continue
+        c = l.chemistry; p = l.phys; ps = l.psd
+        fields = []
+        if c:
+            fields += [f"C={c.c or ''}", f"Si={c.si or ''}", f"S={c.s or ''}", f"P={c.p or ''}",
+                       f"Cu={c.cu or ''}", f"Ni={c.ni or ''}", f"Mn={c.mn or ''}", f"Fe={c.fe or ''}"]
+        if p:
+            fields += [f"AD={p.ad or ''}", f"Flow={p.flow or ''}"]
+        if ps:
+            fields += [f"+212={ps.p212 or ''}", f"+180={ps.p180 or ''}", f"-180+150={ps.n180p150 or ''}",
+                       f"-150+75={ps.n150p75 or ''}", f"-75+45={ps.n75p45 or ''}", f"-45={ps.n45 or ''}"]
+        out.write(f"LOT,{l.lot_no},{d.isoformat()},{l.grade or ''},{l.qa_status or ''},{' '.join(fields)}\n")
+
+
+    data = out.getvalue().encode("utf-8")
+    fn = f"qa_export_{s.isoformat()}_{e.isoformat()}.csv"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename=\"{fn}\"'}
+    )
+
 
 # -------------------------------------------------
 # Traceability - LOT (existing)
@@ -1921,9 +2049,181 @@ def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
     return HTMLResponse("".join(html))
 
 @app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
-def qa_lot_alias(lot_id: int, db: Session = Depends(get_db)):
-    # call the existing view so behavior stays identical
-    return lot_qa_view(lot_id, db)
+def qa_lot_form(lot_id: int, request: Request, db: Session = Depends(get_db)):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+
+    # existing QA blocks (or blanks for template)
+    chem = lot.chemistry or LotChem(lot=lot)
+    phys = lot.phys or LotPhys(lot=lot)
+    psd  = lot.psd or LotPSD(lot=lot)
+
+    # ----- prefill chemistry by rule -----
+    # If one heat >=60% of lot.weight and has chemistry => use that heat's chem.
+    # Else => weighted average of heats used in this lot.
+    allocs = db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()
+    total = float(lot.weight or 0.0)
+    winner_heat_id = None
+    if total > 0:
+        for a in allocs:
+            if float(a.qty or 0.0) / total >= 0.60:
+                winner_heat_id = a.heat_id
+                break
+
+    def _to_float(s):
+        try:
+            return float(s)
+        except Exception:
+            return None
+
+    auto = {k: "" for k in ["C","Si","S","P","Cu","Ni","Mn","Fe"]}
+    if winner_heat_id:
+        h = db.get(Heat, int(winner_heat_id))
+        if h and h.chemistry:
+            auto = {
+                "C":  h.chemistry.c  or "",
+                "Si": h.chemistry.si or "",
+                "S":  h.chemistry.s  or "",
+                "P":  h.chemistry.p  or "",
+                "Cu": h.chemistry.cu or "",
+                "Ni": h.chemistry.ni or "",
+                "Mn": h.chemistry.mn or "",
+                "Fe": h.chemistry.fe or "",
+            }
+    else:
+        # weighted average
+        sums = {k: 0.0 for k in ["c","si","s","p","cu","ni","mn","fe"]}
+        wt = 0.0
+        for a in allocs:
+            q = float(a.qty or 0.0)
+            h = db.get(Heat, a.heat_id)
+            if not (h and h.chemistry and q > 0):
+                continue
+            for k in list(sums.keys()):
+                v = _to_float(getattr(h.chemistry, k) or "")
+                if v is not None:
+                    sums[k] += v * q
+            wt += q
+        if wt > 0:
+            auto = {
+                "C":  f"{sums['c']/wt:.4f}",
+                "Si": f"{sums['si']/wt:.4f}",
+                "S":  f"{sums['s']/wt:.4f}",
+                "P":  f"{sums['p']/wt:.4f}",
+                "Cu": f"{sums['cu']/wt:.4f}",
+                "Ni": f"{sums['ni']/wt:.4f}",
+                "Mn": f"{sums['mn']/wt:.4f}",
+                "Fe": f"{sums['fe']/wt:.4f}",
+            }
+
+    # prefer existing saved chem over auto if present
+    chem_dict = {
+        "C":  (chem.c  or auto["C"]),
+        "Si": (chem.si or auto["Si"]),
+        "S":  (chem.s  or auto["S"]),
+        "P":  (chem.p  or auto["P"]),
+        "Cu": (chem.cu or auto["Cu"]),
+        "Ni": (chem.ni or auto["Ni"]),
+        "Mn": (chem.mn or auto["Mn"]),
+        "Fe": (chem.fe or auto["Fe"]),
+    }
+
+    grade = (lot.grade or "KRIP")
+    return templates.TemplateResponse(
+        "qa_lot.html",
+        {
+            "request": request,
+            "lot": lot,
+            "grade": grade,
+            "chem": chem_dict,
+            "phys": {"ad": (phys.ad or ""), "flow": (phys.flow or "")},
+            "psd": {
+                "p212": (psd.p212 or ""), "p180": (psd.p180 or ""),
+                "n180p150": (psd.n180p150 or ""), "n150p75": (psd.n150p75 or ""),
+                "n75p45": (psd.n75p45 or ""), "n45": (psd.n45 or "")
+            },
+        }
+    )
+
+@app.post("/qa/lot/{lot_id}")
+def qa_lot_save(
+    lot_id: int,
+    # Chemistry
+    C: str = Form(...), Si: str = Form(...), S: str = Form(...), P: str = Form(...),
+    Cu: str = Form(...), Ni: str = Form(...), Mn: str = Form(...), Fe: str = Form(...),
+    # Physical
+    ad: str = Form(...), flow: str = Form(...),
+    # PSD
+    p212: str = Form(...), p180: str = Form(...), n180p150: str = Form(...),
+    n150p75: str = Form(...), n75p45: str = Form(...), n45: str = Form(...),
+    # Decision
+    decision: str = Form(...), remarks: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+
+    # helper: force numeric > 0 for all provided fields
+    def must_num_gt_zero(name: str, val: str) -> float:
+        s = (val or "").strip()
+        try:
+            f = float(s)
+        except Exception:
+            raise ValueError(f"{name} must be a number > 0.")
+        if f <= 0:
+            raise ValueError(f"{name} must be > 0.")
+        return f
+
+    try:
+        chem_vals = {
+            "C":  must_num_gt_zero("C", C),
+            "Si": must_num_gt_zero("Si", Si),
+            "S":  must_num_gt_zero("S", S),
+            "P":  must_num_gt_zero("P", P),
+            "Cu": must_num_gt_zero("Cu", Cu),
+            "Ni": must_num_gt_zero("Ni", Ni),
+            "Mn": must_num_gt_zero("Mn", Mn),
+            "Fe": must_num_gt_zero("Fe", Fe),
+        }
+        ad_v   = must_num_gt_zero("AD", ad)
+        flow_v = must_num_gt_zero("Flow", flow)
+        psd_vals = {
+            "p212": must_num_gt_zero("+212", p212),
+            "p180": must_num_gt_zero("+180", p180),
+            "n180p150": must_num_gt_zero("-180+150", n180p150),
+            "n150p75":  must_num_gt_zero("-150+75", n150p75),
+            "n75p45":   must_num_gt_zero("-75+45", n75p45),
+            "n45":      must_num_gt_zero("-45", n45),
+        }
+    except ValueError as ex:
+        return PlainTextResponse(str(ex), status_code=400)
+
+    # upsert chemistry/phys/psd
+    lchem = lot.chemistry or LotChem(lot=lot)
+    lchem.c  = f"{chem_vals['C']:.4f}";   lchem.si = f"{chem_vals['Si']:.4f}"
+    lchem.s  = f"{chem_vals['S']:.4f}";   lchem.p  = f"{chem_vals['P']:.4f}"
+    lchem.cu = f"{chem_vals['Cu']:.4f}";  lchem.ni = f"{chem_vals['Ni']:.4f}"
+    lchem.mn = f"{chem_vals['Mn']:.4f}";  lchem.fe = f"{chem_vals['Fe']:.4f}"
+
+    lphys = lot.phys or LotPhys(lot=lot)
+    lphys.ad = f"{ad_v:.4f}"
+    lphys.flow = f"{flow_v:.4f}"
+
+    lpsd = lot.psd or LotPSD(lot=lot)
+    lpsd.p212 = f"{psd_vals['p212']:.4f}"
+    lpsd.p180 = f"{psd_vals['p180']:.4f}"
+    lpsd.n180p150 = f"{psd_vals['n180p150']:.4f}"
+    lpsd.n150p75  = f"{psd_vals['n150p75']:.4f}"
+    lpsd.n75p45   = f"{psd_vals['n75p45']:.4f}"
+    lpsd.n45      = f"{psd_vals['n45']:.4f}"
+
+    lot.qa_status = (decision or "APPROVED").upper()
+    lot.qa_remarks = remarks or ""
+
+    db.add_all([lot, lchem, lphys, lpsd]); db.commit()
+    return RedirectResponse("/qa-dashboard", status_code=303)
 
 @app.get("/lot/{lot_id}/pdf")
 def lot_pdf_view(lot_id: int, db: Session = Depends(get_db)):
