@@ -113,20 +113,23 @@
   </div>
 
   <!-- Toolbar -->
-  <div class="card">
-    <h3 style="margin:0 0 8px 0;">Filter</h3>
-    <div class="toolbar">
-      <span>From</span>
-      <input id="start" type="date" value="{{ start or today_iso }}">
-      <span>To</span>
-      <input id="end" type="date" value="{{ end or today_iso }}">
-      <button class="btn" onclick="fetchRange()">Fetch</button>
-      <button class="btn secondary" onclick="todayOnly()">Today</button>
-      <button class="btn ghost" onclick="resetRange()">Reset</button>
-      <button class="btn" onclick="downloadCSV()">Download CSV</button>
-      <input type="hidden" id="todayIso" value="{{ today_iso }}">
-    </div>
+<div class="card">
+  <h3 style="margin:0 0 8px 0;">Filter</h3>
+  <div class="toolbar">
+    <span>From</span>
+    <input id="qa_start" type="date" value="{{ start or today_iso }}">
+    <span>To</span>
+    <input id="qa_end" type="date" value="{{ end or today_iso }}">
+
+    <button class="btn" id="qaFetch">Fetch</button>
+    <button class="btn secondary" id="qaToday">Today</button>
+    <button class="btn ghost" id="qaReset">Reset</button>
+    <button class="btn" id="qaCsv">Download CSV</button>
+
+    <input type="hidden" id="todayIso" value="{{ today_iso }}">
   </div>
+</div>
+
 
   <!-- Melting Heat QA list -->
   <div class="card">
@@ -179,5 +182,41 @@
       Chemistry in the Lot QA form is pre-filled by the server: dominant-heat (&gt;=60%) chemistry, else allocation-weighted average.
     </div>
   </div>
+
+  <script>
+(function(){
+  const sEl = document.getElementById('qa_start');
+  const eEl = document.getElementById('qa_end');
+  const today = new Date().toISOString().slice(0,10);
+
+  // Fetch
+  const fetchBtn = document.getElementById('qaFetch');
+  if (fetchBtn) fetchBtn.addEventListener('click', function(){
+    const s = (sEl && sEl.value) || today;
+    const e = (eEl && eEl.value) || today;
+    window.location.href = `/qa-dashboard?start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`;
+  });
+
+  // Today
+  const todayBtn = document.getElementById('qaToday');
+  if (todayBtn) todayBtn.addEventListener('click', function(){
+    window.location.href = `/qa-dashboard?start=${today}&end=${today}`;
+  });
+
+  // Reset → reset to today
+  const resetBtn = document.getElementById('qaReset');
+  if (resetBtn) resetBtn.addEventListener('click', function(){
+    window.location.href = `/qa-dashboard?start=${today}&end=${today}`;
+  });
+
+  // Download CSV
+  const csvBtn = document.getElementById('qaCsv');
+  if (csvBtn) csvBtn.addEventListener('click', function(){
+    const s = (sEl && sEl.value) || today;
+    const e = (eEl && eEl.value) || today;
+    window.location.href = `/qa/export?start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`;
+  });
+})();
+</script>
 </body>
 </html>
