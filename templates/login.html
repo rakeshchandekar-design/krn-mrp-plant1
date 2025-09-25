@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Login – KRN</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;margin:24px;}
+    .card{max-width:360px;border:1px solid #e5e7eb;border-radius:12px;padding:16px}
+    label{display:block;margin-top:8px}
+    input{width:100%;padding:8px;border:1px solid #d1d5db;border-radius:8px}
+    .btn{margin-top:12px;padding:10px 14px;border-radius:10px;background:#111827;color:#fff;border:none}
+    .err{background:#fee2e2;color:#991b1b;border:1px solid #fecaca;padding:8px;border-radius:8px;margin-bottom:10px}
+  </style>
+</head>
+<body>
+  <h1>Login</h1>
+  <div class="card">
+    {% if err %}<div class="err">{{ err }}</div>{% endif %}
+    <form method="post">
+      <label>Username (department)</label>
+      <input name="username" placeholder="e.g. admin, store, melting, atom, rap, qa">
+      <label>Password</label>
+      <input type="password" name="password" placeholder="same as username by default">
+      <button class="btn" type="submit">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>
