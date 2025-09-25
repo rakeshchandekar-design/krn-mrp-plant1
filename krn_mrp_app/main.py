@@ -521,6 +521,43 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # expose python builtins to Jinja
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
 
+# ---- Global role helpers for templates + hard read-only enforcement ----
+from fastapi.responses import PlainTextResponse
+
+def _role_of(request: Request) -> str:
+    """Read role from session; 'guest' if not logged in."""
+    try:
+        return (request.session or {}).get("role", "guest")
+    except Exception:
+        return "guest"
+
+def _is_read_only(request: Request) -> bool:
+    """Viewer (role='view') is read-only everywhere."""
+    return _role_of(request) == "view"
+
+# Make these helpers available in ALL templates:
+templates.env.globals.update(role_of=_role_of, is_read_only=_is_read_only)
+
+@app.middleware("http")
+async def attach_role_flags(request: Request, call_next):
+    """
+    Attach role + read_only flags to request.state so templates
+    can use:  request.state.role  /  request.state.read_only
+    """
+    request.state.role = _role_of(request)
+    request.state.read_only = _is_read_only(request)
+    return await call_next(request)
+
+@app.middleware("http")
+async def block_writes_for_view(request: Request, call_next):
+    """
+    One gate to block every write for the 'view' role across the app.
+    No need to change individual routes.
+    """
+    if _is_read_only(request) and request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        return PlainTextResponse("Read-only account: action blocked", status_code=403)
+    return await call_next(request)
+
 # ---- Users: username = department; default password = same as username ----
 # Change passwords here later.
 USER_DB = {
