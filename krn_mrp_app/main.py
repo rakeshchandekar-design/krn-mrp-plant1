@@ -1422,115 +1422,147 @@ def qa_dashboard(
     request: Request,
     start: Optional[str] = None,   # YYYY-MM-DD
     end: Optional[str] = None,     # YYYY-MM-DD
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    today = dt.date.today()
+    heats = db.query(Heat).order_by(Heat.id.desc()).all()
+    lots  = db.query(Lot ).order_by(Lot.id.desc()).all()
+    heat_grades = {h.id: heat_grade(h) for h in heats}
 
-    # date window (defaults = today)
+    # ---- date range (default = today..today) ----
+    today = dt.date.today()
     s = start or today.isoformat()
-    e = end or today.isoformat()
+    e = end   or today.isoformat()
     try:
         s_date = dt.date.fromisoformat(s)
         e_date = dt.date.fromisoformat(e)
     except Exception:
         s_date, e_date = today, today
 
-    # filter heats/lots by date parsed from number/name
-    all_heats = db.query(Heat).order_by(Heat.id.desc()).all()
+    # Helpers to parse dates from numbers already in your helpers
     def _hdate(h: Heat) -> dt.date:
         return heat_date_from_no(h.heat_no) or today
-    heats = [h for h in all_heats if s_date <= _hdate(h) <= e_date]
-
-    all_lots = db.query(Lot).order_by(Lot.id.desc()).all()
     def _ldate(l: Lot) -> dt.date:
-        return lot_date_from_no(l.lot_no or "") or today
-    lots = [l for l in all_lots if s_date <= _ldate(l) <= e_date]
+        return lot_date_from_no(l.lot_no) or today
 
-    # KPIs (month-to-date)
+    # Rows that fall within the chosen range
+    heats_in = [h for h in heats if s_date <= _hdate(h) <= e_date]
+    lots_in  = [l for l in lots  if s_date <= _ldate(l) <= e_date]
+
+    # ---- KPIs (This Month) : sums by QA status for both Melting(heats) + Atomization(lots)
     month_start = today.replace(day=1)
-    m_lots = [l for l in all_lots if (lot_date_from_no(l.lot_no or "") or today) >= month_start]
-    kpi_approved = sum(float(l.weight or 0.0) for l in m_lots if (l.qa_status or "").upper() == "APPROVED")
-    kpi_hold     = sum(float(l.weight or 0.0) for l in m_lots if (l.qa_status or "").upper() == "HOLD")
-    kpi_rejected = sum(float(l.weight or 0.0) for l in m_lots if (l.qa_status or "").upper() == "REJECTED")
+    next_month  = (month_start + dt.timedelta(days=32)).replace(day=1)
+    month_end   = next_month - dt.timedelta(days=1)
 
-    # Right KPIs
-    pending_qa = len([l for l in all_lots if (l.qa_status or "PENDING").upper() == "PENDING"])
-    todays_qa  = len([l for l in all_lots if _ldate(l) == today])
+    def _in_month(d: dt.date) -> bool:
+        return month_start <= d <= month_end
 
-    heat_grades = {h.id: heat_grade(h) for h in heats}
+    # Weights: heats -> actual_output ; lots -> weight
+    def _sum_heats(status: str) -> float:
+        return sum(float(h.actual_output or 0.0) for h in heats if (h.qa_status or "") == status and _in_month(_hdate(h)))
+    def _sum_lots(status: str) -> float:
+        return sum(float(l.weight        or 0.0) for l in lots  if (l.qa_status or "") == status and _in_month(_ldate(l)))
+
+    kpi_approved = _sum_heats("APPROVED") + _sum_lots("APPROVED")
+    kpi_hold     = _sum_heats("HOLD")     + _sum_lots("HOLD")
+    kpi_reject   = _sum_heats("REJECTED") + _sum_lots("REJECTED")
+
+    # ---- Queue (counts) over the selected range
+    pending_count = sum(1 for h in heats_in if (h.qa_status or "") == "PENDING") + \
+                    sum(1 for l in lots_in  if (l.qa_status or "") == "PENDING")
+    todays_count  = sum(1 for h in heats if _hdate(h) == today and (h.qa_status or "") != "PENDING") + \
+                    sum(1 for l in lots  if _ldate(l) == today and (l.qa_status or "") != "PENDING")
 
     return templates.TemplateResponse(
         "qa_dashboard.html",
         {
             "request": request,
-            "heats": heats,
-            "lots": lots,
+            "heats": heats_in,           # table respects date range
+            "lots": lots_in,             # table respects date range
             "heat_grades": heat_grades,
+
+            # toolbar state
             "start": s,
             "end": e,
-            # KPIs for the page header blocks
+            "today_iso": today.isoformat(),
+
+            # KPIs
             "kpi_approved": kpi_approved,
             "kpi_hold": kpi_hold,
-            "kpi_rejected": kpi_rejected,
-            "pending_qa": pending_qa,
-            "todays_qa": todays_qa,
-            "today_iso": today.isoformat(),
-        }
+            "kpi_reject": kpi_reject,
+
+            # queue cards
+            "qa_pending_count": pending_count,
+            "qa_today_count": todays_count,
+        },
     )
 
+# ---------- CSV export for QA (heats + lots, by date range) ----------
 @app.get("/qa/export")
 def qa_export(
     start: Optional[str] = None,
     end: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
+    heats = db.query(Heat).order_by(Heat.id.asc()).all()
+    lots  = db.query(Lot ).order_by(Lot.id.asc()).all()
+
     today = dt.date.today()
     s = dt.date.fromisoformat(start) if start else today
-    e = dt.date.fromisoformat(end) if end else today
+    e = dt.date.fromisoformat(end)   if end   else today
 
-    heats = db.query(Heat).order_by(Heat.id.asc()).all()
-    lots  = db.query(Lot).order_by(Lot.id.asc()).all()
+    def _hdate(h: Heat) -> dt.date:
+        return heat_date_from_no(h.heat_no) or today
+    def _ldate(l: Lot) -> dt.date:
+        return lot_date_from_no(l.lot_no) or today
+
+    heats_in = [h for h in heats if s <= _hdate(h) <= e]
+    lots_in  = [l for l in lots  if s <= _ldate(l) <= e]
 
     out = io.StringIO()
-    out.write("TYPE,ID/NO,Date,Grade/NA,QA,Fields...\n")
+    w = out.write
+    # unified header
+    w("Type,ID,Date,Grade/Type,Weight/Output (kg),QA Status,C,Si,S,P,Cu,Ni,Mn,Fe\n")
 
     # Heats
-    for h in heats:
-        d = heat_date_from_no(h.heat_no) or today
-        if not (s <= d <= e): continue
-        g = heat_grade(h)
-        c = h.chemistry
-        fields = []
-        if c:
-            fields = [f"C={c.c or ''}", f"Si={c.si or ''}", f"S={c.s or ''}", f"P={c.p or ''}",
-                      f"Cu={c.cu or ''}", f"Ni={c.ni or ''}", f"Mn={c.mn or ''}", f"Fe={c.fe or ''}"]
-        out.write(f"HEAT,{h.heat_no},{d.isoformat()},{g},{h.qa_status or ''},{' '.join(fields)}\n")
+    for h in heats_in:
+        chem = h.chemistry
+        w(
+            f"HEAT,{h.heat_no},{_hdate(h).isoformat()},"
+            f"{('KRFS' if heat_grade(h)=='KRFS' else 'KRIP')},"
+            f"{float(h.actual_output or 0.0):.1f},{h.qa_status or ''},"
+            f"{(chem.c  if chem else '')},"
+            f"{(chem.si if chem else '')},"
+            f"{(chem.s  if chem else '')},"
+            f"{(chem.p  if chem else '')},"
+            f"{(chem.cu if chem else '')},"
+            f"{(chem.ni if chem else '')},"
+            f"{(chem.mn if chem else '')},"
+            f"{(chem.fe if chem else '')}\n"
+        )
 
     # Lots
-    for l in lots:
-        d = lot_date_from_no(l.lot_no or "") or today
-        if not (s <= d <= e): continue
-        c = l.chemistry; p = l.phys; ps = l.psd
-        fields = []
-        if c:
-            fields += [f"C={c.c or ''}", f"Si={c.si or ''}", f"S={c.s or ''}", f"P={c.p or ''}",
-                       f"Cu={c.cu or ''}", f"Ni={c.ni or ''}", f"Mn={c.mn or ''}", f"Fe={c.fe or ''}"]
-        if p:
-            fields += [f"AD={p.ad or ''}", f"Flow={p.flow or ''}"]
-        if ps:
-            fields += [f"+212={ps.p212 or ''}", f"+180={ps.p180 or ''}", f"-180+150={ps.n180p150 or ''}",
-                       f"-150+75={ps.n150p75 or ''}", f"-75+45={ps.n75p45 or ''}", f"-45={ps.n45 or ''}"]
-        out.write(f"LOT,{l.lot_no},{d.isoformat()},{l.grade or ''},{l.qa_status or ''},{' '.join(fields)}\n")
-
+    for l in lots_in:
+        chem = l.chemistry
+        w(
+            f"LOT,{l.lot_no},{_ldate(l).isoformat()},{l.grade or ''},"
+            f"{float(l.weight or 0.0):.1f},{l.qa_status or ''},"
+            f"{(chem.c  if chem else '')},"
+            f"{(chem.si if chem else '')},"
+            f"{(chem.s  if chem else '')},"
+            f"{(chem.p  if chem else '')},"
+            f"{(chem.cu if chem else '')},"
+            f"{(chem.ni if chem else '')},"
+            f"{(chem.mn if chem else '')},"
+            f"{(chem.fe if chem else '')}\n"
+        )
 
     data = out.getvalue().encode("utf-8")
-    fn = f"qa_export_{s.isoformat()}_{e.isoformat()}.csv"
+    fname = f"qa_export_{s.isoformat()}_{e.isoformat()}.csv"
     return StreamingResponse(
         io.BytesIO(data),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename=\"{fn}\"'}
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'}
     )
-
 
 # -------------------------------------------------
 # Traceability - LOT (existing)
