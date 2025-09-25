@@ -1,243 +1,183 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>KRN — Plant 1</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8" />
+  <title>KRN – Home</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root{
-      --krn-blue:#0B2C52;      /* brand deep blue */
-      --krn-orange:#F37021;    /* brand orange */
-      --bg:#FFF7F3;            /* soft brand-tinted background */
-      --card:#ffffff;
+      --krn-blue:#0e2a47;      /* brand dark blue */
+      --krn-blue-600:#173a63;
+      --krn-orange:#f59e0b;    /* brand accent */
+      --ink:#111827;
       --muted:#6b7280;
-      --ring:rgba(11,44,82,.12);
+      --line:#e5e7eb;
+      --bg:#f8fafc;
+      --tile:#fff7ed;          /* pale warm background */
     }
     *{box-sizing:border-box}
-    body{
-      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-      margin:0;
-      background:var(--bg);
-      color:#111827;
-    }
-    /* header */
-    .header{
-      display:flex;align-items:center;gap:14px;
-      padding:16px 22px;
-      background:#fff;
-      border-bottom:4px solid var(--krn-orange);
-      position:sticky;top:0;z-index:10;
-    }
-    .brand{
-      display:flex;align-items:center;gap:12px;flex:1;
-    }
-    .brand h1{
-      margin:0;
-      font-size:28px;
-      color:var(--krn-blue);
-      letter-spacing:.3px;
-      font-weight:800;
-    }
-    .tagline{
-      margin:2px 0 0 0;
-      color:#8a94a6;
-      font-weight:500;
-    }
-    .btn{
-      display:inline-flex;align-items:center;justify-content:center;
-      padding:10px 16px;border-radius:10px;border:none;
-      background:var(--krn-blue);color:#fff;text-decoration:none;
-      font-weight:600;cursor:pointer;transition:.2s;
-      box-shadow:0 1px 2px var(--ring);
-    }
-    .btn:hover{background:var(--krn-orange)}
-    .btn:disabled{background:#c9ced6;color:#6b7280;cursor:not-allowed}
-    .btn.ghost{background:#f1f5f9;color:#111827}
-    .btn.ghost:hover{background:#e7edf4}
+    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+    a{color:inherit;text-decoration:none}
+    .wrap{max-width:1120px;margin:0 auto;padding:20px}
 
-    /* page */
-    .wrap{max-width:1180px;margin:18px auto;padding:0 18px}
-    .panel{
-      background:var(--card);border:1px solid #e5e7eb;border-radius:14px;
-      padding:16px 18px;box-shadow:0 1px 2px var(--ring);
-    }
-    .welcome{margin:14px 0 22px 0}
-    .welcome p{margin:6px 0;color:#1f2937}
-    .muted{color:var(--muted)}
-    .role-badge{
-      display:inline-block;background:var(--krn-orange);color:#fff;
-      padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;
-      vertical-align:middle;margin:0 6px;
-    }
+    /* Header */
+    .head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:4px solid var(--krn-orange);background:#fff}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand img{height:44px}
+    .brand .t1{font-weight:800;font-size:28px;letter-spacing:.2px;color:var(--krn-blue)}
+    .brand .t2{margin-top:2px;font-size:14px;color:#738295}
+    .head .actions{display:flex;gap:8px}
+    .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+    .btn.primary{background:var(--krn-blue);color:#fff;border-color:var(--krn-blue)}
+    .btn.ghost{background:#fff}
+    .btn:disabled{opacity:.45;cursor:not-allowed}
 
-    /* modules grid */
-    h2{margin:18px 0 12px 0;font-size:28px;color:#111827}
-    .grid{
-      display:grid;grid-template-columns:repeat(12,1fr);gap:16px;
-    }
-    .col{grid-column:span 12}
-    @media (min-width:720px){ .col{grid-column:span 6} }
-    @media (min-width:1024px){ .col{grid-column:span 3} }
+    /* Hero message */
+    .hero{background:var(--tile);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:16px 0}
+    .badge{display:inline-block;padding:2px 10px;border-radius:999px;background:#eef2ff;color:#374151;border:1px solid #e5e7eb;font-size:12px}
+    .role{background:#ffedd5;color:#7c2d12;border-color:#fed7aa}
+    .lead{margin:0 0 6px;font-size:16px}
+    .small{margin:0;color:var(--muted);font-size:13px}
+    .welcome strong{color:var(--krn-blue)}
 
-    .card{
-      background:var(--card);
-      border:1px solid var(--krn-blue); /* blue outline */
-      border-radius:14px;padding:16px;
-      min-height:140px;display:flex;flex-direction:column;justify-content:space-between;
-      box-shadow:0 1px 2px var(--ring);
-      transition:box-shadow .2s,border-color .2s,transform .05s;
-    }
-    .card:hover{border-color:var(--krn-orange);box-shadow:0 3px 12px rgba(243,112,33,.25)}
-    .card h3{margin:0 0 6px 0;font-size:20px}
-    .small{font-size:12px;color:var(--muted);margin-bottom:10px}
-    .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
-    .x{color:#ef4444}
-    .logo{height:44px}
+    /* Modules */
+    h2{margin:20px 0 10px 0;font-size:28px}
+    .grid{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:16px}
+    @media (max-width:1024px){.grid{grid-template-columns:repeat(2,minmax(220px,1fr))}}
+    @media (max-width:600px){.grid{grid-template-columns:1fr}}
+    .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px}
+    .card h3{margin:2px 0 4px 0;font-size:22px}
+    .sub{color:var(--muted);font-size:13px}
+    .foot{display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+    .open{padding:10px 14px;border-radius:12px;border:1px solid var(--krn-blue);background:var(--krn-blue);color:#fff;cursor:pointer}
+    .open.ghost{background:#eef2ff;color:var(--krn-blue);border-color:#c7d2fe}
+    .open:disabled{background:#e5e7eb;border-color:#e5e7eb;color:#6b7280;cursor:not-allowed}
+    .deny{color:#ef4444;font-size:18px;user-select:none}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #fee2e2;border-radius:999px;color:#991b1b;background:#fef2f2;font-size:12px}
   </style>
 </head>
 <body>
-  <!-- Header -->
-  <div class="header">
+  <!-- Top bar -->
+  <header class="head">
     <div class="brand">
-      <img class="logo" src="/static/KRN_Logo.png" alt="KRN">
+      <img src="/static/KRN_Logo.png" alt="KRN">
       <div>
-        <h1>KRN Alloys Pvt. Ltd – Plant 1</h1>
-        <div class="tagline">Manufacturing Resource &amp; Quality Control Suite</div>
+        <div class="t1">KRN Alloys Pvt. Ltd – Plant 1</div>
+        <div class="t2">Manufacturing Resource &amp; Quality Control Suite</div>
       </div>
     </div>
-
-    {% if (role or 'guest') == 'guest' %}
-      <a class="btn" href="/login">Login</a>
-    {% else %}
-      <a class="btn ghost" href="/logout">Logout</a>
-    {% endif %}
-  </div>
-
-  <div class="wrap">
-    <!-- Welcome / role panel -->
-    <div class="panel welcome">
-      <p><strong>Welcome to the KRN MRP/QA application.</strong> This system unifies GRN tracking, Melting and Atomization production, RAP availability, and QA certification—so every lot and heat remains traceable from raw material to dispatch.</p>
-      <p>Designed for Plant-1 operations, the suite reduces manual effort, safeguards costing &amp; QA data, and gives each team a focused workspace.</p>
-      <p>Your current role is <span class="role-badge">{{ role or 'guest' }}</span>. Modules below are enabled based on your permissions. Disabled buttons indicate areas outside your access scope.</p>
+    <div class="actions">
+      {% if role and role != 'guest' %}
+        <a class="btn ghost" href="/logout">Logout</a>
+      {% else %}
+        <a class="btn primary" href="/login">Login</a>
+      {% endif %}
     </div>
+  </header>
+
+  <main class="wrap">
+    <!-- Welcome/Hero -->
+    <section class="hero">
+      <p class="lead welcome">
+        Welcome to the <strong>KRN MRP/QA application</strong>. The suite unifies GRN tracking, Melting and Atomization production,
+        RAP availability, and QA certification—so every lot and heat stays traceable from raw material to dispatch.
+      </p>
+      <p class="small">
+        Designed for Plant-1 operations, it reduces manual effort, safeguards costing &amp; QA data, and provides every team a focused workspace.
+        Your current role is <span class="badge role">{{ role or 'guest' }}</span>. Modules below are enabled based on your permissions.
+      </p>
+    </section>
 
     <h2>Modules</h2>
-    <div class="grid">
-      {# helpers #}
-      {% set r = (role or 'guest') %}
-      {% set can_grn     = r in ['admin','store'] %}
-      {% set can_melting = r in ['admin','melting'] %}
-      {% set can_atom    = r in ['admin','atom'] %}
-      {% set can_rap     = r in ['admin','rap'] %}
-      {% set can_qa      = r in ['admin','qa'] %}
 
-      <!-- Dashboard (placeholder) -->
-      <div class="col">
-        <div class="card">
-          <div>
-            <h3>Dashboard</h3>
-            <div class="small">Admins &amp; View (coming soon)</div>
-          </div>
-          <div class="row">
-            <button class="btn" disabled>Open</button>
-            <div class="small x">×</div>
-          </div>
+    <section class="grid">
+
+      <!-- Dashboard (coming soon; never links out) -->
+      {% set allow = role in ['admin','view'] %}
+      <div class="card">
+        <h3>Dashboard</h3>
+        <div class="sub">Admins &amp; View (coming soon)</div>
+        <div class="foot">
+          <button class="open" disabled>Open</button>
+          {% if not allow %}<span class="deny">✗</span>{% endif %}
         </div>
       </div>
 
       <!-- GRN -->
-      <div class="col">
-        <div class="card">
-          <div>
-            <h3>GRN</h3>
-            <div class="small">Admin, Store</div>
-          </div>
-          <div class="row">
-            {% if can_grn %}
-              <a class="btn" href="/grn">Open</a>
-            {% else %}
-              <button class="btn" disabled>Open</button>
-            {% endif %}
-            <div class="small {% if can_grn %}muted{% else %}x{% endif %}">{% if can_grn %}✓{% else %}×{% endif %}</div>
-          </div>
+      {% set allow = role in ['admin','store','view'] %}
+      <div class="card">
+        <h3>GRN</h3>
+        <div class="sub">Admin, Store</div>
+        <div class="foot">
+          {% if allow %}
+            <a class="open ghost" href="/grn">Open</a>
+          {% else %}
+            <button class="open" disabled>Open</button><span class="deny">✗</span>
+          {% endif %}
         </div>
       </div>
 
       <!-- Melting -->
-      <div class="col">
-        <div class="card">
-          <div>
-            <h3>Melting</h3>
-            <div class="small">Admin, Melting</div>
-          </div>
-          <div class="row">
-            {% if can_melting %}
-              <a class="btn" href="/melting">Open</a>
-            {% else %}
-              <button class="btn" disabled>Open</button>
-            {% endif %}
-            <div class="small {% if can_melting %}muted{% else %}x{% endif %}">{% if can_melting %}✓{% else %}×{% endif %}</div>
-          </div>
+      {% set allow = role in ['admin','melting','view'] %}
+      <div class="card">
+        <h3>Melting</h3>
+        <div class="sub">Admin, Melting</div>
+        <div class="foot">
+          {% if allow %}
+            <a class="open ghost" href="/melting">Open</a>
+          {% else %}
+            <button class="open" disabled>Open</button><span class="deny">✗</span>
+          {% endif %}
         </div>
       </div>
 
       <!-- Atomization -->
-      <div class="col">
-        <div class="card">
-          <div>
-            <h3>Atomization</h3>
-            <div class="small">Admin, Atom</div>
-          </div>
-          <div class="row">
-            {% if can_atom %}
-              <a class="btn" href="/atomization">Open</a>
-            {% else %}
-              <button class="btn" disabled>Open</button>
-            {% endif %}
-            <div class="small {% if can_atom %}muted{% else %}x{% endif %}">{% if can_atom %}✓{% else %}×{% endif %}</div>
-          </div>
+      {% set allow = role in ['admin','atom','view'] %}
+      <div class="card">
+        <h3>Atomization</h3>
+        <div class="sub">Admin, Atom</div>
+        <div class="foot">
+          {% if allow %}
+            <a class="open ghost" href="/atomization">Open</a>
+          {% else %}
+            <button class="open" disabled>Open</button><span class="deny">✗</span>
+          {% endif %}
         </div>
       </div>
 
       <!-- RAP -->
-      <div class="col">
-        <div class="card">
-          <div>
-            <h3>RAP</h3>
-            <div class="small">Admin, RAP</div>
-          </div>
-          <div class="row">
-            {% if can_rap %}
-              <a class="btn" href="/rap">Open</a>
-            {% else %}
-              <button class="btn" disabled>Open</button>
-            {% endif %}
-            <div class="small {% if can_rap %}muted{% else %}x{% endif %}">{% if can_rap %}✓{% else %}×{% endif %}</div>
-          </div>
+      {% set allow = role in ['admin','rap','view'] %}
+      <div class="card">
+        <h3>RAP</h3>
+        <div class="sub">Admin, RAP</div>
+        <div class="foot">
+          {% if allow %}
+            <a class="open ghost" href="/rap">Open</a>
+          {% else %}
+            <button class="open" disabled>Open</button><span class="deny">✗</span>
+          {% endif %}
         </div>
       </div>
 
       <!-- QA -->
-      <div class="col">
-        <div class="card">
-          <div>
-            <h3>QA</h3>
-            <div class="small">Admin, QA</div>
-          </div>
-          <div class="row">
-            {% if can_qa %}
-              <a class="btn" href="/qa-dashboard">Open</a>
-            {% else %}
-              <button class="btn" disabled>Open</button>
-            {% endif %}
-            <div class="small {% if can_qa %}muted{% else %}x{% endif %}">{% if can_qa %}✓{% else %}×{% endif %}</div>
-          </div>
+      {% set allow = role in ['admin','qa','view'] %}
+      <div class="card">
+        <h3>QA</h3>
+        <div class="sub">Admin, QA</div>
+        <div class="foot">
+          {% if allow %}
+            <a class="open ghost" href="/qa-dashboard">Open</a>
+          {% else %}
+            <button class="open" disabled>Open</button><span class="deny">✗</span>
+          {% endif %}
         </div>
       </div>
-    </div>
 
-    <!-- Footer-ish hint -->
-    <p class="small muted" style="margin:22px 6px">Tip: If a module is disabled here, it will also be blocked when accessed directly by URL.</p>
-  </div>
+    </section>
+
+    {% if role == 'guest' %}
+      <p class="small" style="margin-top:16px">Tip: sign in with your department. Default password is the same as the username.</p>
+    {% endif %}
+  </main>
 </body>
 </html>
