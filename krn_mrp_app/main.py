@@ -578,8 +578,12 @@ def current_role(request: Request) -> str:
     return (getattr(request, "session", {}) or {}).get("role", "guest") or "guest"
 
 def role_allowed(request: Request, allowed: set[str]) -> bool:
-    return current_role(request) in allowed
-
+    role = current_role(request)
+    if role == "view":
+        # allow GET/HEAD/OPTIONS everywhere
+        return request.method in ("GET", "HEAD", "OPTIONS")
+    return role in allowed
+    
 # -------------------------------------------------
 # Startup
 # -------------------------------------------------
