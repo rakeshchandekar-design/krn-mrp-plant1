@@ -2,45 +2,75 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Atomization Downtime</title>
+  <title>RAP – Downtime</title>
   <style>
     body{font-family:system-ui,Arial,sans-serif;margin:20px;}
+    .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .brand .name{font-weight:800;font-size:20px;line-height:48px;margin:0}
+    .brand img{height:40px}
     .card{border:1px solid #e5e7eb;border-radius:8px;padding:10px;margin-bottom:12px}
     table{border-collapse:collapse;width:100%}
     th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
     th{background:#f3f4f6}
-    .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
+    .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer;text-decoration:none}
+    .btn.ghost{background:#e5e7eb;color:#111827}
     .muted{color:#6b7280}
+    .note{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:6px;padding:6px 10px;margin-top:6px}
+    .right{text-align:right}
   </style>
 </head>
 <body>
-  <h1>Atomization Downtime</h1>
-  <p><a href="/atomization" class="btn">Back to Atomization</a></p>
+  {% set read_only = is_read_only(request) %}
+
+  <div class="brand">
+    <div class="name">KRN Alloys Pvt. Ltd</div>
+    <img src="/static/KRN_Logo.png" alt="KRN">
+  </div>
+
+  <h1>RAP – Downtime</h1>
+  <p>
+    <a href="/rap" class="btn ghost">← Back to RAP</a>
+    <a class="btn ghost" href="/rap/downtime/export">Download CSV</a>
+  </p>
 
   <div class="card">
     <h3>Add Day-level Downtime</h3>
-    <form method="post" action="/atomization/downtime">
-      <label>Date</label>
-      <input type="date" name="date" value="{{ today }}">
-      <label>Minutes</label>
-      <input type="number" name="minutes" min="0" value="0">
-      <label>Kind</label>
-      <select name="kind">
-        <option>PRODUCTION</option>
-        <option>MAINTENANCE</option>
-        <option>POWER</option>
-        <option>OTHER</option>
-      </select>
-      <label>Remarks</label>
-      <input type="text" name="remarks" placeholder="remarks">
-      <p><button class="btn" type="submit">Add</button> <a class="btn muted" href="/atomization/downtime/export">Download CSV</a></p>
+    <form method="post" action="/rap/downtime">
+      <fieldset {% if read_only %}disabled{% endif %}>
+        <label>Date</label>
+        <input type="date" name="date" value="{{ today }}">
+        <label>Minutes</label>
+        <input type="number" name="minutes" min="0" value="0">
+        <label>Kind</label>
+        <select name="kind">
+          <option>PRODUCTION</option>
+          <option>MAINTENANCE</option>
+          <option>POWER</option>
+          <option>OTHER</option>
+        </select>
+        <label>Remarks</label>
+        <input type="text" name="remarks" placeholder="remarks">
+      </fieldset>
+
+      {% if not read_only %}
+        <p><button class="btn" type="submit">Add</button></p>
+      {% else %}
+        <p class="note">Saving is disabled in view-only mode.</p>
+      {% endif %}
     </form>
   </div>
 
   <div class="card">
-    <h3>Recent Atomization Downtime</h3>
+    <h3>Recent RAP Downtime</h3>
     <table>
-      <thead><tr><th>Date</th><th class="right">Minutes</th><th>Kind</th><th>Remarks</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th class="right">Minutes</th>
+          <th>Kind</th>
+          <th>Remarks</th>
+        </tr>
+      </thead>
       <tbody>
         {% for r in rows %}
         <tr>
