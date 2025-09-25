@@ -1477,20 +1477,26 @@ def qa_dashboard(
     heat_grades = {h.id: heat_grade(h) for h in heats_vis}
 
     return templates.TemplateResponse(
-        "qa_dashboard.html",
+          "qa_dashboard.html",
         {
             "request": request,
             "heats": heats_vis,
             "lots": lots_vis,
             "heat_grades": heat_grades,
-            "kpi": kpi,
-            "pending_count": pending_count,
-            "todays_count": todays_count,
+
+            # ---- KPIs expected by the template ----
+            "kpi_approved_month": float(kpi.get("approved_kg", 0.0)),
+            "kpi_hold_month":     float(kpi.get("hold_kg", 0.0)),
+            "kpi_rejected_month": float(kpi.get("rejected_kg", 0.0)),
+            "kpi_pending_count":  int(pending_count),
+            "kpi_today_count":    int(todays_count),
+
+            # toolbar defaults
             "start": s_iso,
             "end": e_iso,
             "today_iso": today.isoformat(),
-        },
-    )
+                },
+        )
 
 # ---------- CSV export for QA (heats + lots, by date range) ----------
 @app.get("/qa/export")
