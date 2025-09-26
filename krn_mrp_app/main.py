@@ -797,226 +797,181 @@ def home(request: Request):
         {"request": request, "user": current_username(request), "role": current_role(request)}
     )
 
-# ---------------------------
-# /dashboard (full replacement)
-# ---------------------------
-from fastapi import Request, Depends
-from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import func, case
-import datetime as dt
-
-# if you already have get_db / templates imported above, reuse them
-# from .deps import get_db
-# from .main import templates  # or wherever your Jinja2Templates lives
-
-def _date_field(model):
-    """
-    Return a column on `model` that represents its creation/production time.
-    Adjust the preference order if you use different names.
-    """
-    for name in (
-        "date", "day", "prod_date", "production_date",
-        "created_at", "created_on", "timestamp", "ts"
-    ):
-        if hasattr(model, name):
-            return getattr(model, name)
-    raise AttributeError(f"{model.__name__} has no date-like column")
-
-def _safe_scalar(q):
-    try:
-        v = q.scalar()
-    except Exception:
-        v = None
-    return v or 0
-
-def _has(model, colname):
-    return hasattr(model, colname)
-
+# -------------------------------
+# Dashboard
+# -------------------------------
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
-    # Import models (adjust import path to your project layout)
+    # Access: admin & view accounts only
+    role = current_role(request)
+    if role not in {"admin", "view"}:
+        return RedirectResponse("/", status_code=303)
 
     today = dt.date.today()
-    yest = today - dt.timedelta(days=1)
+    yest  = today - dt.timedelta(days=1)
     month_start = today.replace(day=1)
-    # first of next month
-    month_end = (month_start + dt.timedelta(days=32)).replace(day=1)
 
-    # Figure out the date/timestamp columns ONCE
-    HDATE = _date_field(Heat)          # e.g., Heat.created_at
-    HDATE_ONLY = func.date(HDATE)
-    LDATE = _date_field(Lot)           # e.g., Lot.created_at
-    LDATE_ONLY = func.date(LDATE)
-
-    # Common Heat columns (guarded)
-    H_ACT = getattr(Heat, "actual_output", None)
-    H_PWR = getattr(Heat, "power_kwh", None)
-    H_INP = getattr(Heat, "total_inputs", None)
-    H_QA  = getattr(Heat, "qa_status", None)
-
-    # Common Lot columns (guarded)
-    L_WT   = getattr(Lot, "weight", None)
-    L_QA   = getattr(Lot, "qa_status", None)
-    L_GRADE= getattr(Lot, "grade", None)
-
-    # -----------------------------
-    # Melting – Yesterday KPIs
-    # -----------------------------
-    # Yesterday production (kg)
-    melt_yest_kg = 0.0
-    if H_ACT is not None:
-        melt_yest_kg = _safe_scalar(
-            db.query(func.sum(H_ACT))
-              .filter(HDATE_ONLY == yest)
+    # ---------- GRN / RM ----------
+    # Live stock summary (remaining > 0), and inward yesterday/month-to-date
+    grn_rows = (
+        db.query(
+            GRN.rm_type.label("rm_type"),
+            func.coalesce(func.sum(GRN.remaining_qty), 0.0).label("qty"),
+            func.coalesce(func.sum(GRN.remaining_qty * GRN.price), 0.0).label("val"),
         )
-
-    # Yesterday kWh/ton (average across heats)
-    kwhpt_yest = 0.0
-    if H_ACT is not None and H_PWR is not None:
-        # avg( (power_kwh / actual_output) * 1000 ) over heats with output > 0
-        kwhpt_yest = _safe_scalar(
-            db.query(
-                func.avg(
-                    (H_PWR / func.nullif(H_ACT, 0)) * 1000.0
-                )
-            ).filter(HDATE_ONLY == yest)
-        )
-
-    # Yesterday Yield % = actual_output / total_inputs * 100
-    yield_yest = 0.0
-    if H_ACT is not None and H_INP is not None:
-        yield_yest = _safe_scalar(
-            db.query(
-                func.avg(
-                    (H_ACT / func.nullif(H_INP, 0)) * 100.0
-                )
-            ).filter(HDATE_ONLY == yest)
-        )
-
-    # Production efficiency % (Actual vs user target). If you calculate
-    # target elsewhere, you can replace 100.0 with your logic.
-    prod_eff_yest = 0.0
-    if H_ACT is not None:
-        # If you have a per-day target table, join it here.
-        # For now, show 100% when we can't compute a target.
-        prod_eff_yest = 100.0 if melt_yest_kg > 0 else 0.0
-
-    # -----------------------------
-    # Melting – Month-to-date
-    # -----------------------------
-    month_melt_kg = 0.0
-    if H_ACT is not None:
-        month_melt_kg = _safe_scalar(
-            db.query(func.sum(H_ACT))
-              .filter(HDATE_ONLY >= month_start, HDATE_ONLY < month_end)
-        )
-
-    # -----------------------------
-    # Atomization – simple KPIs (optional)
-    # If you store lots per day, show last 5 days weight totals.
-    # -----------------------------
-    atom_last5 = []
-    if L_WT is not None:
-        last5_rows = (
-            db.query(
-                LDATE_ONLY.label("date"),
-                func.sum(L_WT).label("actual")
-            )
-            .group_by(LDATE_ONLY)
-            .order_by(LDATE_ONLY.desc())
-            .limit(5)
-            .all()
-        )
-        # Normalize to dicts with 'date','actual','target' keys
-        for r in last5_rows:
-            atom_last5.append({
-                "date": r.date.isoformat() if hasattr(r.date, "isoformat") else str(r.date),
-                "actual": float(r.actual or 0),
-                "target": 0.0,   # replace with real target if you have one
-            })
-
-    # -----------------------------
-    # RAP – simple stock view by grade (using approved lots)
-    # -----------------------------
-    kpi = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
-    if L_WT is not None and L_GRADE is not None:
-        # If you track unit_cost on Lot, show value; else leave zeros
-        L_COST = getattr(Lot, "unit_cost", None)
-
-        # KRIP
-        kpi["KRIP_qty"] = _safe_scalar(
-            db.query(func.sum(L_WT)).filter(L_GRADE == "KRIP")
-        )
-        if L_COST is not None:
-            kpi["KRIP_val"] = _safe_scalar(
-                db.query(func.sum(L_WT * L_COST)).filter(L_GRADE == "KRIP")
-            )
-
-        # KRFS
-        kpi["KRFS_qty"] = _safe_scalar(
-            db.query(func.sum(L_WT)).filter(L_GRADE == "KRFS")
-        )
-        if L_COST is not None:
-            kpi["KRFS_val"] = _safe_scalar(
-                db.query(func.sum(L_WT * L_COST)).filter(L_GRADE == "KRFS")
-            )
-
-    # -----------------------------
-    # QA queue counts (today)
-    # -----------------------------
-    kpi_pending_count = 0
-    kpi_today_count = 0
-    if H_QA is not None and L_QA is not None:
-        # pending = heats or lots with NULL/empty qa_status
-        heats_pending = _safe_scalar(
-            db.query(func.count(Heat.id)).filter((H_QA.is_(None)) | (H_QA == "") )
-        )
-        lots_pending = _safe_scalar(
-            db.query(func.count(Lot.id)).filter((L_QA.is_(None)) | (L_QA == "") )
-        )
-        kpi_pending_count = int(heats_pending + lots_pending)
-
-        # QA done today
-        heats_today = _safe_scalar(
-            db.query(func.count(Heat.id))
-              .filter((H_QA.isnot(None)) & (H_QA != ""), HDATE_ONLY == today)
-        )
-        lots_today = _safe_scalar(
-            db.query(func.count(Lot.id))
-              .filter((L_QA.isnot(None)) & (L_QA != ""), LDATE_ONLY == today)
-        )
-        kpi_today_count = int(heats_today + lots_today)
-
-    # -----------------------------
-    # Render
-    # -----------------------------
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            # Melting (yesterday)
-            "melt_yest_kg": float(melt_yest_kg),
-            "kwhpt_yest": float(kwhpt_yest),
-            "yield_yest": float(yield_yest),
-            "prod_eff_yest": float(prod_eff_yest),
-            # Melting (MTD)
-            "month_melt_kg": float(month_melt_kg),
-            # Atomization (last 5 days table)
-            "atom_last5": atom_last5,
-            # RAP KPIs
-            "kpi": kpi,
-            # QA queue
-            "kpi_pending_count": kpi_pending_count,
-            "kpi_today_count": kpi_today_count,
-            # Dates handy for the template
-            "today_iso": today.isoformat(),
-            "yesterday_iso": yest.isoformat(),
-            "month_start": month_start.isoformat(),
-        },
+        .filter((GRN.remaining_qty or 0) >= 0)  # works on SQLite/Postgres
+        .group_by(GRN.rm_type)
+        .all()
     )
-    
-        
+
+    grn_live = [{"rm_type": r.rm_type, "qty": float(r.qty or 0), "val": float(r.val or 0)} for r in grn_rows]
+    grn_live_tot_qty = sum(r["qty"] for r in grn_live)
+    grn_live_tot_val = sum(r["val"] for r in grn_live)
+
+    grn_yday_inward = (
+        db.query(func.coalesce(func.sum(GRN.qty), 0.0))
+        .filter(GRN.date == yest)
+        .scalar()
+        or 0.0
+    )
+    grn_mtd_inward = (
+        db.query(func.coalesce(func.sum(GRN.qty), 0.0))
+        .filter(GRN.date >= month_start, GRN.date <= today)
+        .scalar()
+        or 0.0
+    )
+
+    # ---------- Melting ----------
+    # Heats for yesterday (by heat_no prefix) and month-to-date
+    ymd_y = yest.strftime("%Y%m%d")
+    ymd_m = month_start.strftime("%Y%m")
+
+    heats_yday = db.query(Heat).filter(Heat.heat_no.like(f"{ymd_y}-%")).all()
+    heats_mtd  = db.query(Heat).filter(Heat.heat_no.like(f"{ymd_m}%")).all()
+
+    def _agg_melting(heats, for_day: dt.date | None = None):
+        total_out = sum(float(h.actual_output or 0) for h in heats)
+        total_in  = sum(float(h.total_inputs  or 0) for h in heats)
+        total_kwh = sum(float(h.power_kwh    or 0) for h in heats)
+
+        kwhpt = (total_kwh / total_out * 1000.0) if total_out > 0 else 0.0
+        yield_pct = (total_out / total_in * 100.0) if total_in > 0 else 0.0
+
+        if for_day is not None:
+            tgt = day_target_kg(db, for_day)
+            eff_pct = (total_out / tgt * 100.0) if tgt > 0 else 0.0
+        else:
+            # month: sum of daily targets from first day up to today
+            days = (today - month_start).days + 1
+            tgt_sum = 0.0
+            d = month_start
+            for _ in range(days):
+                tgt_sum += day_target_kg(db, d)
+                d += dt.timedelta(days=1)
+            eff_pct = (total_out / tgt_sum * 100.0) if tgt_sum > 0 else 0.0
+
+        return dict(actual_kg=total_out, kwhpt=kwhpt, yield_pct=yield_pct, eff_pct=eff_pct)
+
+    melt_yday = _agg_melting(heats_yday, for_day=yest)
+    melt_mtd  = _agg_melting(heats_mtd,  for_day=None)
+
+    # ---------- Atomization ----------
+    # We treat "production" as lots created that day (by lot_no date part)
+    lots_all_mtd = db.query(Lot).filter(Lot.lot_no.like(f"%-{ymd_m}%")).all()
+    lots_yday    = [l for l in db.query(Lot).all() if (lot_date_from_no(l.lot_no) == yest)]
+    lots_mtd     = [l for l in db.query(Lot).all() if (month_start <= (lot_date_from_no(l.lot_no) or today) <= today)]
+
+    atom_yday_prod = sum(float(l.weight or 0) for l in lots_yday)
+    atom_mtd_prod  = sum(float(l.weight or 0) for l in lots_mtd)
+
+    atom_tgt_yday = atom_day_target_kg(db, yest)
+    atom_tgt_msum = 0.0
+    d = month_start
+    while d <= today:
+        atom_tgt_msum += atom_day_target_kg(db, d)
+        d += dt.timedelta(days=1)
+
+    atom_yday_eff = (atom_yday_prod / atom_tgt_yday * 100.0) if atom_tgt_yday > 0 else 0.0
+    atom_mtd_eff  = (atom_mtd_prod  / atom_tgt_msum * 100.0) if atom_tgt_msum  > 0 else 0.0
+
+    # Oversize MTD (if you start storing it, wire it here; for now show 0)
+    oversize_mtd = 0.0
+
+    # ---------- RAP availability ----------
+    # Compute available for APPROVED lots = lot.weight - total RAP allocations
+    lots_approved = db.query(Lot).filter(Lot.qa_status == "APPROVED").all()
+    rap_by_grade = {"KRIP": 0.0, "KRFS": 0.0}
+
+    for lot in lots_approved:
+        # total allocations via join RAPAlloc -> RAPLot
+        total_alloc = (
+            db.query(func.coalesce(func.sum(RAPAlloc.qty), 0.0))
+            .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
+            .filter(RAPLot.lot_id == lot.id)
+            .scalar()
+            or 0.0
+        )
+        avail = max(float(lot.weight or 0.0) - float(total_alloc), 0.0)
+        g = (lot.grade or "KRIP").upper()
+        if g not in rap_by_grade:
+            rap_by_grade[g] = 0.0
+        rap_by_grade[g] += avail
+
+    # ---------- QA queue ----------
+    heats_pending = db.query(func.count(Heat.id)).filter((Heat.qa_status.is_(None)) | (Heat.qa_status == "PENDING")).scalar() or 0
+    lots_pending  = db.query(func.count(Lot.id)).filter((Lot.qa_status.is_(None))  | (Lot.qa_status  == "PENDING")).scalar() or 0
+
+    # ---------- Downtime MTD ----------
+    melt_dt_mtd = (
+        db.query(func.coalesce(func.sum(Downtime.minutes), 0))
+        .filter(Downtime.date >= month_start, Downtime.date <= today)
+        .scalar()
+        or 0
+    )
+    atom_dt_mtd = (
+        db.query(func.coalesce(func.sum(AtomDowntime.minutes), 0))
+        .filter(AtomDowntime.date >= month_start, AtomDowntime.date <= today)
+        .scalar()
+        or 0
+    )
+
+    ctx = {
+        "request": request,
+        "role": role,
+        "today": today.isoformat(),
+        "yesterday": yest.isoformat(),
+
+        # GRN/RM
+        "grn_live": grn_live,
+        "grn_live_tot_qty": grn_live_tot_qty,
+        "grn_live_tot_val": grn_live_tot_val,
+        "grn_yday_inward": grn_yday_inward,
+        "grn_mtd_inward": grn_mtd_inward,
+
+        # Melting
+        "melt_yday": melt_yday,
+        "melt_mtd":  melt_mtd,
+        "power_target": POWER_TARGET_KWH_PER_TON,  # for display
+
+        # Atomization
+        "atom_yday_prod": atom_yday_prod,
+        "atom_yday_eff":  atom_yday_eff,
+        "atom_mtd_prod":  atom_mtd_prod,
+        "atom_mtd_eff":   atom_mtd_eff,
+        "oversize_mtd":   oversize_mtd,
+
+        # RAP
+        "rap_krip_avail": rap_by_grade.get("KRIP", 0.0),
+        "rap_krfs_avail": rap_by_grade.get("KRFS", 0.0),
+
+        # QA + downtime
+        "qa_pending_count": int(heats_pending) + int(lots_pending),
+        "melt_dt_mtd": int(melt_dt_mtd),
+        "atom_dt_mtd": int(atom_dt_mtd),
+    }
+    return templates.TemplateResponse("dashboard.html", ctx)
+
+
 # -------------------------------------------------
 # GRN (unchanged)
 # -------------------------------------------------
