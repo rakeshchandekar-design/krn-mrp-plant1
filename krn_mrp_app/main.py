@@ -1,5 +1,8 @@
 # ==== PART A START ====
 
+# ↓↓↓ make type hints lazy so you can reference models before they are defined
+from __future__ import annotations
+
 import os
 import io
 import secrets
