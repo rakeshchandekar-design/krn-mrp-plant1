@@ -28,6 +28,7 @@ from reportlab.pdfgen import canvas
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
 from sqlalchemy.orm import joinedload  # eager load
+from sqlalchemy import func
 
 # -------------------------------------------------
 # Costing constants (baseline)
@@ -785,7 +786,245 @@ def home(request: Request):
         {"request": request, "user": current_username(request), "role": current_role(request)}
     )
 
+# ----------------------------
+# DASHBOARD (read-only summary)
+# ----------------------------
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, db: Session = Depends(get_db)):
+    # --- dates / helpers ---
+    today: dt.date = dt.date.today()
+    yest: dt.date = today - dt.timedelta(days=1)
+    month_start: dt.date = today.replace(day=1)
 
+    def nz(x, d=0.0):
+        return float(x or 0.0)
+
+    # Constants (tune to your plant targets)
+    POWER_TARGET_KWHPT = 465.0  # Melting target kWh/ton
+    DAILY_CAPACITY_ATOM_KG = globals().get("DAILY_CAPACITY_ATOM_KG", 6000.0)  # already in your file
+
+    # ------- RM / GRN -------
+    # Stock = remaining_qty * price; Totals by remaining & inward movement
+    grn_stock_kg = nz(
+        db.query(func.coalesce(func.sum(getattr(GRN, "remaining_qty", 0.0)), 0.0)).scalar()
+    )
+    grn_stock_val = nz(
+        db.query(func.coalesce(func.sum((getattr(GRN, "remaining_qty", 0.0) * getattr(GRN, "price", 0.0))), 0.0)).scalar()
+    )
+
+    grn_yest_kg = nz(
+        db.query(func.coalesce(func.sum(getattr(GRN, "qty", 0.0)), 0.0))
+          .filter(GRN.date == yest).scalar()
+    )
+    grn_today_kg = nz(
+        db.query(func.coalesce(func.sum(getattr(GRN, "qty", 0.0)), 0.0))
+          .filter(GRN.date == today).scalar()
+    )
+
+    # ------- Melting -------
+    # Yesterday totals
+    melt_yest_out = nz(
+        db.query(func.coalesce(func.sum(getattr(Heat, "actual_output", 0.0)), 0.0))
+          .filter(Heat.date == yest).scalar()
+    )
+    melt_yest_power = nz(
+        db.query(func.coalesce(func.sum(getattr(Heat, "power_kwh", 0.0)), 0.0))
+          .filter(Heat.date == yest).scalar()
+    )
+    melt_yest_inputs = nz(
+        db.query(func.coalesce(func.sum(getattr(Heat, "total_inputs", 0.0)), 0.0))
+          .filter(Heat.date == yest).scalar()
+    )
+
+    melt_yest_kwhpt = (melt_yest_power / melt_yest_out * 1000.0) if melt_yest_out > 0 else 0.0
+    melt_yest_yield = (melt_yest_out / melt_yest_inputs * 100.0) if melt_yest_inputs > 0 else 0.0
+
+    # Month-to-date
+    melt_mtd_out = nz(
+        db.query(func.coalesce(func.sum(getattr(Heat, "actual_output", 0.0)), 0.0))
+          .filter(Heat.date >= month_start, Heat.date <= today).scalar()
+    )
+    melt_mtd_power = nz(
+        db.query(func.coalesce(func.sum(getattr(Heat, "power_kwh", 0.0)), 0.0))
+          .filter(Heat.date >= month_start, Heat.date <= today).scalar()
+    )
+    melt_mtd_kwhpt = (melt_mtd_power / melt_mtd_out * 1000.0) if melt_mtd_out > 0 else 0.0
+
+    # ------- Atomization -------
+    # Yesterday produced = sum(lot.weight for lots with date==yest)
+    atom_yest_prod = nz(
+        db.query(func.coalesce(func.sum(getattr(Lot, "weight", 0.0)), 0.0))
+          .filter(Lot.date == yest).scalar()
+    )
+    # Very light “efficiency” proxy: out / target
+    atom_target_today = DAILY_CAPACITY_ATOM_KG
+    atom_yest_eff = (atom_yest_prod / atom_target_today * 100.0) if atom_target_today > 0 else 0.0
+
+    # MTD produced
+    atom_mtd_prod = nz(
+        db.query(func.coalesce(func.sum(getattr(Lot, "weight", 0.0)), 0.0))
+          .filter(Lot.date >= month_start, Lot.date <= today).scalar()
+    )
+    # +20 oversize (MTD) if you track Lot.oversize_kg or separate balance table
+    oversize_col = getattr(Lot, "oversize_kg", None)
+    atom_mtd_oversize = 0.0
+    if oversize_col is not None:
+        atom_mtd_oversize = nz(
+            db.query(func.coalesce(func.sum(oversize_col), 0.0))
+              .filter(Lot.date >= month_start, Lot.date <= today).scalar()
+        )
+
+    # ------- RAP (available by grade) -------
+    # RAPLot.available_qty, join Lot for grade and unit_cost
+    rap_krip_qty = rap_krfs_qty = rap_total_val = 0.0
+    try:
+        q = (db.query(RAPLot.available_qty, Lot.grade, Lot.unit_cost)
+               .join(Lot, RAPLot.lot_id == Lot.id))
+        for avail, grade, unit_cost in q.all():
+            a = nz(avail)
+            if (grade or "KRIP").upper() == "KRFS":
+                rap_krfs_qty += a
+            else:
+                rap_krip_qty += a
+            rap_total_val += a * nz(unit_cost)
+    except Exception:
+        pass
+
+    # Month movements (Dispatch + Plant-2)
+    rap_mtd_dispatch = 0.0
+    try:
+        # RAPDispatchItem joins RAPDispatch (for date) and RAPLot (for available)
+        rap_mtd_dispatch = nz(
+            db.query(func.coalesce(func.sum(getattr(RAPDispatchItem, "qty", 0.0)), 0.0))
+              .join(RAPDispatch, RAPDispatchItem.dispatch_id == RAPDispatch.id)
+              .filter(RAPDispatch.date >= month_start, RAPDispatch.date <= today)
+              .scalar()
+        )
+    except Exception:
+        pass
+
+    rap_mtd_transfer = 0.0
+    try:
+        rap_mtd_transfer = nz(
+            db.query(func.coalesce(func.sum(getattr(RAPTransfer, "qty", 0.0)), 0.0))
+              .filter(RAPTransfer.date >= month_start, RAPTransfer.date <= today)
+              .scalar()
+        )
+    except Exception:
+        pass
+
+    # ------- QA -------
+    # MTD approved / hold / rejected (Lots only is fine, add Heats if desired)
+    def qa_mtd_for(model, status):
+        col = getattr(model, "qa_status", None)
+        date_col = getattr(model, "date", None)
+        if col is None or date_col is None:
+            return 0.0
+        return nz(
+            db.query(func.coalesce(func.sum(getattr(model, "weight", 0.0)), 0.0))
+              .filter(date_col >= month_start, date_col <= today, func.upper(col) == status)
+              .scalar()
+        )
+
+    qa_approved_mtd = qa_mtd_for(Lot, "APPROVED")
+    qa_hold_mtd = qa_mtd_for(Lot, "HOLD")
+    qa_rejected_mtd = qa_mtd_for(Lot, "REJECTED")
+
+    # Pending count (heats + lots with empty/NULL status)
+    def pending_count(model):
+        col = getattr(model, "qa_status", None)
+        if col is None:
+            return 0
+        return int(db.query(func.count(model.id)).filter((col.is_(None)) | (col == "")).scalar() or 0)
+
+    qa_pending_count = pending_count(Heat) + pending_count(Lot)
+
+    # ------- Downtime -------
+    # Today + MTD minutes and most common reason
+    dt_today_min = dt_mtd_min = 0
+    dt_most_common = ""
+    try:
+        dt_today_min = int(
+            db.query(func.coalesce(func.sum(getattr(Downtime, "minutes", 0)), 0))
+              .filter(Downtime.date == today).scalar() or 0
+        ) + int(
+            db.query(func.coalesce(func.sum(getattr(AtomDowntime, "minutes", 0)), 0))
+              .filter(AtomDowntime.date == today).scalar() or 0
+        )
+
+        dt_mtd_min = int(
+            db.query(func.coalesce(func.sum(getattr(Downtime, "minutes", 0)), 0))
+              .filter(Downtime.date >= month_start, Downtime.date <= today).scalar() or 0
+        ) + int(
+            db.query(func.coalesce(func.sum(getattr(AtomDowntime, "minutes", 0)), 0))
+              .filter(AtomDowntime.date >= month_start, AtomDowntime.date <= today).scalar() or 0
+        )
+
+        # most common kind across both tables this month (very simple union-ish approach)
+        kinds = []
+        for Model in (Downtime, AtomDowntime):
+            kcol = getattr(Model, "kind", None)
+            if kcol is None:
+                continue
+            rows = (db.query(kcol, func.coalesce(func.sum(getattr(Model, "minutes", 0)), 0).label("mins"))
+                      .filter(Model.date >= month_start, Model.date <= today)
+                      .group_by(kcol).all())
+            kinds += rows
+        if kinds:
+            dt_most_common = max(kinds, key=lambda r: nz(r[1]))[0] or ""
+    except Exception:
+        pass
+
+    # extremely rough “lost kg” proxy (minutes/1440 * daily capacity)
+    dt_est_loss_kg = round((dt_mtd_min / 1440.0) * (globals().get("DAILY_CAPACITY_KG", 10000.0) + DAILY_CAPACITY_ATOM_KG), 1)
+
+    # ---- Render ----
+    ctx = {
+        "request": request,
+        "role": getattr(request, "session", {}).get("role", "guest"),
+
+        # RM/GRN
+        "rm_total_kg": grn_stock_kg,
+        "rm_total_val": grn_stock_val,
+        "rm_today_in_kg": grn_today_kg,
+        "rm_yest_kg": grn_yest_kg,
+
+        # Melting (yesterday + MTD)
+        "melt_yest_prod": melt_yest_out,
+        "melt_yest_kwhpt": melt_yest_kwhpt,
+        "melt_yest_yield": melt_yest_yield,
+        "melt_mtd_total": melt_mtd_out,
+        "melt_mtd_kwhpt": melt_mtd_kwhpt,
+        "melt_target_kwhpt": POWER_TARGET_KWHPT,
+
+        # Atomization
+        "atom_yest_prod": atom_yest_prod,
+        "atom_yest_eff": atom_yest_eff,
+        "atom_yest_oversize": 0.0,  # keep if you don’t track daily oversize
+        "atom_mtd_produced": atom_mtd_prod,
+        "atom_mtd_oversize": atom_mtd_oversize,
+
+        # RAP
+        "rap_krip_qty": rap_krip_qty,
+        "rap_krfs_qty": rap_krfs_qty,
+        "rap_total_val": rap_total_val,
+        "rap_mtd_dispatch": rap_mtd_dispatch,
+        "rap_mtd_transfer": rap_mtd_transfer,
+
+        # QA
+        "qa_approved_mtd": qa_approved_mtd,
+        "qa_hold_mtd": qa_hold_mtd,
+        "qa_rejected_mtd": qa_rejected_mtd,
+        "qa_pending_count": qa_pending_count,
+
+        # Downtime
+        "dt_today_min": dt_today_min,
+        "dt_mtd_min": dt_mtd_min,
+        "dt_most_common": dt_most_common,
+        "dt_est_loss_kg": dt_est_loss_kg,
+    }
+    return templates.TemplateResponse("dashboard.html", ctx)
+        
 # -------------------------------------------------
 # GRN (unchanged)
 # -------------------------------------------------
