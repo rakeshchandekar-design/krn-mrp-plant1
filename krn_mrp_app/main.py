@@ -594,7 +594,7 @@ def atom_page(
 
     available_map = {h.id: heat_available(db, h) for h in Heat_all}
     grades = {h.id: heat_grade(h) for h in Heat_all}
-    Heat = [h for h in Heat_all if (available_map.get(h.id) or 0.0) > 0.0001]
+    heats = [h for h in Heat_all if (available_map.get(h.id) or 0.0) > 0.0001]
 
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
 
@@ -930,7 +930,7 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login", status_code=303)
 
     today = dt.date.today()
-    Lot = (
+    lots = (
         db.query(Lot)
         .filter(Lot.qa_status == "APPROVED")
         .order_by(Lot.id.desc())
@@ -1239,7 +1239,7 @@ def anneal_page(request: Request, start: str|None=None, end: str|None=None,
             rap_live["KIP_qty"] += float(qty or 0)
             rap_live["KIP_val"] += float(val or 0)
 
-    Lot = (
+    lots = (
         db.query(AnnealLot)
         .filter(AnnealLot.date >= start_d, AnnealLot.date <= end_d)
         .order_by(AnnealLot.date.desc(), AnnealLot.id.desc())
@@ -1463,7 +1463,7 @@ def gs_page(request: Request, start: str|None=None, end: str|None=None,
         else:
             live["KIP_qty"] += float(qty or 0); live["KIP_val"] += float(val or 0)
 
-    Lot = (
+    lots = (
         db.query(ScreenLot)
         .filter(ScreenLot.date >= start_d, ScreenLot.date <= end_d)
         .order_by(ScreenLot.date.desc(), ScreenLot.id.desc())
@@ -1666,7 +1666,7 @@ def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
     # Allocation qty per heat for this lot
     alloc_rows = db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()
     alloc_map = {r.heat_id: float(r.qty or 0.0) for r in alloc_rows}
-    Heat = [db.get(Heat, r.heat_id) for r in alloc_rows]
+    heats = [db.get(Heat, r.heat_id) for r in alloc_rows]
 
     # FIFO GRN rows
     rows = []
