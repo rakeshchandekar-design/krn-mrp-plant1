@@ -7,7 +7,7 @@ import datetime as dt
 from typing import Optional, List, Dict
 from pathlib import Path
 from urllib.parse import quote
-from reportlab.pdfgen import canvas
+from reportlab.pdfgen import canvas
 
 
 # FastAPI
