@@ -527,7 +527,7 @@ def grn_new_save(
 
 @app.get("/melting", response_class=HTMLResponse)
 def melting_list(request: Request, db: Session = Depends(get_db)):
-    Heat = db.query(Heat).order_by(Heat.created_at.desc()).all()
+    heats = db.query(Heat).order_by(Heat.created_at.desc()).all()
     return templates.TemplateResponse("melting.html", {
         "request": request,
         "Heat": Heat,
@@ -596,7 +596,7 @@ def atom_page(
     grades = {h.id: heat_grade(h) for h in Heat_all}
     Heat = [h for h in Heat_all if (available_map.get(h.id) or 0.0) > 0.0001]
 
-    Lot = db.query(Lot).order_by(Lot.id.desc()).all()
+    lots = db.query(Lot).order_by(Lot.id.desc()).all()
 
     today = dt.date.today()
     Lot_with_dates = [(lot, lot_date_from_no(lot.lot_no) or today) for lot in Lot]
@@ -706,7 +706,7 @@ async def atom_new(
         if not allocs:
             return _alert_redirect("Enter allocation for at least one heat.")
 
-        Heat = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
+        heats = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
         if not Heat:
             return _alert_redirect("Selected Heat not found.")
 
@@ -778,7 +778,7 @@ def atom_export(
     end: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    Lot = db.query(Lot).order_by(Lot.id.asc()).all()
+    lots = db.query(Lot).order_by(Lot.id.asc()).all()
     s = dt.date.fromisoformat(start) if start else None
     e = dt.date.fromisoformat(end) if end else None
 
@@ -1856,7 +1856,7 @@ def qa_export(
     end: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    Heat = db.query(Heat).order_by(Heat.id.asc()).all()
+    heats = db.query(Heat).order_by(Heat.id.asc()).all()
     Lot  = db.query(Lot ).order_by(Lot.id.asc()).all()
 
     today = dt.date.today()
