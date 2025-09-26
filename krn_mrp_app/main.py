@@ -1,8 +1,5 @@
 # ==== PART A START ====
 
-# ↓↓↓ make type hints lazy so you can reference models before they are defined
-from __future__ import annotations
-
 import os
 import io
 import secrets
@@ -172,143 +169,7 @@ def screen_available(db, screen: ScreenLot) -> float:
     """Available qty for ScreenLot."""
     return getattr(screen, "available_qty", screen.qty or 0.0)
 
-# ==== Costing helpers (safe & idempotent) ====
 
-def _f(x) -> float:
-    try:
-        return float(x or 0.0)
-    except Exception:
-        return 0.0
-
-def _perkg(total_cost: float, qty: float) -> float:
-    q = _f(qty)
-    return (total_cost / q) if q > 0 else 0.0
-
-def money(x: float) -> float:
-    # round to 2 decimals for display/storage convenience
-    return round(_f(x), 2)
-
-# ---------------- Heat ----------------
-def heat_total_rm_cost(db: Session, heat: Heat) -> float:
-    """Sum of FIFO raw-material costs attached to this heat."""
-    rows = db.query(RMConsumption).filter(RMConsumption.heat_id == heat.id).all()
-    total = 0.0
-    for r in rows:
-        unit = _f(getattr(getattr(r, "grn", None), "unit_cost", 0.0))
-        total += unit * _f(r.qty)
-    return money(total)
-
-def heat_cost(db: Session, heat: Heat) -> tuple[float, float]:
-    """(unit_cost, total_cost) for a Heat."""
-    # Prefer cached values if they exist and look valid
-    cached_total = _f(getattr(heat, "total_inputs", 0.0))  # sometimes used as money sum
-    if cached_total > 0:
-        unit = _perkg(cached_total, getattr(heat, "qty", 0.0))
-        return money(unit), money(cached_total)
-
-    total = heat_total_rm_cost(db, heat)
-    unit = _perkg(total, getattr(heat, "qty", 0.0))
-    return money(unit), money(total)
-
-# ---------------- Lot (Atomization Lot) ----------------
-def lot_cost(db: Session, lot: Lot) -> tuple[float, float]:
-    """
-    (unit_cost, total_cost) for an atomization lot.
-    Default = inherit heat unit cost * lot.qty; fall back to cached fields.
-    """
-    # Use cached if present
-    cached_total = _f(getattr(lot, "total_cost", 0.0))
-    cached_unit  = _f(getattr(lot, "unit_cost", 0.0))
-    if cached_total > 0 and cached_unit > 0:
-        return money(cached_unit), money(cached_total)
-
-    # Otherwise derive from source heat
-    unit_h, _ = (0.0, 0.0)
-    if getattr(lot, "heat", None):
-        unit_h, _ = heat_cost(db, lot.heat)
-
-    unit = cached_unit or unit_h
-    total = unit * _f(lot.qty)
-    return money(unit), money(total)
-
-# ---------------- RAP ----------------
-def rap_cost(db: Session, rap: RAPLot) -> tuple[float, float]:
-    """
-    RAP inherits Lot cost per kg.
-    """
-    cached_total = _f(getattr(rap, "total_cost", 0.0))
-    cached_unit  = _f(getattr(rap, "unit_cost", 0.0))
-    if cached_total > 0 and cached_unit > 0:
-        return money(cached_unit), money(cached_total)
-
-    unit_lot, _ = (0.0, 0.0)
-    if getattr(rap, "lot", None):
-        unit_lot, _ = lot_cost(db, rap.lot)
-
-    unit = cached_unit or unit_lot
-    total = unit * _f(rap.qty)
-    return money(unit), money(total)
-
-# ---------------- Anneal ----------------
-def anneal_cost(db: Session, anneal: AnnealLot) -> tuple[float, float]:
-    """
-    Anneal cost = (RAP unit cost) + ANNEAL_COST per kg.
-    """
-    cached_total = _f(getattr(anneal, "total_cost", 0.0))
-    cached_unit  = _f(getattr(anneal, "unit_cost", 0.0))
-    if cached_total > 0 and cached_unit > 0:
-        return money(cached_unit), money(cached_total)
-
-    unit_rap = 0.0
-    if getattr(anneal, "rap_lot", None):
-        unit_rap, _ = rap_cost(db, anneal.rap_lot)
-
-    unit = (cached_unit or unit_rap) + _f(ANNEAL_COST)
-    total = unit * _f(anneal.qty)
-    return money(unit), money(total)
-
-# ---------------- Screening (GS) ----------------
-def screen_cost(db: Session, gs: ScreenLot) -> tuple[float, float]:
-    """
-    Screen cost = (Anneal unit cost) + SCREEN_COST per kg.
-    """
-    cached_total = _f(getattr(gs, "total_cost", 0.0))
-    cached_unit  = _f(getattr(gs, "unit_cost", 0.0))
-    if cached_total > 0 and cached_unit > 0:
-        return money(cached_unit), money(cached_total)
-
-    unit_anneal = 0.0
-    if getattr(gs, "anneal_lot", None):
-        unit_anneal, _ = anneal_cost(db, gs.anneal_lot)
-
-    unit = (cached_unit or unit_anneal) + _f(SCREEN_COST)
-    total = unit * _f(gs.qty)
-    return money(unit), money(total)
-
-# ---- convenience setters (optional; call when saving rows) ----
-def ensure_cached_costs(db: Session, obj):
-    """
-    If the object has unit_cost/total_cost attributes, compute & store them.
-    Safe to call on Heat/Lot/RAPLot/AnnealLot/ScreenLot.
-    """
-    if isinstance(obj, Heat):
-        unit, total = heat_cost(db, obj)
-    elif isinstance(obj, Lot):
-        unit, total = lot_cost(db, obj)
-    elif isinstance(obj, RAPLot):
-        unit, total = rap_cost(db, obj)
-    elif isinstance(obj, AnnealLot):
-        unit, total = anneal_cost(db, obj)
-    elif isinstance(obj, ScreenLot):
-        unit, total = screen_cost(db, obj)
-    else:
-        return  # unsupported type; no crash
-
-    # write back if fields exist
-    if hasattr(obj, "unit_cost"):
-        obj.unit_cost = unit
-    if hasattr(obj, "total_cost"):
-        obj.total_cost = total
 
 def require_roles(*allowed_roles):
     """FastAPI dependency to restrict access by role."""
@@ -615,97 +476,157 @@ class LotPSD(Base):
 
 def apply_simple_migrations():
     stmts = [
-        # GRN
-        "ALTER TABLE grn ADD COLUMN IF NOT EXISTS item VARCHAR",
-        "ALTER TABLE grn ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
+    # ===== GRN =====
+    "ALTER TABLE grn ADD COLUMN IF NOT EXISTS item VARCHAR",
+    "ALTER TABLE grn ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
 
-        # HEAT
-        "ALTER TABLE heat ADD COLUMN IF NOT EXISTS grade VARCHAR",
-        "ALTER TABLE heat ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
-        "ALTER TABLE heat ADD COLUMN IF NOT EXISTS power_kwh DOUBLE PRECISION",
-        "ALTER TABLE heat ADD COLUMN IF NOT EXISTS total_inputs DOUBLE PRECISION",
-        "ALTER TABLE heat ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
-        "ALTER TABLE heat ADD COLUMN IF NOT EXISTS qa_status VARCHAR DEFAULT 'PENDING'",
-        "ALTER TABLE heat ADD COLUMN IF NOT EXISTS qa_remarks VARCHAR",
+    # ===== HEAT =====
+    "ALTER TABLE heat ADD COLUMN IF NOT EXISTS grade VARCHAR",
+    "ALTER TABLE heat ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
+    "ALTER TABLE heat ADD COLUMN IF NOT EXISTS power_kwh DOUBLE PRECISION",
+    "ALTER TABLE heat ADD COLUMN IF NOT EXISTS total_inputs DOUBLE PRECISION",
+    "ALTER TABLE heat ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
+    "ALTER TABLE heat ADD COLUMN IF NOT EXISTS qa_status VARCHAR",
+    "ALTER TABLE heat ADD COLUMN IF NOT EXISTS qa_remarks VARCHAR",
 
-        # LOT
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS grade VARCHAR",
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS status VARCHAR",
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS qa_status VARCHAR DEFAULT 'PENDING'",
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS qa_remarks VARCHAR",
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS date TIMESTAMP",
+    # ===== LOT =====
+    "ALTER TABLE lot ADD COLUMN IF NOT EXISTS lot_no VARCHAR",
+    "ALTER TABLE lot ADD COLUMN IF NOT EXISTS heat_id INTEGER",
+    "ALTER TABLE lot ADD COLUMN IF NOT EXISTS grade VARCHAR",
+    "ALTER TABLE lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
+    "ALTER TABLE lot ADD COLUMN IF NOT EXISTS status VARCHAR",
+    "ALTER TABLE lot ADD COLUMN IF NOT EXISTS qa_status VARCHAR",
+    "ALTER TABLE lot ADD COLUMN IF NOT EXISTS qa_remarks VARCHAR",
+    "ALTER TABLE lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
+    "ALTER TABLE lot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
+    "ALTER TABLE lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
+    "ALTER TABLE lot ADD COLUMN IF NOT EXISTS date TIMESTAMP",
 
-        # RAPLot
-        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS grade VARCHAR",
-        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
-        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS available_qty DOUBLE PRECISION",
-        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS status VARCHAR",
-        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS qa_status VARCHAR DEFAULT 'PENDING'",
-        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS qa_remarks VARCHAR",
-        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
-        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
-        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS date TIMESTAMP",
+    # ===== LOT_HEAT (association) =====
+    "CREATE TABLE IF NOT EXISTS lot_heat ("
+    "  id SERIAL PRIMARY KEY,"
+    "  lot_id INTEGER,"
+    "  heat_id INTEGER,"
+    "  qty DOUBLE PRECISION"
+    ")",
 
-        # AnnealLot
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS lot_no VARCHAR",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS grade VARCHAR",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS available_qty DOUBLE PRECISION",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS ammonia_kg DOUBLE PRECISION",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS status VARCHAR",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS qa_status VARCHAR DEFAULT 'PENDING'",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS qa_remarks VARCHAR",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS date TIMESTAMP",
+    # ===== RM_CONSUMPTION =====
+    "CREATE TABLE IF NOT EXISTS rm_consumption ("
+    "  id SERIAL PRIMARY KEY,"
+    "  heat_id INTEGER,"
+    "  rm_type VARCHAR,"
+    "  grn_id INTEGER,"
+    "  qty DOUBLE PRECISION"
+    ")",
 
-        "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS oxygen VARCHAR",
-        "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS decision VARCHAR DEFAULT 'PENDING'",
-        "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS remarks VARCHAR",
+    # ===== RAPLot =====
+    "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS lot_id INTEGER",
+    "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS grade VARCHAR",
+    "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
+    "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS available_qty DOUBLE PRECISION",
+    "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS status VARCHAR",
+    "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS qa_status VARCHAR",
+    "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS qa_remarks VARCHAR",
+    "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
+    "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
+    "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS date TIMESTAMP",
 
-        "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS date TIMESTAMP",
-        "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS minutes INTEGER",
-        "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS kind VARCHAR",
-        "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS remarks VARCHAR",
+    # ===== RAP MOVEMENTS =====
+    "CREATE TABLE IF NOT EXISTS rap_alloc ("
+    "  id SERIAL PRIMARY KEY,"
+    "  rap_lot_id INTEGER,"
+    "  date TIMESTAMP,"
+    "  kind VARCHAR,"
+    "  qty DOUBLE PRECISION,"
+    "  remarks VARCHAR,"
+    "  dest VARCHAR"
+    ")",
+    "CREATE TABLE IF NOT EXISTS rap_transfer ("
+    "  id SERIAL PRIMARY KEY,"
+    "  date TIMESTAMP,"
+    "  lot_id INTEGER,"
+    "  qty DOUBLE PRECISION,"
+    "  remarks VARCHAR"
+    ")",
+    "CREATE TABLE IF NOT EXISTS rap_dispatch ("
+    "  id SERIAL PRIMARY KEY,"
+    "  date TIMESTAMP,"
+    "  customer VARCHAR,"
+    "  grade VARCHAR,"
+    "  total_qty DOUBLE PRECISION,"
+    "  total_cost DOUBLE PRECISION"
+    ")",
+    "CREATE TABLE IF NOT EXISTS rap_dispatch_item ("
+    "  id SERIAL PRIMARY KEY,"
+    "  dispatch_id INTEGER,"
+    "  lot_id INTEGER,"
+    "  qty DOUBLE PRECISION,"
+    "  cost DOUBLE PRECISION"
+    ")",
 
-        # ScreenLot
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS lot_no VARCHAR",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS grade VARCHAR",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS available_qty DOUBLE PRECISION",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS oversize_40 DOUBLE PRECISION",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS oversize_80 DOUBLE PRECISION",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS status VARCHAR",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS qa_status VARCHAR DEFAULT 'PENDING'",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS qa_remarks VARCHAR",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS date TIMESTAMP",
+    # ===== ANNEAL =====
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS lot_no VARCHAR",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS rap_lot_id INTEGER",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS grade VARCHAR",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS available_qty DOUBLE PRECISION",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS ammonia_kg DOUBLE PRECISION",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS status VARCHAR",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS qa_status VARCHAR",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS qa_remarks VARCHAR",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
+    "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS date TIMESTAMP",
 
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS c VARCHAR",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS si VARCHAR",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS s VARCHAR",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS p VARCHAR",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS cu VARCHAR",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS ni VARCHAR",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS mn VARCHAR",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS fe VARCHAR",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS o VARCHAR",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS compressibility VARCHAR",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS decision VARCHAR DEFAULT 'PENDING'",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS remarks VARCHAR",
+    "CREATE TABLE IF NOT EXISTS anneal_lot_item ("
+    "  id SERIAL PRIMARY KEY,"
+    "  anneal_lot_id INTEGER,"
+    "  rap_lot_id INTEGER,"
+    "  qty DOUBLE PRECISION"
+    ")",
 
-        "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS date TIMESTAMP",
-        "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS minutes INTEGER",
-        "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS kind VARCHAR",
-        "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS remarks VARCHAR",
-    ]
+    "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS lot_id INTEGER",
+    "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS oxygen VARCHAR",
+    "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS decision VARCHAR",
+    "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS remarks VARCHAR",
+
+    "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS date TIMESTAMP",
+    "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS minutes INTEGER",
+    "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS kind VARCHAR",
+    "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS remarks VARCHAR",
+
+    # ===== SCREENING =====
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS lot_no VARCHAR",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS anneal_lot_id INTEGER",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS grade VARCHAR",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS available_qty DOUBLE PRECISION",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS oversize_40 DOUBLE PRECISION",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS oversize_80 DOUBLE PRECISION",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS status VARCHAR",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS qa_status VARCHAR",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS qa_remarks VARCHAR",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
+    "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS date TIMESTAMP",
+
+    "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS lot_id INTEGER",
+    "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS c VARCHAR",
+    "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS s VARCHAR",
+    "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS p VARCHAR",
+    "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS si VARCHAR",
+    "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS compressibility VARCHAR",
+    "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS decision VARCHAR",
+    "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS remarks VARCHAR",
+
+    "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS date TIMESTAMP",
+    "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS minutes INTEGER",
+    "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS kind VARCHAR",
+    "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS remarks VARCHAR",
+]
+# keep your existing SQLite conversion (DOUBLE PRECISION -> FLOAT) if present
 
     with engine.begin() as conn:
         for stmt in stmts:
