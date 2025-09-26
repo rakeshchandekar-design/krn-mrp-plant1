@@ -194,7 +194,7 @@ class Lot(Base):
     status = Column(String, default="Pending")  # Pending/Hold/Approved/Reject
     unit_cost = Column(Float, default=0)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
-    heat = relationship("Heat", backref="lots")
+    heat = relationship("Heat", backref="Lot")
 
 class RAPLot(Base):
     __tablename__ = "raplot"
@@ -221,7 +221,7 @@ class AnnealLot(Base):
     status = Column(String, default="Pending")
     unit_cost = Column(Float, default=0)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
-    rap_lot = relationship("RAPLot", backref="anneal_lots")
+    rap_lot = relationship("RAPLot", backref="anneal_Lot")
 
 class AnnealQA(Base):
     __tablename__ = "anneal_qa"
@@ -256,7 +256,7 @@ class ScreenLot(Base):
     status = Column(String, default="Pending")
     unit_cost = Column(Float, default=0)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
-    anneal_lot = relationship("AnnealLot", backref="screen_lots")
+    anneal_lot = relationship("AnnealLot", backref="screen_Lot")
 
 class ScreenQA(Base):
     __tablename__ = "screen_qa"
@@ -456,7 +456,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     grn_today = db.query(func.sum(GRN.qty)).filter(func.date(GRN.date) == today).scalar() or 0
     grn_month = db.query(func.sum(GRN.qty)).filter(func.date(GRN.date) >= today.replace(day=1)).scalar() or 0
 
-    # Heats
+    # Heat
     melt_yest = db.query(func.sum(Heat.qty)).filter(func.date(Heat.created_at) == yest).scalar() or 0
     melt_month = db.query(func.sum(Heat.qty)).filter(func.date(Heat.created_at) >= today.replace(day=1)).scalar() or 0
     melt_power = db.query(func.sum(Heat.power_kwh)).filter(func.date(Heat.created_at) >= today.replace(day=1)).scalar() or 0
@@ -489,10 +489,10 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/grn", response_class=HTMLResponse)
 def grn_list(request: Request, db: Session = Depends(get_db)):
-    grns = db.query(GRN).order_by(GRN.date.desc()).all()
+    grn = db.query(GRN).order_by(GRN.date.desc()).all()
     return templates.TemplateResponse("grn.html", {
         "request": request,
-        "grns": grns,
+        "grn": grn,
         "read_only": _is_read_only(request)
     })
 
@@ -527,10 +527,10 @@ def grn_new_save(
 
 @app.get("/melting", response_class=HTMLResponse)
 def melting_list(request: Request, db: Session = Depends(get_db)):
-    heats = db.query(Heat).order_by(Heat.created_at.desc()).all()
+    Heat = db.query(Heat).order_by(Heat.created_at.desc()).all()
     return templates.TemplateResponse("melting.html", {
         "request": request,
-        "heats": heats,
+        "Heat": Heat,
         "read_only": _is_read_only(request)
     })
 
@@ -585,28 +585,28 @@ def atom_page(
     if not role_allowed(request, {"admin", "atom"}):
         return RedirectResponse("/login", status_code=303)
 
-    heats_all = (
+    Heat_all = (
         db.query(Heat)
         .filter(Heat.qa_status == "APPROVED")
         .order_by(Heat.id.desc())
         .all()
     )
 
-    available_map = {h.id: heat_available(db, h) for h in heats_all}
-    grades = {h.id: heat_grade(h) for h in heats_all}
-    heats = [h for h in heats_all if (available_map.get(h.id) or 0.0) > 0.0001]
+    available_map = {h.id: heat_available(db, h) for h in Heat_all}
+    grades = {h.id: heat_grade(h) for h in Heat_all}
+    Heat = [h for h in Heat_all if (available_map.get(h.id) or 0.0) > 0.0001]
 
-    lots = db.query(Lot).order_by(Lot.id.desc()).all()
+    Lot = db.query(Lot).order_by(Lot.id.desc()).all()
 
     today = dt.date.today()
-    lots_with_dates = [(lot, lot_date_from_no(lot.lot_no) or today) for lot in lots]
-    prod_today = sum((lot.weight or 0.0) for lot, d in lots_with_dates if d == today)
+    Lot_with_dates = [(lot, lot_date_from_no(lot.lot_no) or today) for lot in Lot]
+    prod_today = sum((lot.weight or 0.0) for lot, d in Lot_with_dates if d == today)
     eff_today = (100.0 * prod_today / DAILY_CAPACITY_ATOM_KG) if DAILY_CAPACITY_ATOM_KG > 0 else 0.0
 
     last5 = []
     for i in range(4, -1, -1):
         d = today - dt.timedelta(days=i)
-        actual = sum((lot.weight or 0.0) for lot, dd in lots_with_dates if dd == d)
+        actual = sum((lot.weight or 0.0) for lot, dd in Lot_with_dates if dd == d)
         target = atom_day_target_kg(db, d)
         last5.append({"date": d.isoformat(), "actual": actual, "target": target})
 
@@ -622,7 +622,7 @@ def atom_page(
         rap_alloc_by_lot[int(lid)] = float(s or 0.0)
 
     stock = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
-    for lot in lots:
+    for lot in Lot:
         gross = float(lot.weight or 0.0)
         rap_taken = rap_alloc_by_lot.get(lot.id, 0.0)
         qty = max(gross - rap_taken, 0.0)
@@ -634,7 +634,7 @@ def atom_page(
         else:
             stock["KRIP_qty"] += qty; stock["KRIP_val"] += val
 
-    lots_stock = {
+    Lot_stock = {
         "krip_qty": stock.get("KRIP_qty", 0.0),
         "krip_val": stock.get("KRIP_val", 0.0),
         "krfs_qty": stock.get("KRFS_qty", 0.0),
@@ -666,8 +666,8 @@ def atom_page(
         {
             "request": request,
             "role": current_role(request),
-            "heats": heats,
-            "lots": lots,
+            "Heat": Heat,
+            "Lot": Lot,
             "heat_grades": grades,
             "available_map": available_map,
             "today_iso": today.isoformat(),
@@ -677,7 +677,7 @@ def atom_page(
             "atom_last5": last5,
             "atom_capacity": DAILY_CAPACITY_ATOM_KG,
             "atom_stock": stock,
-            "lots_stock": lots_stock,
+            "Lot_stock": Lot_stock,
             "atom_bal": atom_bal,
             "error_msg": err,
         }
@@ -706,15 +706,15 @@ async def atom_new(
         if not allocs:
             return _alert_redirect("Enter allocation for at least one heat.")
 
-        heats = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
-        if not heats:
-            return _alert_redirect("Selected heats not found.")
+        Heat = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
+        if not Heat:
+            return _alert_redirect("Selected Heat not found.")
 
-        grades = {("KRFS" if heat_grade(h) == "KRFS" else "KRIP") for h in heats}
+        grades = {("KRFS" if heat_grade(h) == "KRFS" else "KRIP") for h in Heat}
         if len(grades) > 1:
             return _alert_redirect("Mixing KRIP and KRFS in the same lot is not allowed.")
 
-        for h in heats:
+        for h in Heat:
             avail = heat_available(db, h)
             take = allocs.get(h.id, 0.0)
             if take > avail + 1e-6:
@@ -727,7 +727,7 @@ async def atom_new(
                 f"Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg)."
             )
 
-        any_fesi = any(heat_grade(h) == "KRFS" for h in heats)
+        any_fesi = any(heat_grade(h) == "KRFS" for h in Heat)
         grade = "KRFS" if any_fesi else "KRIP"
 
         today = dt.date.today().strftime("%Y%m%d")
@@ -738,19 +738,19 @@ async def atom_new(
         db.add(lot)
         db.flush()
 
-        for h in heats:
+        for h in Heat:
             q = allocs.get(h.id, 0.0)
             if q > 0:
                 db.add(LotHeat(lot_id=lot.id, heat_id=h.id, qty=q))
                 h.alloc_used = float(h.alloc_used or 0.0) + q
 
-        weighted_cost = sum((h.unit_cost or 0.0) * allocs.get(h.id, 0.0) for h in heats)
+        weighted_cost = sum((h.unit_cost or 0.0) * allocs.get(h.id, 0.0) for h in Heat)
         avg_heat_unit_cost = (weighted_cost / total_alloc) if total_alloc > 1e-9 else 0.0
         lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
         lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
 
         sums = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
-        for h in heats:
+        for h in Heat:
             q = allocs.get(h.id, 0.0)
             if q <= 0 or not h.chemistry:
                 continue
@@ -778,13 +778,13 @@ def atom_export(
     end: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    lots = db.query(Lot).order_by(Lot.id.asc()).all()
+    Lot = db.query(Lot).order_by(Lot.id.asc()).all()
     s = dt.date.fromisoformat(start) if start else None
     e = dt.date.fromisoformat(end) if end else None
 
     out = io.StringIO()
     out.write("Lot No,Date,Grade,QA,Weight kg,Unit Cost,Total Cost\n")
-    for lot in lots:
+    for lot in Lot:
         d = lot_date_from_no(lot.lot_no) or dt.date.today()
         if s and d < s:
             continue
@@ -865,49 +865,49 @@ def qa_dashboard(
         s_date = e_date = today
         s_iso = e_iso = today.isoformat()
 
-    heats_all = db.query(Heat).order_by(Heat.id.desc()).all()
-    lots_all  = db.query(Lot).order_by(Lot.id.desc()).all()
+    Heat_all = db.query(Heat).order_by(Heat.id.desc()).all()
+    Lot_all  = db.query(Lot).order_by(Lot.id.desc()).all()
 
     def _hd(h: Heat) -> dt.date:
         return heat_date_from_no(h.heat_no) or today
     def _ld(l: Lot) -> dt.date:
         return lot_date_from_no(l.lot_no) or today
 
-    heats_vis = [h for h in heats_all if s_date <= _hd(h) <= e_date]
-    lots_vis  = [l for l in lots_all  if s_date <= _ld(l) <= e_date]
+    Heat_vis = [h for h in Heat_all if s_date <= _hd(h) <= e_date]
+    Lot_vis  = [l for l in Lot_all  if s_date <= _ld(l) <= e_date]
 
     month_start = e_date.replace(day=1)
     month_end   = (month_start + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
-    lots_this_month = [l for l in lots_all if month_start <= _ld(l) <= month_end]
+    Lot_this_month = [l for l in Lot_all if month_start <= _ld(l) <= month_end]
 
-    def _sum_lots(status: str) -> float:
+    def _sum_Lot(status: str) -> float:
         s = status.upper()
-        return sum(float(l.weight or 0.0) for l in lots_this_month if (l.qa_status or "").upper() == s)
+        return sum(float(l.weight or 0.0) for l in Lot_this_month if (l.qa_status or "").upper() == s)
 
     kpi = {
-        "approved_kg": _sum_lots("APPROVED"),
-        "hold_kg": _sum_lots("HOLD"),
-        "rejected_kg": _sum_lots("REJECTED"),
+        "approved_kg": _sum_Lot("APPROVED"),
+        "hold_kg": _sum_Lot("HOLD"),
+        "rejected_kg": _sum_Lot("REJECTED"),
     }
 
     pending_count = (
-        sum(1 for h in heats_all if (h.qa_status or "").upper() == "PENDING") +
-        sum(1 for l in lots_all  if (l.qa_status or "").upper() == "PENDING")
+        sum(1 for h in Heat_all if (h.qa_status or "").upper() == "PENDING") +
+        sum(1 for l in Lot_all  if (l.qa_status or "").upper() == "PENDING")
     )
     todays_count = (
-        sum(1 for h in heats_all if _hd(h) == today and (h.qa_status or "").upper() != "PENDING") +
-        sum(1 for l in lots_all  if _ld(l) == today and (l.qa_status or "").upper() != "PENDING")
+        sum(1 for h in Heat_all if _hd(h) == today and (h.qa_status or "").upper() != "PENDING") +
+        sum(1 for l in Lot_all  if _ld(l) == today and (l.qa_status or "").upper() != "PENDING")
     )
 
-    heat_grades = {h.id: heat_grade(h) for h in heats_vis}
+    heat_grades = {h.id: heat_grade(h) for h in Heat_vis}
 
     return templates.TemplateResponse(
         "qa_dashboard.html",
         {
             "request": request,
             "role": current_role(request),
-            "heats": heats_vis,
-            "lots": lots_vis,
+            "Heat": Heat_vis,
+            "Lot": Lot_vis,
             "heat_grades": heat_grades,
             "kpi_approved_month": float(kpi.get("approved_kg", 0.0)),
             "kpi_hold_month":     float(kpi.get("hold_kg", 0.0)),
@@ -930,7 +930,7 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login", status_code=303)
 
     today = dt.date.today()
-    lots = (
+    Lot = (
         db.query(Lot)
         .filter(Lot.qa_status == "APPROVED")
         .order_by(Lot.id.desc())
@@ -938,7 +938,7 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
     )
 
     rap_rows: List[RAPLot] = []
-    for lot in lots:
+    for lot in Lot:
         rap_rows.append(ensure_rap_lot(db, lot))
     db.commit()
 
@@ -1118,12 +1118,12 @@ def rap_dispatch_pdf(alloc_id: int, db: Session = Depends(get_db)):
     if not lot:
         return PlainTextResponse("Lot not found.", status_code=404)
 
-    heats, fifo_rows = [], []
-    for lh in lot.heats:
+    Heat, fifo_rows = [], []
+    for lh in lot.Heat:
         h = db.get(Heat, lh.heat_id)
         if not h:
             continue
-        heats.append((h, float(lh.qty or 0.0)))
+        Heat.append((h, float(lh.qty or 0.0)))
         for cons in h.rm_consumptions:
             g = cons.grn
             fifo_rows.append({
@@ -1155,8 +1155,8 @@ def rap_dispatch_pdf(alloc_id: int, db: Session = Depends(get_db)):
     c.setFont("Helvetica-Bold", 11); c.drawString(2*cm, y, "Annexure: QA Certificates & GRN Trace"); y -= 14
     c.setFont("Helvetica", 10)
 
-    c.drawString(2*cm, y, "Heats used in this lot (lot allocation vs. heat out / QA):"); y -= 12
-    for h, qalloc in heats:
+    c.drawString(2*cm, y, "Heat used in this lot (lot allocation vs. heat out / QA):"); y -= 12
+    for h, qalloc in Heat:
         c.drawString(2.2*cm, y, f"{h.heat_no}  | Alloc to lot: {qalloc:.1f} kg  | Heat Out: {float(h.actual_output or 0):.1f} kg  | QA: {h.qa_status or ''}")
         y -= 12
         if y < 3*cm:
@@ -1239,7 +1239,7 @@ def anneal_page(request: Request, start: str|None=None, end: str|None=None,
             rap_live["KIP_qty"] += float(qty or 0)
             rap_live["KIP_val"] += float(val or 0)
 
-    lots = (
+    Lot = (
         db.query(AnnealLot)
         .filter(AnnealLot.date >= start_d, AnnealLot.date <= end_d)
         .order_by(AnnealLot.date.desc(), AnnealLot.id.desc())
@@ -1256,12 +1256,12 @@ def anneal_page(request: Request, start: str|None=None, end: str|None=None,
         "ann_eff_today": eff_today,
         "ann_last5": last5,
         "ann_live": rap_live,
-        "ann_lots": lots,
+        "ann_Lot": Lot,
         "atom_capacity": ANNEAL_CAPACITY_KG,
         "atom_eff_today": eff_today,
         "atom_last5": last5,
-        "lots": lots,
-        "lots_stock": {"krip_qty": rap_live["KIP_qty"], "krip_val": rap_live["KIP_val"],
+        "Lot": Lot,
+        "Lot_stock": {"krip_qty": rap_live["KIP_qty"], "krip_val": rap_live["KIP_val"],
                        "krfs_qty": rap_live["KFS_qty"], "krfs_val": rap_live["KFS_val"]},
     }
     return templates.TemplateResponse("annealing.html", ctx)
@@ -1463,7 +1463,7 @@ def gs_page(request: Request, start: str|None=None, end: str|None=None,
         else:
             live["KIP_qty"] += float(qty or 0); live["KIP_val"] += float(val or 0)
 
-    lots = (
+    Lot = (
         db.query(ScreenLot)
         .filter(ScreenLot.date >= start_d, ScreenLot.date <= end_d)
         .order_by(ScreenLot.date.desc(), ScreenLot.id.desc())
@@ -1480,12 +1480,12 @@ def gs_page(request: Request, start: str|None=None, end: str|None=None,
         "gs_eff_today": eff_today,
         "gs_last5": last5,
         "gs_live": live,
-        "gs_lots": lots,
+        "gs_Lot": Lot,
         "atom_capacity": SCREEN_CAPACITY_KG,
         "atom_eff_today": eff_today,
         "atom_last5": last5,
-        "lots": lots,
-        "lots_stock": {"krip_qty": live["KIP_qty"], "krip_val": live["KIP_val"],
+        "Lot": Lot,
+        "Lot_stock": {"krip_qty": live["KIP_qty"], "krip_val": live["KIP_val"],
                        "krfs_qty": live["KFS_qty"], "krfs_val": live["KFS_val"]},
     }
     return templates.TemplateResponse("screening.html", ctx)
@@ -1655,7 +1655,7 @@ def qa_screen_lot_save(lot_id: int,
 # ==== PART B3 START ====
 
 # -------------------------------------------------
-# Traceability – LOT (full chain: heats + FIFO GRNs)
+# Traceability – LOT (full chain: Heat + FIFO grn)
 # -------------------------------------------------
 @app.get("/traceability/lot/{lot_id}", response_class=HTMLResponse)
 def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
@@ -1666,11 +1666,11 @@ def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
     # Allocation qty per heat for this lot
     alloc_rows = db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()
     alloc_map = {r.heat_id: float(r.qty or 0.0) for r in alloc_rows}
-    heats = [db.get(Heat, r.heat_id) for r in alloc_rows]
+    Heat = [db.get(Heat, r.heat_id) for r in alloc_rows]
 
     # FIFO GRN rows
     rows = []
-    for h in heats:
+    for h in Heat:
         for cons in h.rm_consumptions:
             rows.append(
                 type(
@@ -1690,7 +1690,7 @@ def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
         {
             "request": request,
             "lot": lot,
-            "heats": heats,
+            "Heat": Heat,
             "alloc_map": alloc_map,
             "grn_rows": rows
         }
@@ -1732,7 +1732,7 @@ def lot_trace_view(lot_id: int, db: Session = Depends(get_db)):
         return HTMLResponse("<p>Lot not found</p>", status_code=404)
 
     rows = []
-    for lh in getattr(lot, "heats", []):
+    for lh in getattr(lot, "Heat", []):
         h = db.get(Heat, lh.heat_id)
         if not h:
             continue
@@ -1779,7 +1779,7 @@ def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
     def v(x): return ("—" if x in (None, "",) else x)
 
     rows = []
-    for lh in getattr(lot, "heats", []):
+    for lh in getattr(lot, "Heat", []):
         h = db.get(Heat, lh.heat_id)
         if not h:
             continue
@@ -1801,7 +1801,7 @@ def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
     for r in rows:
         html.append(f"<tr><td>{r['heat_no']}</td><td>{r['qa']}</td><td>{r['notes']}</td></tr>")
     if not rows:
-        html.append("<tr><td colspan='3'>No heats recorded.</td></tr>")
+        html.append("<tr><td colspan='3'>No Heat recorded.</td></tr>")
     html.append("</table><br>")
 
     html += ["<h3>Chemistry</h3>",
@@ -1848,7 +1848,7 @@ def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
 
 
 # -------------------------------------------------
-# QA Export (heats + lots) – by date range
+# QA Export (Heat + Lot) – by date range
 # -------------------------------------------------
 @app.get("/qa/export")
 def qa_export(
@@ -1856,8 +1856,8 @@ def qa_export(
     end: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    heats = db.query(Heat).order_by(Heat.id.asc()).all()
-    lots  = db.query(Lot ).order_by(Lot.id.asc()).all()
+    Heat = db.query(Heat).order_by(Heat.id.asc()).all()
+    Lot  = db.query(Lot ).order_by(Lot.id.asc()).all()
 
     today = dt.date.today()
     s = dt.date.fromisoformat(start) if start else today
@@ -1868,14 +1868,14 @@ def qa_export(
     def _ldate(l: Lot) -> dt.date:
         return lot_date_from_no(l.lot_no) or today
 
-    heats_in = [h for h in heats if s <= _hdate(h) <= e]
-    lots_in  = [l for l in lots  if s <= _ldate(l) <= e]
+    Heat_in = [h for h in Heat if s <= _hdate(h) <= e]
+    Lot_in  = [l for l in Lot  if s <= _ldate(l) <= e]
 
     out = io.StringIO()
     w = out.write
     w("Type,ID,Date,Grade/Type,Weight/Output (kg),QA Status,C,Si,S,P,Cu,Ni,Mn,Fe\n")
 
-    for h in heats_in:
+    for h in Heat_in:
         chem = h.chemistry
         w(
             f"HEAT,{h.heat_no},{_hdate(h).isoformat()},"
@@ -1891,7 +1891,7 @@ def qa_export(
             f"{(chem.fe if chem else '')}\n"
         )
 
-    for l in lots_in:
+    for l in Lot_in:
         chem = l.chemistry
         w(
             f"LOT,{l.lot_no},{_ldate(l).isoformat()},{l.grade or ''},"
@@ -1945,7 +1945,7 @@ def lot_pdf_view(lot_id: int, db: Session = Depends(get_db)):
 
     # section title
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(2 * cm, y, "Heats & GRN (FIFO)"); y -= 14
+    c.drawString(2 * cm, y, "Heat & GRN (FIFO)"); y -= 14
     c.setFont("Helvetica", 10)
 
     def new_page():
@@ -1960,11 +1960,11 @@ def lot_pdf_view(lot_id: int, db: Session = Depends(get_db)):
             c.drawString(2 * cm, h - 3.2 * cm, "Lot Summary")
         y = h - 4 * cm
         c.setFont("Helvetica-Bold", 11)
-        c.drawString(2 * cm, y, "Heats & GRN (FIFO)"); y -= 14
+        c.drawString(2 * cm, y, "Heat & GRN (FIFO)"); y -= 14
         c.setFont("Helvetica", 10)
 
-    # parent rows (heats) + child rows (GRN FIFO)
-    for lh in getattr(lot, "heats", []):
+    # parent rows (Heat) + child rows (GRN FIFO)
+    for lh in getattr(lot, "Heat", []):
         hobj = db.get(Heat, lh.heat_id)
         if not hobj:
             continue
@@ -2006,9 +2006,9 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
     c.drawString(2 * cm, y, f"Lot QA: {lot.qa_status or '-'}"); y -= 18
 
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(2 * cm, y, "Heats (Allocation)"); y -= 14
+    c.drawString(2 * cm, y, "Heat (Allocation)"); y -= 14
     c.setFont("Helvetica", 10)
-    for lh in lot.heats:
+    for lh in lot.Heat:
         h = lh.heat
         c.drawString(2.2 * cm, y,
             f"{h.heat_no}  | Alloc to lot: {float(lh.qty or 0):.1f} kg  | Heat Out: {float(h.actual_output or 0):.1f} kg  | QA: {h.qa_status or '-'}")
@@ -2019,7 +2019,7 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
     y -= 6
     c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "GRN Consumption (FIFO)"); y -= 14
     c.setFont("Helvetica", 10)
-    for lh in lot.heats:
+    for lh in lot.Heat:
         h = lh.heat
         for cons in h.rm_consumptions:
             g = cons.grn
@@ -2219,8 +2219,8 @@ def lot_pdf_view(lot_id: int, request: Request, db: Session = Depends(get_db)):
         y -= 14
     c.drawString(2*cm, y, f"Lot QA: {lot.qa_status or '-'}"); y -= 18
 
-    # Heats & allocations
-    c.setFont("Helvetica-Bold", 11); c.drawString(2*cm, y, "Heats used in this Lot"); y -= 14
+    # Heat & allocations
+    c.setFont("Helvetica-Bold", 11); c.drawString(2*cm, y, "Heat used in this Lot"); y -= 14
     c.setFont("Helvetica", 10)
 
     def need_new_page(lines=1):
@@ -2228,10 +2228,10 @@ def lot_pdf_view(lot_id: int, request: Request, db: Session = Depends(get_db)):
         if y - 12*lines < 2.4*cm:
             c.showPage()
             y = _start_page(c, "Traceability Report – Lot Summary")
-            c.setFont("Helvetica-Bold", 11); c.drawString(2*cm, y, "Heats used in this Lot"); y -= 14
+            c.setFont("Helvetica-Bold", 11); c.drawString(2*cm, y, "Heat used in this Lot"); y -= 14
             c.setFont("Helvetica", 10)
 
-    for lh in getattr(lot, "heats", []):
+    for lh in getattr(lot, "Heat", []):
         hobj = db.get(Heat, lh.heat_id)
         if not hobj:
             continue
