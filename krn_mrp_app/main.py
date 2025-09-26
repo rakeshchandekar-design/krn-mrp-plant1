@@ -165,7 +165,7 @@ def _alert_redirect(msg: str, url: str = "/"):
 # ============================================================
 
 class GRN(Base):
-    _tablename_ = "grn"
+    __tablename__ = "grn"
     id = Column(Integer, primary_key=True)
     grn_no = Column(String, unique=True, index=True)
     date = Column(DateTime, default=dt.datetime.utcnow)
@@ -175,7 +175,7 @@ class GRN(Base):
     unit_cost = Column(Float, default=0)
 
 class Heat(Base):
-    _tablename_ = "heat"
+    __tablename__ = "heat"
     id = Column(Integer, primary_key=True)
     heat_no = Column(String, unique=True, index=True)
     grade = Column(String)
@@ -185,7 +185,7 @@ class Heat(Base):
     created_at = Column(DateTime, default=dt.datetime.utcnow)
 
 class Lot(Base):
-    _tablename_ = "lot"
+    __tablename__ = "lot"
     id = Column(Integer, primary_key=True)
     lot_no = Column(String, unique=True, index=True)
     heat_id = Column(Integer, ForeignKey("heat.id"))
@@ -197,7 +197,7 @@ class Lot(Base):
     heat = relationship("Heat", backref="lots")
 
 class RAPLot(Base):
-    _tablename_ = "raplot"
+    __tablename__ = "raplot"
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     grade = Column(String)
@@ -211,7 +211,7 @@ class RAPLot(Base):
 # --------------------------
 
 class AnnealLot(Base):
-    _tablename_ = "anneal_lot"
+    __tablename__ = "anneal_lot"
     id = Column(Integer, primary_key=True)
     lot_no = Column(String, unique=True, index=True)
     rap_lot_id = Column(Integer, ForeignKey("raplot.id"))
@@ -224,7 +224,7 @@ class AnnealLot(Base):
     rap_lot = relationship("RAPLot", backref="anneal_lots")
 
 class AnnealQA(Base):
-    _tablename_ = "anneal_qa"
+    __tablename__ = "anneal_qa"
     id = Column(Integer, primary_key=True)
     anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
     oxygen = Column(Float, nullable=True)
@@ -233,7 +233,7 @@ class AnnealQA(Base):
     lot = relationship("AnnealLot", backref="qa_result")
 
 class AnnealDowntime(Base):
-    _tablename_ = "anneal_downtime"
+    __tablename__ = "anneal_downtime"
     id = Column(Integer, primary_key=True)
     date = Column(DateTime, default=dt.datetime.utcnow)
     minutes = Column(Integer, default=0)
@@ -245,7 +245,7 @@ class AnnealDowntime(Base):
 # --------------------------
 
 class ScreenLot(Base):
-    _tablename_ = "screen_lot"
+    __tablename__ = "screen_lot"
     id = Column(Integer, primary_key=True)
     lot_no = Column(String, unique=True, index=True)
     anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
@@ -259,7 +259,7 @@ class ScreenLot(Base):
     anneal_lot = relationship("AnnealLot", backref="screen_lots")
 
 class ScreenQA(Base):
-    _tablename_ = "screen_qa"
+    __tablename__ = "screen_qa"
     id = Column(Integer, primary_key=True)
     screen_lot_id = Column(Integer, ForeignKey("screen_lot.id"))
     c = Column(Float, nullable=True)
@@ -272,7 +272,7 @@ class ScreenQA(Base):
     lot = relationship("ScreenLot", backref="qa_result")
 
 class ScreenDowntime(Base):
-    _tablename_ = "screen_downtime"
+    __tablename__ = "screen_downtime"
     id = Column(Integer, primary_key=True)
     date = Column(DateTime, default=dt.datetime.utcnow)
     minutes = Column(Integer, default=0)
