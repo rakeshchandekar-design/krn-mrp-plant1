@@ -798,11 +798,10 @@ def home(request: Request):
     )
 
 # -------------------------------
-# Dashboard
+# Dashboard (full replacement)
 # -------------------------------
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
-    # Access: admin & view accounts only
     role = current_role(request)
     if role not in {"admin", "view"}:
         return RedirectResponse("/", status_code=303)
@@ -810,30 +809,36 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     today = dt.date.today()
     yest  = today - dt.timedelta(days=1)
     month_start = today.replace(day=1)
+    ymd_y = yest.strftime("%Y%m%d")
+    ymd_m = month_start.strftime("%Y%m")
 
-    # ---------- GRN / RM ----------
-    # Live stock summary (remaining > 0), and inward yesterday/month-to-date
-    grn_rows = (
+    # ---------- RM / GRN ----------
+    grn_live_rows = (
         db.query(
-            GRN.rm_type.label("rm_type"),
-            func.coalesce(func.sum(GRN.remaining_qty), 0.0).label("qty"),
-            func.coalesce(func.sum(GRN.remaining_qty * GRN.price), 0.0).label("val"),
+            GRN.rm_type,
+            func.coalesce(func.sum(GRN.remaining_qty), 0.0),
+            func.coalesce(func.sum(GRN.remaining_qty * GRN.price), 0.0),
         )
-        .filter((GRN.remaining_qty or 0) >= 0)  # works on SQLite/Postgres
         .group_by(GRN.rm_type)
         .all()
     )
-
-    grn_live = [{"rm_type": r.rm_type, "qty": float(r.qty or 0), "val": float(r.val or 0)} for r in grn_rows]
+    grn_live = [
+        {"rm_type": r[0], "qty": float(r[1] or 0), "val": float(r[2] or 0)}
+        for r in grn_live_rows
+    ]
     grn_live_tot_qty = sum(r["qty"] for r in grn_live)
     grn_live_tot_val = sum(r["val"] for r in grn_live)
 
-    grn_yday_inward = (
-        db.query(func.coalesce(func.sum(GRN.qty), 0.0))
+    # Yesterday’s inward by RM type
+    grn_yday_rows = (
+        db.query(GRN.rm_type, func.coalesce(func.sum(GRN.qty), 0.0))
         .filter(GRN.date == yest)
-        .scalar()
-        or 0.0
+        .group_by(GRN.rm_type)
+        .all()
     )
+    grn_yday_by_type = [{"rm_type": r[0], "qty": float(r[1] or 0)} for r in grn_yday_rows]
+    grn_yday_total = sum(r["qty"] for r in grn_yday_by_type)
+
     grn_mtd_inward = (
         db.query(func.coalesce(func.sum(GRN.qty), 0.0))
         .filter(GRN.date >= month_start, GRN.date <= today)
@@ -841,11 +846,24 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         or 0.0
     )
 
-    # ---------- Melting ----------
-    # Heats for yesterday (by heat_no prefix) and month-to-date
-    ymd_y = yest.strftime("%Y%m%d")
-    ymd_m = month_start.strftime("%Y%m")
+    # ---------- Heats with available stock (grade-wise) ----------
+    alloc_map = {
+        hid: float(qty or 0)
+        for (hid, qty) in db.query(LotHeat.heat_id, func.coalesce(func.sum(LotHeat.qty), 0.0)).group_by(LotHeat.heat_id)
+    }
+    heats_all = db.query(Heat).options(joinedload(Heat.rm_consumptions)).all()
+    avail_by_grade = {"KRIP": {"qty": 0.0, "count": 0}, "KRFS": {"qty": 0.0, "count": 0}}
+    for h in heats_all:
+        used = float(alloc_map.get(h.id, 0.0))
+        avail = max(float(h.actual_output or 0.0) - used, 0.0)
+        if avail > 0.0001:
+            g = heat_grade(h)
+            if g not in avail_by_grade:
+                avail_by_grade[g] = {"qty": 0.0, "count": 0}
+            avail_by_grade[g]["qty"] += avail
+            avail_by_grade[g]["count"] += 1
 
+    # ---------- Melting KPIs ----------
     heats_yday = db.query(Heat).filter(Heat.heat_no.like(f"{ymd_y}-%")).all()
     heats_mtd  = db.query(Heat).filter(Heat.heat_no.like(f"{ymd_m}%")).all()
 
@@ -860,26 +878,25 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         if for_day is not None:
             tgt = day_target_kg(db, for_day)
             eff_pct = (total_out / tgt * 100.0) if tgt > 0 else 0.0
+            return dict(actual_kg=total_out, kwhpt=kwhpt, yield_pct=yield_pct, eff_pct=eff_pct, target=tgt)
         else:
-            # month: sum of daily targets from first day up to today
-            days = (today - month_start).days + 1
-            tgt_sum = 0.0
+            # month: sum of daily targets
             d = month_start
-            for _ in range(days):
+            tgt_sum = 0.0
+            while d <= today:
                 tgt_sum += day_target_kg(db, d)
                 d += dt.timedelta(days=1)
             eff_pct = (total_out / tgt_sum * 100.0) if tgt_sum > 0 else 0.0
-
-        return dict(actual_kg=total_out, kwhpt=kwhpt, yield_pct=yield_pct, eff_pct=eff_pct)
+            return dict(actual_kg=total_out, kwhpt=kwhpt, yield_pct=yield_pct, eff_pct=eff_pct, target=tgt_sum)
 
     melt_yday = _agg_melting(heats_yday, for_day=yest)
     melt_mtd  = _agg_melting(heats_mtd,  for_day=None)
 
     # ---------- Atomization ----------
-    # We treat "production" as lots created that day (by lot_no date part)
-    lots_all_mtd = db.query(Lot).filter(Lot.lot_no.like(f"%-{ymd_m}%")).all()
-    lots_yday    = [l for l in db.query(Lot).all() if (lot_date_from_no(l.lot_no) == yest)]
-    lots_mtd     = [l for l in db.query(Lot).all() if (month_start <= (lot_date_from_no(l.lot_no) or today) <= today)]
+    # Lots "created" yesterday/month: inferred from lot_no date part
+    lots_all = db.query(Lot).all()
+    lots_yday = [l for l in lots_all if lot_date_from_no(l.lot_no) == yest]
+    lots_mtd  = [l for l in lots_all if (month_start <= (lot_date_from_no(l.lot_no) or today) <= today)]
 
     atom_yday_prod = sum(float(l.weight or 0) for l in lots_yday)
     atom_mtd_prod  = sum(float(l.weight or 0) for l in lots_mtd)
@@ -894,16 +911,25 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     atom_yday_eff = (atom_yday_prod / atom_tgt_yday * 100.0) if atom_tgt_yday > 0 else 0.0
     atom_mtd_eff  = (atom_mtd_prod  / atom_tgt_msum * 100.0) if atom_tgt_msum  > 0 else 0.0
 
-    # Oversize MTD (if you start storing it, wire it here; for now show 0)
-    oversize_mtd = 0.0
+    # Non-approved lots (Pending/Hold/Rejected): qty & cost
+    lots_pending  = db.query(Lot).filter((Lot.qa_status.is_(None)) | (Lot.qa_status == "PENDING")).all()
+    lots_hold     = db.query(Lot).filter(Lot.qa_status == "HOLD").all()
+    lots_rejected = db.query(Lot).filter(Lot.qa_status == "REJECTED").all()
+    def _sum_qty_cost(rows): 
+        return (
+            sum(float(x.weight or 0) for x in rows),
+            sum(float(x.total_cost or (x.unit_cost or 0)* (x.weight or 0)) for x in rows)
+        )
+    pend_qty, pend_cost = _sum_qty_cost(lots_pending)
+    hold_qty, hold_cost = _sum_qty_cost(lots_hold)
+    rej_qty,  rej_cost  = _sum_qty_cost(lots_rejected)
 
-    # ---------- RAP availability ----------
-    # Compute available for APPROVED lots = lot.weight - total RAP allocations
+    # ---------- RAP availability & movements ----------
+    # Available qty & cost for APPROVED lots
     lots_approved = db.query(Lot).filter(Lot.qa_status == "APPROVED").all()
-    rap_by_grade = {"KRIP": 0.0, "KRFS": 0.0}
-
+    rap_grade_qty  = {"KRIP": 0.0, "KRFS": 0.0}
+    rap_grade_cost = {"KRIP": 0.0, "KRFS": 0.0}
     for lot in lots_approved:
-        # total allocations via join RAPAlloc -> RAPLot
         total_alloc = (
             db.query(func.coalesce(func.sum(RAPAlloc.qty), 0.0))
             .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
@@ -913,61 +939,123 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         )
         avail = max(float(lot.weight or 0.0) - float(total_alloc), 0.0)
         g = (lot.grade or "KRIP").upper()
-        if g not in rap_by_grade:
-            rap_by_grade[g] = 0.0
-        rap_by_grade[g] += avail
+        rap_grade_qty[g]  = rap_grade_qty.get(g, 0.0)  + avail
+        rap_grade_cost[g] = rap_grade_cost.get(g, 0.0) + avail * float(lot.unit_cost or 0.0)
 
-    # ---------- QA queue ----------
-    heats_pending = db.query(func.count(Heat.id)).filter((Heat.qa_status.is_(None)) | (Heat.qa_status == "PENDING")).scalar() or 0
-    lots_pending  = db.query(func.count(Lot.id)).filter((Lot.qa_status.is_(None))  | (Lot.qa_status  == "PENDING")).scalar() or 0
+    # Dispatch & Plant-2 movements: yesterday + MTD
+    rap_y_rows = (
+        db.query(RAPAlloc.kind, func.coalesce(func.sum(RAPAlloc.qty), 0.0))
+        .filter(RAPAlloc.date == yest)
+        .group_by(RAPAlloc.kind)
+        .all()
+    )
+    rap_m_rows = (
+        db.query(RAPAlloc.kind, func.coalesce(func.sum(RAPAlloc.qty), 0.0))
+        .filter(RAPAlloc.date >= month_start, RAPAlloc.date <= today)
+        .group_by(RAPAlloc.kind)
+        .all()
+    )
+    rap_y = {k: float(v or 0) for (k, v) in rap_y_rows}
+    rap_m = {k: float(v or 0) for (k, v) in rap_m_rows}
 
-    # ---------- Downtime MTD ----------
-    melt_dt_mtd = (
-        db.query(func.coalesce(func.sum(Downtime.minutes), 0))
-        .filter(Downtime.date >= month_start, Downtime.date <= today)
-        .scalar()
-        or 0
+    # ---------- QA breakdown ----------
+    # Pending (grade-wise)
+    heats_pending_rows = [h for h in heats_all if (h.qa_status is None) or (h.qa_status == "PENDING")]
+    heat_pending_by_grade = {"KRIP": 0, "KRFS": 0}
+    for h in heats_pending_rows:
+        heat_pending_by_grade[heat_grade(h)] = heat_pending_by_grade.get(heat_grade(h), 0) + 1
+
+    lot_pending_by_grade_rows = (
+        db.query(Lot.grade, func.count(Lot.id))
+        .filter((Lot.qa_status.is_(None)) | (Lot.qa_status == "PENDING"))
+        .group_by(Lot.grade)
+        .all()
     )
-    atom_dt_mtd = (
-        db.query(func.coalesce(func.sum(AtomDowntime.minutes), 0))
-        .filter(AtomDowntime.date >= month_start, AtomDowntime.date <= today)
-        .scalar()
-        or 0
+    lot_pending_by_grade = { (g or "KRIP"): int(c or 0) for (g, c) in lot_pending_by_grade_rows }
+
+    # Approved qty MTD by grade (lots)
+    lots_approved_mtd = (
+        l for l in lots_all
+        if (l.qa_status == "APPROVED") and (month_start <= (lot_date_from_no(l.lot_no) or today) <= today)
     )
+    approved_qty_by_grade = {"KRIP": 0.0, "KRFS": 0.0}
+    for l in lots_approved_mtd:
+        approved_qty_by_grade[(l.grade or "KRIP")] += float(l.weight or 0)
+
+    # Hold/Reject MTD counts
+    hold_mtd = sum(1 for l in lots_all if (l.qa_status == "HOLD") and (month_start <= (lot_date_from_no(l.lot_no) or today) <= today))
+    rej_mtd  = sum(1 for l in lots_all if (l.qa_status == "REJECTED") and (month_start <= (lot_date_from_no(l.lot_no) or today) <= today))
+
+    # ---------- Downtime: Yesterday + MTD with kind breakdown ----------
+    def _dt_breakdown(model, start: dt.date, end: dt.date):
+        total = db.query(func.coalesce(func.sum(model.minutes), 0)).filter(model.date >= start, model.date <= end).scalar() or 0
+        by_kind_rows = (
+            db.query(model.kind, func.coalesce(func.sum(model.minutes), 0))
+            .filter(model.date >= start, model.date <= end)
+            .group_by(model.kind)
+            .all()
+        )
+        by_kind = { (k or "OTHER").upper(): int(m or 0) for (k, m) in by_kind_rows }
+        # ensure all keys present
+        for k in ("PRODUCTION","MAINTENANCE","POWER","OTHER"):
+            by_kind.setdefault(k, 0)
+        return int(total), by_kind
+
+    melt_dt_y,  melt_by_y  = _dt_breakdown(Downtime, yest, yest)
+    melt_dt_m,  melt_by_m  = _dt_breakdown(Downtime, month_start, today)
+    atom_dt_y,  atom_by_y  = _dt_breakdown(AtomDowntime, yest, yest)
+    atom_dt_m,  atom_by_m  = _dt_breakdown(AtomDowntime, month_start, today)
 
     ctx = {
         "request": request,
-        "role": role,
         "today": today.isoformat(),
         "yesterday": yest.isoformat(),
+        "power_target": POWER_TARGET_KWH_PER_TON,
 
-        # GRN/RM
+        # RM
         "grn_live": grn_live,
         "grn_live_tot_qty": grn_live_tot_qty,
         "grn_live_tot_val": grn_live_tot_val,
-        "grn_yday_inward": grn_yday_inward,
+        "grn_yday_by_type": grn_yday_by_type,
+        "grn_yday_total": grn_yday_total,
         "grn_mtd_inward": grn_mtd_inward,
 
-        # Melting
-        "melt_yday": melt_yday,
-        "melt_mtd":  melt_mtd,
-        "power_target": POWER_TARGET_KWH_PER_TON,  # for display
+        # Heats availability
+        "avail_by_grade": avail_by_grade,
 
-        # Atomization
+        # Melting
+        "melt_yday": melt_yday,      # includes 'target'
+        "melt_mtd":  melt_mtd,       # includes 'target' (sum of day targets)
+
+        # Atomization production
         "atom_yday_prod": atom_yday_prod,
+        "atom_tgt_yday":  atom_tgt_yday,
         "atom_yday_eff":  atom_yday_eff,
         "atom_mtd_prod":  atom_mtd_prod,
         "atom_mtd_eff":   atom_mtd_eff,
-        "oversize_mtd":   oversize_mtd,
 
-        # RAP
-        "rap_krip_avail": rap_by_grade.get("KRIP", 0.0),
-        "rap_krfs_avail": rap_by_grade.get("KRFS", 0.0),
+        # Non-approved lots
+        "pend_qty": pend_qty, "pend_cost": pend_cost,
+        "hold_qty": hold_qty, "hold_cost": hold_cost,
+        "rej_qty":  rej_qty,  "rej_cost":  rej_cost,
 
-        # QA + downtime
-        "qa_pending_count": int(heats_pending) + int(lots_pending),
-        "melt_dt_mtd": int(melt_dt_mtd),
-        "atom_dt_mtd": int(atom_dt_mtd),
+        # RAP availability & movements
+        "rap_grade_qty":  rap_grade_qty,
+        "rap_grade_cost": rap_grade_cost,
+        "rap_y": rap_y,  # yesterday; keys DISPATCH/PLANT2
+        "rap_m": rap_m,  # MTD
+
+        # QA
+        "heat_pending_by_grade": heat_pending_by_grade,
+        "lot_pending_by_grade":  lot_pending_by_grade,
+        "approved_qty_by_grade": approved_qty_by_grade,
+        "hold_mtd": hold_mtd, "rej_mtd": rej_mtd,
+
+        # Downtime
+        "melt_dt_y": melt_dt_y, "melt_by_y": melt_by_y,
+        "melt_dt_m": melt_dt_m, "melt_by_m": melt_by_m,
+        "atom_dt_y": atom_dt_y, "atom_by_y": atom_by_y,
+        "atom_dt_m": atom_dt_m, "atom_by_m": atom_by_m,
     }
     return templates.TemplateResponse("dashboard.html", ctx)
 
