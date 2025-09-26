@@ -7,7 +7,7 @@ import datetime as dt
 from typing import Optional, List, Dict
 from pathlib import Path
 from urllib.parse import quote
-from reportlab.pdfgen import canvas  # used later by PDF helpers
+
 
 # FastAPI
 from fastapi import FastAPI, Request, Depends, Form, status
@@ -148,24 +148,24 @@ def grade_map_for_anneal(grade: str) -> str:
 
 # ==== Availability helpers ====
 
-def heat_available(db, heat: Heat) -> float:
+def heat_available(db, heat) -> float:
     """Total qty available for a given Heat across its Lots."""
     lots = db.query(Lot).filter(Lot.heat_id == heat.id).all()
     return sum(l.qty for l in lots if getattr(l, "qa_status", None) == "APPROVED")
 
-def lot_available(db, lot: Lot) -> float:
+def lot_available(db, lot) -> float:
     """Qty available for a given Lot (after RAP)."""
     return getattr(lot, "available_qty", lot.qty or 0.0)
 
-def rap_available(db, rap: RAPLot) -> float:
+def rap_available(db, rap) -> float:
     """Available qty for RAPLot."""
     return getattr(rap, "available_qty", rap.qty or 0.0)
 
-def anneal_available(db, anneal: AnnealLot) -> float:
+def anneal_available(db, anneal) -> float:
     """Available qty for AnnealLot."""
     return getattr(anneal, "available_qty", anneal.qty or 0.0)
 
-def screen_available(db, screen: ScreenLot) -> float:
+def screen_available(db, screen) -> float:
     """Available qty for ScreenLot."""
     return getattr(screen, "available_qty", screen.qty or 0.0)
 
