@@ -1432,8 +1432,8 @@ def gs_page(request: Request, start: str|None=None, end: str|None=None,
     end_d = dt.date.fromisoformat(end) if end else today
 
     produced_today = (
-        db.query(func.coalesce(func.sum(GSLot.weight), 0.0))
-          .filter(GSLot.date == today)
+        db.query(func.coalesce(func.sum(ScreenLot.weight), 0.0))
+          .filter(ScreenLot.date == today)
           .scalar() or 0.0
     )
     cap = SCREEN_CAPACITY_KG * (day_available_minutes_gs(db, today) / 1440.0)
@@ -1442,7 +1442,7 @@ def gs_page(request: Request, start: str|None=None, end: str|None=None,
     last5 = []
     for i in range(5):
         d = today - dt.timedelta(days=i)
-        p = db.query(func.coalesce(func.sum(GSLot.weight), 0.0)).filter(GSLot.date == d).scalar() or 0.0
+        p = db.query(func.coalesce(func.sum(ScreenLot.weight), 0.0)).filter(ScreenLot.date == d).scalar() or 0.0
         t = day_target_kg_gs(db, d)
         last5.append({"date": d.isoformat(), "actual": p, "target": t})
     last5 = list(reversed(last5))
@@ -1464,9 +1464,9 @@ def gs_page(request: Request, start: str|None=None, end: str|None=None,
             live["KIP_qty"] += float(qty or 0); live["KIP_val"] += float(val or 0)
 
     lots = (
-        db.query(GSLot)
-        .filter(GSLot.date >= start_d, GSLot.date <= end_d)
-        .order_by(GSLot.date.desc(), GSLot.id.desc())
+        db.query(ScreenLot)
+        .filter(ScreenLot.date >= start_d, ScreenLot.date <= end_d)
+        .order_by(ScreenLot.date.desc(), ScreenLot.id.desc())
         .all()
     )
 
@@ -1540,9 +1540,9 @@ def gs_new(
     total_cost = unit_cost * float(lot_weight or 0)
 
     today = dt.date.today()
-    seq = (db.query(func.count(GSLot.id)).filter(GSLot.date == today).scalar() or 0) + 1
+    seq = (db.query(func.count(ScreenLot.id)).filter(ScreenLot.date == today).scalar() or 0) + 1
     lot_no = next_gs_lot_no(today, seq)
-    newlot = GSLot(
+    newlot = ScreenLot(
         lot_no=lot_no,
         date=today,
         weight=float(lot_weight or 0),
