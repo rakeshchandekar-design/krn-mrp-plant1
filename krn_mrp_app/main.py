@@ -48,6 +48,8 @@ MELT_COST_PER_KG_KRIP = 6.0
 MELT_COST_PER_KG_KRFS = 8.0
 ATOMIZATION_COST_PER_KG = 5.0
 SURCHARGE_PER_KG = 2.0
+ANNEAL_COST_PER_KG = 11.0       # Stage cost add-on for Annealing
+SCREEN_COST_PER_KG = 5.0        # Stage cost add-on for Grinding & Screening
 
 # Melting capacity & power targets
 DAILY_CAPACITY_KG = 7000.0          # melting 24h capacity
@@ -55,6 +57,10 @@ POWER_TARGET_KWH_PER_TON = 560.0    # target kWh/ton
 
 # Atomization capacity
 DAILY_CAPACITY_ATOM_KG = 6000.0     # atomization 24h capacity
+
+# ---- New stage constants ----
+ANNEAL_CAPACITY_KG = 6000.0     # Annealing 24h capacity
+SCREEN_CAPACITY_KG = 10000.0    # Grinding & Screening 24h capacity
 
 # -------------------------------------------------
 # Database config
@@ -300,6 +306,190 @@ def migrate_schema(engine):
                 )
             """))
 
+        # ------------------------------
+        # Annealing stage tables
+        # ------------------------------
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_lot (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lot_no TEXT UNIQUE,
+                    date DATE NOT NULL,
+                    weight REAL NOT NULL DEFAULT 0,
+                    grade TEXT,
+                    qa_status TEXT DEFAULT 'PENDING',
+                    qa_remarks TEXT,
+                    unit_cost REAL DEFAULT 0,
+                    total_cost REAL DEFAULT 0,
+                    available_qty REAL NOT NULL DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_lot_item (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    anneal_lot_id INTEGER NOT NULL,
+                    rap_lot_id INTEGER NOT NULL,
+                    qty REAL NOT NULL DEFAULT 0,
+                    FOREIGN KEY(anneal_lot_id) REFERENCES anneal_lot(id),
+                    FOREIGN KEY(rap_lot_id) REFERENCES rap_lot(id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_downtime (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL,
+                    minutes INTEGER NOT NULL DEFAULT 0,
+                    kind TEXT,
+                    remarks TEXT
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_lot (
+                    id SERIAL PRIMARY KEY,
+                    lot_no TEXT UNIQUE,
+                    date DATE NOT NULL,
+                    weight DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    grade TEXT,
+                    qa_status TEXT DEFAULT 'PENDING',
+                    qa_remarks TEXT,
+                    unit_cost DOUBLE PRECISION DEFAULT 0,
+                    total_cost DOUBLE PRECISION DEFAULT 0,
+                    available_qty DOUBLE PRECISION NOT NULL DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_lot_item (
+                    id SERIAL PRIMARY KEY,
+                    anneal_lot_id INT NOT NULL REFERENCES anneal_lot(id),
+                    rap_lot_id INT NOT NULL REFERENCES rap_lot(id),
+                    qty DOUBLE PRECISION NOT NULL DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_downtime (
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    minutes INT NOT NULL DEFAULT 0,
+                    kind TEXT,
+                    remarks TEXT
+                )
+            """))
+
+        # ------------------------------
+        # Grinding & Screening stage tables
+        # ------------------------------
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS gs_lot (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lot_no TEXT UNIQUE,
+                    date DATE NOT NULL,
+                    weight REAL NOT NULL DEFAULT 0,
+                    grade TEXT,
+                    qa_status TEXT DEFAULT 'PENDING',
+                    qa_remarks TEXT,
+                    unit_cost REAL DEFAULT 0,
+                    total_cost REAL DEFAULT 0,
+                    available_qty REAL NOT NULL DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS gs_lot_item (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    gs_lot_id INTEGER NOT NULL,
+                    anneal_lot_id INTEGER NOT NULL,
+                    qty REAL NOT NULL DEFAULT 0,
+                    FOREIGN KEY(gs_lot_id) REFERENCES gs_lot(id),
+                    FOREIGN KEY(anneal_lot_id) REFERENCES anneal_lot(id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS gs_downtime (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL,
+                    minutes INTEGER NOT NULL DEFAULT 0,
+                    kind TEXT,
+                    remarks TEXT
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS gs_lot (
+                    id SERIAL PRIMARY KEY,
+                    lot_no TEXT UNIQUE,
+                    date DATE NOT NULL,
+                    weight DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    grade TEXT,
+                    qa_status TEXT DEFAULT 'PENDING',
+                    qa_remarks TEXT,
+                    unit_cost DOUBLE PRECISION DEFAULT 0,
+                    total_cost DOUBLE PRECISION DEFAULT 0,
+                    available_qty DOUBLE PRECISION NOT NULL DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS gs_lot_item (
+                    id SERIAL PRIMARY KEY,
+                    gs_lot_id INT NOT NULL REFERENCES gs_lot(id),
+                    anneal_lot_id INT NOT NULL REFERENCES anneal_lot(id),
+                    qty DOUBLE PRECISION NOT NULL DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS gs_downtime (
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    minutes INT NOT NULL DEFAULT 0,
+                    kind TEXT,
+                    remarks TEXT
+                )
+            """))
+
+        # Anneal QA
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_qa (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lot_id INTEGER UNIQUE,
+                    oxygen TEXT,
+                    FOREIGN KEY(lot_id) REFERENCES lot(id)
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_qa (
+                    id SERIAL PRIMARY KEY,
+                    lot_id INT UNIQUE REFERENCES lot(id),
+                    oxygen TEXT
+                )
+            """))
+
+        # Screen QA (chem + compressibility)
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS screen_qa (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lot_id INTEGER UNIQUE,
+                    c TEXT, si TEXT, s TEXT, p TEXT,
+                    cu TEXT, ni TEXT, mn TEXT, fe TEXT,
+                    o TEXT,
+                    compressibility TEXT,
+                    FOREIGN KEY(lot_id) REFERENCES lot(id)
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS screen_qa (
+                    id SERIAL PRIMARY KEY,
+                    lot_id INT UNIQUE REFERENCES lot(id),
+                    c TEXT, si TEXT, s TEXT, p TEXT,
+                    cu TEXT, ni TEXT, mn TEXT, fe TEXT,
+                    o TEXT,
+                    compressibility TEXT
+                )
+            """))
+
 
 # -------------------------------------------------
 # Constants
@@ -511,6 +701,86 @@ class RAPTransfer(Base):
 
     lot = relationship("Lot")
 
+class AnnealLot(Base):
+    __tablename__ = "anneal_lot"
+    id = Column(Integer, primary_key=True)
+    lot_no = Column(String, unique=True, index=True)
+    date = Column(Date, nullable=False)
+    weight = Column(Float, default=0.0)
+    grade = Column(String)                      # KIP / KFS
+    qa_status = Column(String, default="PENDING")
+    qa_remarks = Column(String)
+    unit_cost = Column(Float, default=0.0)
+    total_cost = Column(Float, default=0.0)
+    available_qty = Column(Float, default=0.0)
+
+    items = relationship("AnnealLotItem", cascade="all, delete-orphan")
+
+class AnnealLotItem(Base):
+    __tablename__ = "anneal_lot_item"
+    id = Column(Integer, primary_key=True)
+    anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
+    rap_lot_id = Column(Integer, ForeignKey("rap_lot.id"))
+    qty = Column(Float, default=0.0)
+
+class AnnealDowntime(Base):
+    __tablename__ = "anneal_downtime"
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False)
+    minutes = Column(Integer, default=0)
+    kind = Column(String)
+    remarks = Column(String)
+
+
+class GSLot(Base):
+    __tablename__ = "gs_lot"
+    id = Column(Integer, primary_key=True)
+    lot_no = Column(String, unique=True, index=True)
+    date = Column(Date, nullable=False)
+    weight = Column(Float, default=0.0)
+    grade = Column(String)                      # KIP / KFS
+    qa_status = Column(String, default="PENDING")
+    qa_remarks = Column(String)
+    unit_cost = Column(Float, default=0.0)
+    total_cost = Column(Float, default=0.0)
+    available_qty = Column(Float, default=0.0)
+
+    items = relationship("GSLotItem", cascade="all, delete-orphan")
+
+class GSLotItem(Base):
+    __tablename__ = "gs_lot_item"
+    id = Column(Integer, primary_key=True)
+    gs_lot_id = Column(Integer, ForeignKey("gs_lot.id"))
+    anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
+    qty = Column(Float, default=0.0)
+
+class GSDowntime(Base):
+    __tablename__ = "gs_downtime"
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False)
+    minutes = Column(Integer, default=0)
+    kind = Column(String)
+    remarks = Column(String)
+
+class AnnealQA(Base):
+    _tablename_ = "anneal_qa"
+    id = Column(Integer, primary_key=True)
+    lot_id = Column(Integer, ForeignKey("lot.id"), unique=True, index=True, nullable=False)
+    oxygen = Column(String)  # as text; you can cast to float when needed
+    lot = relationship("Lot")
+
+class ScreenQA(Base):
+    _tablename_ = "screen_qa"
+    id = Column(Integer, primary_key=True)
+    lot_id = Column(Integer, ForeignKey("lot.id"), unique=True, index=True, nullable=False)
+    # Chemistry (we store what you enter after carry-forward)
+    c = Column(String); si = Column(String); s = Column(String); p = Column(String)
+    cu = Column(String); ni = Column(String); mn = Column(String); fe = Column(String)
+    o = Column(String)      # oxygen at screening stage
+    # Physical
+    compressibility = Column(String)  # g/cc
+    lot = relationship("Lot")
+
 
 # -------------------------------------------------
 # App + Templates (robust paths)
@@ -579,8 +849,9 @@ USER_DB = {
     "atom":    {"password": "atom",    "role": "atom"},
     "rap":     {"password": "rap",     "role": "rap"},
     "qa":      {"password": "qa",      "role": "qa"},
-    # optional read-only viewer role (future)
     "krn":    {"password": "krn",    "role": "view"},
+    "anneal":    {"password": "anneal",    "role": "anneal"},
+    "screening":    {"password": "screening",    "role": "screening"}
 }
 
 def current_username(request: Request) -> str:
@@ -758,6 +1029,69 @@ def ensure_rap_lot(db: Session, lot: Lot) -> RAPLot:
     rap = RAPLot(lot_id=lot.id, available_qty=current_avail, status=("CLOSED" if current_avail <= 1e-6 else "OPEN"))
     db.add(rap); db.flush()
     return rap
+
+def grade_after_rap(grade: str) -> str:
+    """KRIP -> KIP, KRFS -> KFS."""
+    g = (grade or "").upper()
+    if g == "KRIP": return "KIP"
+    if g == "KRFS": return "KFS"
+    return g or "KIP"
+
+def day_available_minutes_anneal(db: Session, day: dt.date) -> int:
+    extra = db.query(func.coalesce(func.sum(AnnealDowntime.minutes), 0)).filter(AnnealDowntime.date == day).scalar() or 0
+    return max(1440 - int(extra), 0)
+
+def day_target_kg_anneal(db: Session, day: dt.date) -> float:
+    return ANNEAL_CAPACITY_KG * (day_available_minutes_anneal(db, day) / 1440.0)
+
+def day_available_minutes_gs(db: Session, day: dt.date) -> int:
+    extra = db.query(func.coalesce(func.sum(GSDowntime.minutes), 0)).filter(GSDowntime.date == day).scalar() or 0
+    return max(1440 - int(extra), 0)
+
+def day_target_kg_gs(db: Session, day: dt.date) -> float:
+    return SCREEN_CAPACITY_KG * (day_available_minutes_gs(db, day) / 1440.0)
+
+def next_anneal_lot_no(on_date: dt.date, seq: int) -> str:
+    return f"AN-{on_date.strftime('%Y%m%d')}-{seq:03d}"
+
+def next_gs_lot_no(on_date: dt.date, seq: int) -> str:
+    return f"GS-{on_date.strftime('%Y%m%d')}-{seq:03d}"
+
+# ---- QA prefill helpers (Anneal + Screen) ----
+
+def _prefill_screen_chem_from_upstream(db: Session, lot: Lot) -> Dict[str, str]:
+    """
+    Prefill for Screening QA:
+      - If a ScreenQA row already exists for this lot, use it (editing).
+      - Otherwise return blanks (your template shows empty fields).
+    """
+    row = db.query(ScreenQA).filter(ScreenQA.lot_id == lot.id).first()
+    keys = ["c", "si", "s", "p", "cu", "ni", "mn", "fe", "o", "compressibility"]
+    if row:
+        return {k: (getattr(row, k) or "") for k in keys}
+    return {k: "" for k in keys}
+
+
+def _prefill_anneal_o(db: Session, lot: Lot) -> str:
+    """
+    Prefill oxygen for Annealing QA if already saved; else blank.
+    """
+    row = db.query(AnnealQA).filter(AnnealQA.lot_id == lot.id).first()
+    return row.oxygen if (row and row.oxygen is not None) else ""
+
+from fastapi import HTTPException, status, Depends
+
+def require_roles(*allowed: str):
+    """FastAPI dependency: block users whose role isn't in allowed."""
+    def _check(request: Request):
+        r = current_role(request)
+        if r not in allowed:
+            # You can redirect instead of raising if you prefer:
+            # return RedirectResponse("/", status_code=303)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail="Not authorized for this page")
+    return Depends(_check)
+
 
 @app.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
@@ -2983,6 +3317,537 @@ def rap_dispatch_pdf(alloc_id: int, db: Session = Depends(get_db)):
         headers={"Content-Disposition": f'inline; filename="{filename}"'}
     )
 
+from fastapi import Query
+
+@app.get("/annealing", response_class=HTMLResponse)
+def anneal_page(request: Request, start: str|None=None, end: str|None=None,
+                db: Session = Depends(get_db),
+                _guard = require_roles("admin","anneal")):
+
+    # Dates
+    today = dt.date.today()
+    start_d = dt.date.fromisoformat(start) if start else today
+    end_d = dt.date.fromisoformat(end) if end else today
+
+    # --- KPI (today)
+    # Produced today = sum of anneal lot weights created today
+    produced_today = (
+        db.query(func.coalesce(func.sum(AnnealLot.weight), 0.0))
+          .filter(AnnealLot.date == today)
+          .scalar() or 0.0
+    )
+    cap = ANNEAL_CAPACITY_KG * (day_available_minutes_anneal(db, today) / 1440.0)
+    eff_today = (produced_today / cap * 100.0) if cap > 0 else 0.0
+
+    # --- Last 5 days
+    last5 = []
+    for i in range(5):
+        d = today - dt.timedelta(days=i)
+        p = db.query(func.coalesce(func.sum(AnnealLot.weight), 0.0)).filter(AnnealLot.date == d).scalar() or 0.0
+        t = day_target_kg_anneal(db, d)
+        last5.append({"date": d.isoformat(), "actual": p, "target": t})
+    last5 = list(reversed(last5))
+
+    # --- Live Stock: RAP APPROVED lots available (mapped to KIP/KFS)
+    # Sum available from RAPLot where underlying Lot.qa_status == 'APPROVED'
+    q = (
+        db.query(
+            Lot.grade,
+            func.coalesce(func.sum(RAPLot.available_qty), 0.0).label("qty"),
+            func.coalesce(func.sum(RAPLot.available_qty * Lot.unit_cost), 0.0).label("value"),
+        )
+        .join(Lot, Lot.id == RAPLot.lot_id)
+        .filter((Lot.qa_status == "APPROVED") | (Lot.qa_status == None))
+        .group_by(Lot.grade)
+    )
+    rap_live = {"KIP_qty": 0.0, "KIP_val": 0.0, "KFS_qty": 0.0, "KFS_val": 0.0}
+    for g, qty, val in q.all():
+        g2 = grade_after_rap(g)
+        if g2 == "KFS":
+            rap_live["KFS_qty"] += float(qty or 0)
+            rap_live["KFS_val"] += float(val or 0)
+        else:
+            rap_live["KIP_qty"] += float(qty or 0)
+            rap_live["KIP_val"] += float(val or 0)
+
+    # --- Anneal lots list in range
+    lots = (
+        db.query(AnnealLot)
+        .filter(AnnealLot.date >= start_d, AnnealLot.date <= end_d)
+        .order_by(AnnealLot.date.desc(), AnnealLot.id.desc())
+        .all()
+    )
+
+    # Context aliases (to be friendly with atomization-like templates)
+    ctx = {
+        "request": request,
+        "role": current_role(request),
+        "today_iso": today.isoformat(),
+        "start": start_d.isoformat(),
+        "end": end_d.isoformat(),
+
+        # KPI + last 5
+        "ann_capacity": ANNEAL_CAPACITY_KG,
+        "ann_eff_today": eff_today,
+        "ann_last5": last5,
+
+        # live stock
+        "ann_live": rap_live,
+
+        # lots
+        "ann_lots": lots,
+
+        # Aliases some templates might expect:
+        "atom_capacity": ANNEAL_CAPACITY_KG,
+        "atom_eff_today": eff_today,
+        "atom_last5": last5,
+        "lots": lots,
+        "lots_stock": {"krip_qty": rap_live["KIP_qty"], "krip_val": rap_live["KIP_val"],
+                       "krfs_qty": rap_live["KFS_qty"], "krfs_val": rap_live["KFS_val"]},
+    }
+    return templates.TemplateResponse("annealing.html", ctx)
+
+
+@app.post("/annealing/new")
+def anneal_new(
+    request: Request,
+    db: Session = Depends(get_db),
+    lot_weight: float = Form(...),
+    _guard = require_roles("admin", "anneal"),   # <-- guard here
+    **allocs,  # your existing dynamic fields: alloc_<rap_lot_id>=qty
+):
+
+    # Collect allocations
+    # Find all form keys that start with "alloc_"
+    pairs: List[Tuple[int, float]] = []
+    for k, v in allocs.items():
+        if not k.startswith("alloc_"):
+            continue
+        try:
+            rid = int(k.split("_", 1)[1])
+            q = float(v or 0)
+            if q > 0:
+                pairs.append((rid, q))
+        except Exception:
+            pass
+
+    if not pairs:
+        return _alert_redirect("Select at least one RAP lot with a positive allocation.", "/annealing")
+
+    total_alloc = sum(q for _, q in pairs)
+    if abs(total_alloc - float(lot_weight or 0)) > 0.05:
+        return _alert_redirect("Allocated qty must equal the new lot weight.", "/annealing")
+
+    # Validate available
+    rap_rows = db.query(RAPLot, Lot).join(Lot, Lot.id == RAPLot.lot_id).filter(RAPLot.id.in_([rid for rid,_ in pairs])).all()
+    avail_map = {row.RAPLot.id: float(row.RAPLot.available_qty or 0) for row in rap_rows}
+    for rid, q in pairs:
+        if q > avail_map.get(rid, 0.0) + 1e-6:
+            return _alert_redirect("Allocation exceeds available qty for a RAP lot.", "/annealing")
+
+    # Derive grade from dominant source (by qty); map to KIP/KFS
+    by_grade: Dict[str, float] = {}
+    cost_sum = 0.0
+    for rid, q in pairs:
+        rap, lot = next((x for x in rap_rows if x.RAPLot.id == rid), (None, None))
+        if not rap or not lot:
+            continue
+        g = grade_after_rap(lot.grade or "KRIP")
+        by_grade[g] = by_grade.get(g, 0.0) + q
+        cost_sum += q * float(lot.unit_cost or 0.0)
+
+    dom_grade = max(by_grade.items(), key=lambda x: x[1])[0] if by_grade else "KIP"
+
+    # Weighted input cost per kg + stage add-on
+    input_unit_cost = (cost_sum / total_alloc) if total_alloc > 0 else 0.0
+    unit_cost = input_unit_cost + ANNEAL_COST_PER_KG
+    total_cost = unit_cost * float(lot_weight or 0)
+
+    # Create new anneal lot
+    today = dt.date.today()
+    seq = (db.query(func.count(AnnealLot.id)).filter(AnnealLot.date == today).scalar() or 0) + 1
+    lot_no = next_anneal_lot_no(today, seq)
+    newlot = AnnealLot(
+        lot_no=lot_no,
+        date=today,
+        weight=float(lot_weight or 0),
+        grade=dom_grade,
+        unit_cost=unit_cost,
+        total_cost=total_cost,
+        available_qty=float(lot_weight or 0),
+        qa_status="PENDING",
+    )
+    db.add(newlot); db.flush()
+
+    # Child items + reduce RAP available
+    for rid, q in pairs:
+        db.add(AnnealLotItem(anneal_lot_id=newlot.id, rap_lot_id=rid, qty=q))
+        rap = db.query(RAPLot).get(rid)
+        rap.available_qty = max((rap.available_qty or 0.0) - q, 0.0)
+        rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
+        db.add(rap)
+
+    db.commit()
+    return RedirectResponse("/annealing", status_code=303)
+
+
+@app.get("/annealing/downtime", response_class=HTMLResponse)
+def anneal_downtime_page(request: Request, db: Session = Depends(get_db),
+                         _guard = require_roles("admin","anneal")):
+
+    rows = (
+        db.query(AnnealDowntime)
+          .order_by(AnnealDowntime.date.desc(), AnnealDowntime.id.desc())
+          .limit(50).all()
+    )
+    return templates.TemplateResponse("anneal_downtime.html", {
+        "request": request,
+        "rows": rows,
+        "today": dt.date.today().isoformat(),
+    })
+
+
+@app.post("/annealing/downtime")
+def anneal_downtime_save(
+    request: Request,
+    db: Session = Depends(get_db),
+    date: str = Form(...),
+    minutes: int = Form(...),
+    kind: Optional[str] = Form(None),
+    remarks: Optional[str] = Form(None),
+    _guard = require_roles("admin", "anneal"),   # 👈 role guard
+):
+
+    d = dt.date.fromisoformat(date)
+    db.add(AnnealDowntime(date=d, minutes=int(minutes or 0), kind=kind, remarks=remarks))
+    db.commit()
+    return RedirectResponse("/annealing/downtime", status_code=303)
+
+
+@app.get("/annealing/downtime/export")
+def anneal_downtime_csv(db: Session = Depends(get_db)):
+    import csv
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["date","minutes","kind","remarks"])
+    for r in db.query(AnnealDowntime).order_by(AnnealDowntime.date).all():
+        w.writerow([r.date.isoformat(), r.minutes, r.kind or "", r.remarks or ""])
+    return StreamingResponse(
+        io.BytesIO(buf.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="anneal_downtime.csv"'}
+    )
+
+# Screening pages
+@app.get("/screening", response_class=HTMLResponse)
+def gs_page(request: Request, start: str|None=None, end: str|None=None,
+            db: Session = Depends(get_db),
+            _guard = require_roles("admin","screening")):
+
+    today = dt.date.today()
+    start_d = dt.date.fromisoformat(start) if start else today
+    end_d = dt.date.fromisoformat(end) if end else today
+
+    # KPI (today)
+    produced_today = (
+        db.query(func.coalesce(func.sum(GSLot.weight), 0.0))
+          .filter(GSLot.date == today)
+          .scalar() or 0.0
+    )
+    cap = SCREEN_CAPACITY_KG * (day_available_minutes_gs(db, today) / 1440.0)
+    eff_today = (produced_today / cap * 100.0) if cap > 0 else 0.0
+
+    # Last 5 days
+    last5 = []
+    for i in range(5):
+        d = today - dt.timedelta(days=i)
+        p = db.query(func.coalesce(func.sum(GSLot.weight), 0.0)).filter(GSLot.date == d).scalar() or 0.0
+        t = day_target_kg_gs(db, d)
+        last5.append({"date": d.isoformat(), "actual": p, "target": t})
+    last5 = list(reversed(last5))
+
+    # Live stock: Anneal lots available (sum by KIP/KFS)
+    q = (
+        db.query(
+            AnnealLot.grade,
+            func.coalesce(func.sum(AnnealLot.available_qty), 0.0).label("qty"),
+            func.coalesce(func.sum(AnnealLot.available_qty * AnnealLot.unit_cost), 0.0).label("value"),
+        )
+        .group_by(AnnealLot.grade)
+    )
+    live = {"KIP_qty": 0.0, "KIP_val": 0.0, "KFS_qty": 0.0, "KFS_val": 0.0}
+    for g, qty, val in q.all():
+        g2 = (g or "KIP").upper()
+        if g2 == "KFS":
+            live["KFS_qty"] += float(qty or 0)
+            live["KFS_val"] += float(val or 0)
+        else:
+            live["KIP_qty"] += float(qty or 0)
+            live["KIP_val"] += float(val or 0)
+
+    # GS lots list in range
+    lots = (
+        db.query(GSLot)
+        .filter(GSLot.date >= start_d, GSLot.date <= end_d)
+        .order_by(GSLot.date.desc(), GSLot.id.desc())
+        .all()
+    )
+
+    # Context aliases
+    ctx = {
+        "request": request,
+        "role": current_role(request),
+        "today_iso": today.isoformat(),
+        "start": start_d.isoformat(),
+        "end": end_d.isoformat(),
+
+        "gs_capacity": SCREEN_CAPACITY_KG,
+        "gs_eff_today": eff_today,
+        "gs_last5": last5,
+
+        "gs_live": live,
+        "gs_lots": lots,
+
+        # Aliases to atomization-style names if your template reused them:
+        "atom_capacity": SCREEN_CAPACITY_KG,
+        "atom_eff_today": eff_today,
+        "atom_last5": last5,
+        "lots": lots,
+        "lots_stock": {"krip_qty": live["KIP_qty"], "krip_val": live["KIP_val"],
+                       "krfs_qty": live["KFS_qty"], "krfs_val": live["KFS_val"]},
+    }
+    return templates.TemplateResponse("screening.html", ctx)
+
+
+@app.post("/screening/new")
+def gs_new(
+    request: Request,
+    db: Session = Depends(get_db),
+    lot_weight: float = Form(...),
+     _guard = require_roles("admin", "screening"),   # <-- guard here
+    **allocs,  # alloc_<anneal_lot_id>=qty
+):
+    pairs: List[Tuple[int, float]] = []
+    for k, v in allocs.items():
+        if not k.startswith("alloc_"):
+            continue
+        try:
+            aid = int(k.split("_", 1)[1])
+            q = float(v or 0)
+            if q > 0:
+                pairs.append((aid, q))
+        except Exception:
+            pass
+
+    if not pairs:
+        return _alert_redirect("Select at least one Anneal lot with a positive allocation.", "/screening")
+
+    total_alloc = sum(q for _, q in pairs)
+    if abs(total_alloc - float(lot_weight or 0)) > 0.05:
+        return _alert_redirect("Allocated qty must equal the new lot weight.", "/screening")
+
+    # Validate available
+    a_rows = db.query(AnnealLot).filter(AnnealLot.id.in_([aid for aid,_ in pairs])).all()
+    avail_map = {a.id: float(a.available_qty or 0) for a in a_rows}
+    for aid, q in pairs:
+        if q > avail_map.get(aid, 0.0) + 1e-6:
+            return _alert_redirect("Allocation exceeds available qty for an Anneal lot.", "/screening")
+
+    # Grade by dominant qty
+    by_grade: Dict[str, float] = {}
+    cost_sum = 0.0
+    for aid, q in pairs:
+        a = next((x for x in a_rows if x.id == aid), None)
+        if not a:
+            continue
+        g = (a.grade or "KIP").upper()
+        by_grade[g] = by_grade.get(g, 0.0) + q
+        cost_sum += q * float(a.unit_cost or 0.0)
+
+    dom_grade = max(by_grade.items(), key=lambda x: x[1])[0] if by_grade else "KIP"
+
+    input_unit_cost = (cost_sum / total_alloc) if total_alloc > 0 else 0.0
+    unit_cost = input_unit_cost + SCREEN_COST_PER_KG
+    total_cost = unit_cost * float(lot_weight or 0)
+
+    # Create GS lot
+    today = dt.date.today()
+    seq = (db.query(func.count(GSLot.id)).filter(GSLot.date == today).scalar() or 0) + 1
+    lot_no = next_gs_lot_no(today, seq)
+    newlot = GSLot(
+        lot_no=lot_no,
+        date=today,
+        weight=float(lot_weight or 0),
+        grade=dom_grade,
+        unit_cost=unit_cost,
+        total_cost=total_cost,
+        available_qty=float(lot_weight or 0),
+        qa_status="PENDING",
+    )
+    db.add(newlot); db.flush()
+
+    # Items + reduce anneal available
+    for aid, q in pairs:
+        db.add(GSLotItem(gs_lot_id=newlot.id, anneal_lot_id=aid, qty=q))
+        a = db.query(AnnealLot).get(aid)
+        a.available_qty = max((a.available_qty or 0.0) - q, 0.0)
+        db.add(a)
+
+    db.commit()
+    return RedirectResponse("/screening", status_code=303)
+
+
+@app.get("/screening/downtime", response_class=HTMLResponse)
+def gs_downtime_page(request: Request, db: Session = Depends(get_db),
+                     _guard = require_roles("admin","screening")):
+
+    rows = (
+        db.query(GSDowntime)
+          .order_by(GSDowntime.date.desc(), GSDowntime.id.desc())
+          .limit(50).all()
+    )
+    return templates.TemplateResponse("gs_downtime.html", {
+        "request": request,
+        "rows": rows,
+        "today": dt.date.today().isoformat(),
+    })
+
+
+@app.post("/screening/downtime")
+def gs_downtime_save(
+    request: Request,
+    db: Session = Depends(get_db),
+    date: str = Form(...),
+    minutes: int = Form(...),
+    kind: Optional[str] = Form(None),
+    remarks: Optional[str] = Form(None),
+      _guard = require_roles("admin", "screening"),   # 👈 role guard
+):
+    d = dt.date.fromisoformat(date)
+    db.add(GSDowntime(date=d, minutes=int(minutes or 0), kind=kind, remarks=remarks))
+    db.commit()
+    return RedirectResponse("/screening/downtime", status_code=303)
+
+
+@app.get("/screening/downtime/export")
+def gs_downtime_csv(db: Session = Depends(get_db)):
+    import csv
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["date","minutes","kind","remarks"])
+    for r in db.query(GSDowntime).order_by(GSDowntime.date).all():
+        w.writerow([r.date.isoformat(), r.minutes, r.kind or "", r.remarks or ""])
+    return StreamingResponse(
+        io.BytesIO(buf.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="screening_downtime.csv"'}
+    )
+
+# ---------- ANNEALING QA ----------
+@app.get("/qa/anneal/lot/{lot_id}", response_class=HTMLResponse)
+def qa_anneal_lot_form(lot_id: int,
+                       request: Request,
+                       db: Session = Depends(get_db),
+                       _guard = require_roles("admin","anneal","qa","view")):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return _alert_redirect("Lot not found", "/annealing")
+
+    # grade label already changed upstream to KIP/KFS in your flow
+    grade = (lot.grade or "KIP")
+    read_only = _is_read_only(request) or (current_role(request) not in ("admin","anneal","qa"))
+    oxygen_val = _prefill_anneal_o(db, lot)
+
+    return templates.TemplateResponse("qa_anneal_lot.html", {
+        "request": request,
+        "lot": lot,
+        "grade": grade,
+        "oxygen": oxygen_val,
+        "read_only": read_only,
+        "role": current_role(request),
+    })
+
+@app.post("/qa/anneal/lot/{lot_id}")
+def qa_anneal_lot_save(lot_id: int,
+                       request: Request,
+                       oxygen: str = Form(""),
+                       decision: str = Form(...),
+                       remarks: str = Form(""),
+                       db: Session = Depends(get_db),
+                       _guard = require_roles("admin","anneal","qa")):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return _alert_redirect("Lot not found", "/annealing")
+
+    row = db.query(AnnealQA).filter(AnnealQA.lot_id == lot.id).first()
+    if not row:
+        row = AnnealQA(lot_id=lot.id, oxygen=oxygen)
+    else:
+        row.oxygen = oxygen
+    db.add(row)
+
+    lot.qa_status = decision or "PENDING"
+    lot.qa_remarks = remarks or ""
+    db.add(lot)
+    db.commit()
+    return RedirectResponse(f"/qa/anneal/lot/{lot.id}", status_code=303)
+
+# ---------- SCREENING QA ----------
+@app.get("/qa/screen/lot/{lot_id}", response_class=HTMLResponse)
+def qa_screen_lot_form(lot_id: int,
+                       request: Request,
+                       db: Session = Depends(get_db),
+                       _guard = require_roles("admin","screening","qa","view")):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return _alert_redirect("Lot not found", "/screening")
+
+    grade = (lot.grade or "KIP")   # KIP/KFS in your screening stage
+    read_only = _is_read_only(request) or (current_role(request) not in ("admin","screening","qa"))
+    data = _prefill_screen_chem_from_upstream(db, lot)
+
+    return templates.TemplateResponse("qa_screen_lot.html", {
+        "request": request,
+        "lot": lot,
+        "grade": grade,
+        "chem": {k: data.get(k,"") for k in ["c","si","s","p","cu","ni","mn","fe","o"]},
+        "phys": {"compressibility": data.get("compressibility","")},
+        "read_only": read_only,
+        "role": current_role(request),
+    })
+
+@app.post("/qa/screen/lot/{lot_id}")
+def qa_screen_lot_save(lot_id: int,
+                       request: Request,
+                       # Chemistry
+                       c: str = Form(""), si: str = Form(""), s: str = Form(""), p: str = Form(""),
+                       cu: str = Form(""), ni: str = Form(""), mn: str = Form(""), fe: str = Form(""),
+                       o: str = Form(""),
+                       # Physical
+                       compressibility: str = Form(""),
+                       # Decision
+                       decision: str = Form(...),
+                       remarks: str = Form(""),
+                       db: Session = Depends(get_db),
+                       _guard = require_roles("admin","screening","qa")):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return _alert_redirect("Lot not found", "/screening")
+
+    row = db.query(ScreenQA).filter(ScreenQA.lot_id == lot.id).first()
+    if not row:
+        row = ScreenQA(lot_id=lot.id)
+    row.c, row.si, row.s, row.p = c, si, s, p
+    row.cu, row.ni, row.mn, row.fe = cu, ni, mn, fe
+    row.o = o
+    row.compressibility = compressibility
+    db.add(row)
+
+    lot.qa_status = decision or "PENDING"
+    lot.qa_remarks = remarks or ""
+    db.add(lot)
+    db.commit()
+    return RedirectResponse(f"/qa/screen/lot/{lot.id}", status_code=303)
 
 # -------------------------------------------------
 # PDF (no cost in PDF)
