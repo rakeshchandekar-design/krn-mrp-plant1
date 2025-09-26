@@ -123,15 +123,20 @@
 
     <section class="grid">
       <!-- Dashboard -->
-      {% set allow = role in ['admin','view'] %}
-      <div class="card">
-        <h3>Dashboard</h3>
-        <div class="sub">Admins &amp; View (coming soon)</div>
-        <div class="foot">
-          <button class="open" disabled>Open</button>
-          {% if not allow %}<span class="deny">✗</span>{% endif %}
-        </div>
-      </div>
+{% set allow = role in ['admin','view'] %}
+<div class="card">
+  <h3>Dashboard</h3>
+  <div class="sub">Admin, View</div>
+  <div class="foot">
+    {% if allow %}
+      <!-- now links to the route -->
+      <a class="open" href="/dashboard">Open</a>
+    {% else %}
+      <button class="open" disabled>Open</button>
+      <span class="deny">✗</span>
+    {% endif %}
+  </div>
+</div>
 
       <!-- GRN -->
       {% set allow = role in ['admin','store','view'] %}
