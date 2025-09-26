@@ -781,6 +781,42 @@ class ScreenQA(Base):
     compressibility = Column(String)  # g/cc
     lot = relationship("Lot")
 
+# --- NEW QA TABLES FOR ANNEALING & SCREENING ---------------------------------
+
+class AnnealQA(Base):
+    """
+    Annealing QA: only Oxygen is recorded here; one row per Lot.id
+    (Lot here is the same table you already use; grades will be KIP/KFS
+     once you create those lots.)
+    """
+    __tablename__ = "anneal_qa"
+    id = Column(Integer, primary_key=True)
+    lot_id = Column(Integer, ForeignKey("lot.id"), index=True, unique=True)
+    oxygen = Column(String)              # store as string from form
+    decision = Column(String, default="PENDING")
+    remarks = Column(String, default="")
+
+class ScreenQA(Base):
+    """
+    Grinding & Screening QA: chemistry (editable), Oxygen (carried), and
+    Physical: Compressibility (g/cc). One row per Lot.id.
+    """
+    __tablename__ = "screen_qa"
+    id = Column(Integer, primary_key=True)
+    lot_id = Column(Integer, ForeignKey("lot.id"), index=True, unique=True)
+
+    # Chemistry (strings, same as your existing lot_chem style)
+    c = Column(String); si = Column(String); s = Column(String); p = Column(String)
+    cu = Column(String); ni = Column(String); mn = Column(String); fe = Column(String)
+    o = Column(String)                   # Oxygen carried/edited
+
+    # Physicals
+    compressibility = Column(String)     # g/cc
+
+    # Decision
+    decision = Column(String, default="PENDING")
+    remarks = Column(String, default="")
+
 
 # -------------------------------------------------
 # App + Templates (robust paths)
