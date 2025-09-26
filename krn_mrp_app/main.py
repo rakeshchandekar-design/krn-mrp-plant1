@@ -367,6 +367,76 @@ def apply_simple_migrations():
 # STARTUP & BASIC ROUTES
 # ============================================================
 
+# ============================================================
+# DB MINI-MIGRATIONS & DIAG
+# ============================================================
+from sqlalchemy import inspect
+
+def apply_simple_migrations():
+    """
+    Idempotent, lightweight column-adds to keep old DBs compatible.
+    Safe on both Postgres and SQLite (uses IF NOT EXISTS).
+    """
+    with engine.begin() as conn:
+        # ---- GRN ----
+        conn.exec_driver_sql("ALTER TABLE grn ADD COLUMN IF NOT EXISTS item VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE grn ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION")
+
+        # ---- HEAT ----
+        conn.exec_driver_sql("ALTER TABLE heat ADD COLUMN IF NOT EXISTS grade VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE heat ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE heat ADD COLUMN IF NOT EXISTS power_kwh DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE heat ADD COLUMN IF NOT EXISTS total_inputs DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE heat ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
+
+        # ---- LOT ----
+        conn.exec_driver_sql("ALTER TABLE lot ADD COLUMN IF NOT EXISTS grade VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE lot ADD COLUMN IF NOT EXISTS status VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
+
+        # ---- RAPLot ----
+        conn.exec_driver_sql("ALTER TABLE raplot ADD COLUMN IF NOT EXISTS grade VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE raplot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE raplot ADD COLUMN IF NOT EXISTS status VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE raplot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION")
+
+        # ---- AnnealLot ----
+        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS lot_no VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS grade VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS ammonia_kg DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS status VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
+
+        # ---- ScreenLot ----
+        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS lot_no VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS grade VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS oversize_40 DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS oversize_80 DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS status VARCHAR")
+        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION")
+        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
+
+@app.get("/db/upgrade")
+def db_upgrade():
+    apply_simple_migrations()
+    return {"ok": True, "msg": "Schema upgraded (idempotent)."}
+
+@app.get("/db/columns")
+def db_columns():
+    insp = inspect(engine)
+    out = {}
+    for tbl in ["grn", "heat", "lot", "raplot", "anneal_lot", "screen_lot"]:
+        try:
+            out[tbl] = [c["name"] for c in insp.get_columns(tbl)]
+        except Exception as e:
+            out[tbl] = f"error: {e}"
+    return out
+
 @app.on_event("startup")
 def _startup_create():
     Base.metadata.create_all(bind=engine)
