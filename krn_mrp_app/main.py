@@ -166,7 +166,7 @@ def _alert_redirect(msg: str, url: str = "/"):
 # ============================================================
 
 class GRN(Base):
-    _tablename_ = "grn"
+    __tablename__ = "grn"
     id = Column(Integer, primary_key=True)
     grn_no = Column(String, unique=True, index=True)
     date = Column(DateTime, default=dt.datetime.utcnow)
@@ -177,7 +177,7 @@ class GRN(Base):
 
 
 class Heat(Base):
-    _tablename_ = "heat"
+    __tablename__ = "heat"
     id = Column(Integer, primary_key=True)
     heat_no = Column(String, unique=True, index=True)
     grade = Column(String)
@@ -193,7 +193,7 @@ class Heat(Base):
 
 
 class Lot(Base):
-    _tablename_ = "lot"
+    __tablename__ = "lot"
     id = Column(Integer, primary_key=True)
     lot_no = Column(String, unique=True, index=True)
     heat_id = Column(Integer, ForeignKey("heat.id"))
@@ -217,7 +217,7 @@ class Lot(Base):
 
 
 class LotHeat(Base):
-    _tablename_ = "lot_heat"
+    __tablename__ = "lot_heat"
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     heat_id = Column(Integer, ForeignKey("heat.id"))
@@ -228,7 +228,7 @@ class LotHeat(Base):
 
 
 class RMConsumption(Base):
-    _tablename_ = "rm_consumption"
+    __tablename__ = "rm_consumption"
     id = Column(Integer, primary_key=True)
     heat_id = Column(Integer, ForeignKey("heat.id"))
     rm_type = Column(String)          # e.g. SS Scrap / Ferro / Etc
@@ -240,7 +240,7 @@ class RMConsumption(Base):
 
 
 class RAPLot(Base):
-    _tablename_ = "raplot"
+    __tablename__ = "raplot"
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     grade = Column(String)
@@ -257,7 +257,7 @@ class RAPLot(Base):
 
 
 class RAPAlloc(Base):
-    _tablename_ = "rap_alloc"
+    __tablename__ = "rap_alloc"
     id = Column(Integer, primary_key=True)
     rap_lot_id = Column(Integer, ForeignKey("raplot.id"))
     date = Column(DateTime, default=dt.date.today)
@@ -270,7 +270,7 @@ class RAPAlloc(Base):
 
 
 class RAPTransfer(Base):
-    _tablename_ = "rap_transfer"
+    __tablename__ = "rap_transfer"
     id = Column(Integer, primary_key=True)
     date = Column(DateTime, default=dt.date.today)
     lot_id = Column(Integer, ForeignKey("lot.id"))
@@ -280,7 +280,7 @@ class RAPTransfer(Base):
 
 
 class RAPDispatch(Base):
-    _tablename_ = "rap_dispatch"
+    __tablename__ = "rap_dispatch"
     id = Column(Integer, primary_key=True)
     date = Column(DateTime, default=dt.date.today)
     customer = Column(String, default="")
@@ -290,7 +290,7 @@ class RAPDispatch(Base):
 
 
 class RAPDispatchItem(Base):
-    _tablename_ = "rap_dispatch_item"
+    __tablename__ = "rap_dispatch_item"
     id = Column(Integer, primary_key=True)
     dispatch_id = Column(Integer, ForeignKey("rap_dispatch.id"))
     lot_id = Column(Integer, ForeignKey("lot.id"))
@@ -302,7 +302,7 @@ class RAPDispatchItem(Base):
 
 
 class AnnealLot(Base):
-    _tablename_ = "anneal_lot"
+    __tablename__ = "anneal_lot"
     id = Column(Integer, primary_key=True)
     lot_no = Column(String, unique=True, index=True)
     rap_lot_id = Column(Integer, ForeignKey("raplot.id"))
@@ -328,7 +328,7 @@ class AnnealLot(Base):
 
 
 class AnnealLotItem(Base):
-    _tablename_ = "anneal_lot_item"
+    __tablename__ = "anneal_lot_item"
     id = Column(Integer, primary_key=True)
     anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
     rap_lot_id = Column(Integer, ForeignKey("raplot.id"))
@@ -337,7 +337,7 @@ class AnnealLotItem(Base):
 
 
 class AnnealQA(Base):
-    _tablename_ = "anneal_qa"
+    __tablename__ = "anneal_qa"
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     oxygen = Column(String)
@@ -347,7 +347,7 @@ class AnnealQA(Base):
 
 
 class AnnealDowntime(Base):
-    _tablename_ = "anneal_downtime"
+    __tablename__ = "anneal_downtime"
     id = Column(Integer, primary_key=True)
     date = Column(DateTime, default=dt.date.today)
     minutes = Column(Integer, default=0)
@@ -356,7 +356,7 @@ class AnnealDowntime(Base):
 
 
 class ScreenLot(Base):
-    _tablename_ = "screen_lot"
+    __tablename__ = "screen_lot"
     id = Column(Integer, primary_key=True)
     lot_no = Column(String, unique=True, index=True)
     anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
@@ -387,7 +387,7 @@ GSLot = ScreenLot
 
 
 class GSLotItem(Base):
-    _tablename_ = "gs_lot_item"
+    __tablename__ = "gs_lot_item"
     id = Column(Integer, primary_key=True)
     gs_lot_id = Column(Integer, ForeignKey("screen_lot.id"))
     anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
@@ -396,7 +396,7 @@ class GSLotItem(Base):
 
 
 class ScreenQA(Base):
-    _tablename_ = "screen_qa"
+    __tablename__ = "screen_qa"
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     c = Column(String); si = Column(String); s = Column(String); p = Column(String)
@@ -409,7 +409,7 @@ class ScreenQA(Base):
 
 
 class ScreenDowntime(Base):
-    _tablename_ = "screen_downtime"
+    __tablename__ = "screen_downtime"
     id = Column(Integer, primary_key=True)
     date = Column(DateTime, default=dt.date.today)
     minutes = Column(Integer, default=0)
@@ -422,7 +422,7 @@ GSDowntime = ScreenDowntime
 
 
 class LotChem(Base):
-    _tablename_ = "lot_chem"
+    __tablename__ = "lot_chem"
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     c = Column(String); si = Column(String); s = Column(String); p = Column(String)
@@ -431,7 +431,7 @@ class LotChem(Base):
 
 
 class LotPhys(Base):
-    _tablename_ = "lot_phys"
+    __tablename__ = "lot_phys"
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     compressibility = Column(String)
@@ -439,7 +439,7 @@ class LotPhys(Base):
 
 
 class LotPSD(Base):
-    _tablename_ = "lot_psd"
+    __tablename__ = "lot_psd"
     id = Column(Integer, primary_key=True)
     lot_id = Column(Integer, ForeignKey("lot.id"))
     d10 = Column(String); d50 = Column(String); d90 = Column(String)
