@@ -1,893 +1,87 @@
-import os, io, datetime as dt
-from typing import Optional, Dict, List, Tuple
-from urllib.parse import quote
-from enum import Enum
-from starlette.middleware.sessions import SessionMiddleware
+# ==== PART A START ====
+
+import os
+import io
 import secrets
+import datetime as dt
+from typing import Optional, List, Dict
 
 # FastAPI
-from fastapi import FastAPI, Request, Form, Depends, Response
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
-from fastapi.responses import HTMLResponse
-def _alert_redirect(msg: str, url: str = "/atomization") -> HTMLResponse:
-    safe = (msg or "").replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
-    html = f'''<script>
-      alert("{safe}");
-      window.location.href = "{url}";
-    </script>'''
-    return HTMLResponse(html)
+from fastapi import FastAPI, Request, Depends, Form, status
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-
-# PDF
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import cm
-from reportlab.pdfgen import canvas
+from starlette.middleware.sessions import SessionMiddleware
 
 # SQLAlchemy
-from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text
-from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
-from sqlalchemy.orm import joinedload  # eager load
-from sqlalchemy import func
+from sqlalchemy import (
+    create_engine, Column, Integer, String, Float, DateTime, Boolean,
+    ForeignKey, func, text
+)
+from sqlalchemy.orm import sessionmaker, relationship, Session, declarative_base, joinedload
 
-def date_field(model):
-    """
-    Return a SQLAlchemy column on `model` that represents creation/production time.
-    Adjust the priority order if your column names differ.
-    """
-    for name in ("date", "day", "prod_date", "production_date",
-                 "created_at", "created_on", "timestamp", "ts"):
-        if hasattr(model, name):
-            return getattr(model, name)
-    raise AttributeError(f"{model.__name__} has no date-like column")
+# ============================================================
+# CONFIGURATION & CONSTANTS
+# ============================================================
 
-# -------------------------------------------------
-# Costing constants (baseline)
-# -------------------------------------------------
-MELT_COST_PER_KG_KRIP = 6.0
-MELT_COST_PER_KG_KRFS = 8.0
-ATOMIZATION_COST_PER_KG = 5.0
-SURCHARGE_PER_KG = 2.0
-ANNEAL_COST_PER_KG = 11.0       # Stage cost add-on for Annealing
-SCREEN_COST_PER_KG = 5.0        # Stage cost add-on for Grinding & Screening
-
-# Melting capacity & power targets
-DAILY_CAPACITY_KG = 7000.0          # melting 24h capacity
-POWER_TARGET_KWH_PER_TON = 560.0    # target kWh/ton
-
-# Atomization capacity
-DAILY_CAPACITY_ATOM_KG = 6000.0     # atomization 24h capacity
-
-# ---- New stage constants ----
-ANNEAL_CAPACITY_KG = 6000.0     # Annealing 24h capacity
-SCREEN_CAPACITY_KG = 10000.0    # Grinding & Screening 24h capacity
-
-# -------------------------------------------------
-# Database config
-# -------------------------------------------------
 def _normalize_db_url(url: str) -> str:
+    # Support postgres:// and add psycopg driver if missing
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
     if url.startswith("postgresql://") and "+psycopg" not in url:
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
 
-DATABASE_URL = _normalize_db_url(os.getenv("DATABASE_URL", "sqlite:///./krn_mrp.db"))
+DATABASE_URL = _normalize_db_url(os.getenv("DATABASE_URL", "sqlite:///./krn.db"))
 
 engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
     pool_pre_ping=True,
 )
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# -------------------------------------------------
-# Schema migration (only fields actually used)
-# -------------------------------------------------
-def _table_has_column(conn, table: str, col: str) -> bool:
-    if str(engine.url).startswith("sqlite"):
-        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
-        names = [r[1] for r in rows]
-        return col in names
-    else:
-        q = text("""
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = :t
-              AND column_name = :c
-            LIMIT 1
-        """)
-        return conn.execute(q, {"t": table, "c": col}).first() is not None
-
-def migrate_schema(engine):
-    with engine.begin() as conn:
-        # Heat costing columns
-        for col in ["rm_cost", "process_cost", "total_cost", "unit_cost"]:
-            if not _table_has_column(conn, "heat", col):
-                if str(engine.url).startswith("sqlite"):
-                    conn.execute(text(f"ALTER TABLE heat ADD COLUMN {col} REAL DEFAULT 0"))
-                else:
-                    conn.execute(text(f"ALTER TABLE heat ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
-
-        # Power & per-heat downtime tracking
-        for coldef in [
-            "power_kwh REAL DEFAULT 0",
-            "kwh_per_ton REAL DEFAULT 0",
-            "downtime_min INTEGER DEFAULT 0",
-            "downtime_type TEXT",
-            "downtime_note TEXT",
-        ]:
-            col = coldef.split()[0]
-            if not _table_has_column(conn, "heat", col):
-                if str(engine.url).startswith("sqlite"):
-                    conn.execute(text(f"ALTER TABLE heat ADD COLUMN {coldef}"))
-                else:
-                    sql = coldef.replace("REAL", "DOUBLE PRECISION")
-                    conn.execute(text(f"ALTER TABLE heat ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
-
-        # Track how much of a heat is allocated into lots (mirror for dashboards)
-        if not _table_has_column(conn, "heat", "alloc_used"):
-            if str(engine.url).startswith("sqlite"):
-                conn.execute(text("ALTER TABLE heat ADD COLUMN alloc_used REAL DEFAULT 0"))
-            else:
-                conn.execute(text("ALTER TABLE heat ADD COLUMN IF NOT EXISTS alloc_used DOUBLE PRECISION DEFAULT 0"))
-
-        # Lot costing
-        for col in ["unit_cost", "total_cost"]:
-            if not _table_has_column(conn, "lot", col):
-                if str(engine.url).startswith("sqlite"):
-                    conn.execute(text(f"ALTER TABLE lot ADD COLUMN {col} REAL DEFAULT 0"))
-                else:
-                    conn.execute(text(f"ALTER TABLE lot ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
-
-        # LotHeat qty for partial allocation
-        if not _table_has_column(conn, "lot_heat", "qty"):
-            if str(engine.url).startswith("sqlite"):
-                conn.execute(text("ALTER TABLE lot_heat ADD COLUMN qty REAL DEFAULT 0"))
-            else:
-                conn.execute(text("ALTER TABLE lot_heat ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION DEFAULT 0"))
-
-        # GRN readable number
-        if not _table_has_column(conn, "grn", "grn_no"):
-            if str(engine.url).startswith("sqlite"):
-                conn.execute(text("ALTER TABLE grn ADD COLUMN grn_no TEXT"))
-            else:
-                conn.execute(text("ALTER TABLE grn ADD COLUMN IF NOT EXISTS grn_no TEXT UNIQUE"))
-
-        # Day-level downtime table for MELTING (existing)
-        if str(engine.url).startswith("sqlite"):
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS downtime (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date DATE NOT NULL,
-                    minutes INTEGER NOT NULL DEFAULT 0,
-                    kind TEXT,
-                    remarks TEXT
-                )
-            """))
-        else:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS downtime(
-                    id SERIAL PRIMARY KEY,
-                    date DATE NOT NULL,
-                    minutes INT NOT NULL DEFAULT 0,
-                    kind TEXT,
-                    remarks TEXT
-                )
-            """))
-
-        # NEW: Day-level downtime table for ATOMIZATION
-        if str(engine.url).startswith("sqlite"):
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS atom_downtime (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date DATE NOT NULL,
-                    minutes INTEGER NOT NULL DEFAULT 0,
-                    kind TEXT,
-                    remarks TEXT
-                )
-            """))
-        else:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS atom_downtime(
-                    id SERIAL PRIMARY KEY,
-                    date DATE NOT NULL,
-                    minutes INT NOT NULL DEFAULT 0,
-                    kind TEXT,
-                    remarks TEXT
-                )
-            """))
-
-        # RAP tables
-        if str(engine.url).startswith("sqlite"):
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rap_lot (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    lot_id INTEGER UNIQUE,
-                    available_qty REAL NOT NULL DEFAULT 0,
-                    status TEXT,
-                    FOREIGN KEY(lot_id) REFERENCES lot(id)
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rap_alloc (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    rap_lot_id INTEGER NOT NULL,
-                    date DATE NOT NULL,
-                    kind TEXT NOT NULL,
-                    qty REAL NOT NULL DEFAULT 0,
-                    remarks TEXT,
-                    dest TEXT,
-                    FOREIGN KEY(rap_lot_id) REFERENCES rap_lot(id)
-                )
-            """))
-        else:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rap_lot (
-                    id SERIAL PRIMARY KEY,
-                    lot_id INT UNIQUE,
-                    available_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    status TEXT,
-                    FOREIGN KEY(lot_id) REFERENCES lot(id)
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rap_alloc (
-                    id SERIAL PRIMARY KEY,
-                    rap_lot_id INT NOT NULL,
-                    date DATE NOT NULL,
-                    kind TEXT NOT NULL,
-                    qty DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    remarks TEXT,
-                    dest TEXT,
-                    FOREIGN KEY(rap_lot_id) REFERENCES rap_lot(id)
-                )
-            """))
-
-                # RAP Dispatch + Transfer tables
-        if str(engine.url).startswith("sqlite"):
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rap_dispatch(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date DATE NOT NULL,
-                    customer TEXT NOT NULL,
-                    grade TEXT NOT NULL,
-                    total_qty REAL DEFAULT 0,
-                    total_cost REAL DEFAULT 0
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rap_dispatch_item(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    dispatch_id INTEGER,
-                    lot_id INTEGER,
-                    qty REAL DEFAULT 0,
-                    cost REAL DEFAULT 0
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rap_transfer(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date DATE NOT NULL,
-                    lot_id INTEGER,
-                    qty REAL DEFAULT 0,
-                    remarks TEXT
-                )
-            """))
-        else:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rap_dispatch(
-                    id SERIAL PRIMARY KEY,
-                    date DATE NOT NULL,
-                    customer TEXT NOT NULL,
-                    grade TEXT NOT NULL,
-                    total_qty DOUBLE PRECISION DEFAULT 0,
-                    total_cost DOUBLE PRECISION DEFAULT 0
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rap_dispatch_item(
-                    id SERIAL PRIMARY KEY,
-                    dispatch_id INT REFERENCES rap_dispatch(id),
-                    lot_id INT REFERENCES lot(id),
-                    qty DOUBLE PRECISION DEFAULT 0,
-                    cost DOUBLE PRECISION DEFAULT 0
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rap_transfer(
-                    id SERIAL PRIMARY KEY,
-                    date DATE NOT NULL,
-                    lot_id INT REFERENCES lot(id),
-                    qty DOUBLE PRECISION DEFAULT 0,
-                    remarks TEXT
-                )
-            """))
-
-        # ------------------------------
-        # Annealing stage tables
-        # ------------------------------
-        if str(engine.url).startswith("sqlite"):
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS anneal_lot (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    lot_no TEXT UNIQUE,
-                    date DATE NOT NULL,
-                    weight REAL NOT NULL DEFAULT 0,
-                    grade TEXT,
-                    qa_status TEXT DEFAULT 'PENDING',
-                    qa_remarks TEXT,
-                    unit_cost REAL DEFAULT 0,
-                    total_cost REAL DEFAULT 0,
-                    available_qty REAL NOT NULL DEFAULT 0
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS anneal_lot_item (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    anneal_lot_id INTEGER NOT NULL,
-                    rap_lot_id INTEGER NOT NULL,
-                    qty REAL NOT NULL DEFAULT 0,
-                    FOREIGN KEY(anneal_lot_id) REFERENCES anneal_lot(id),
-                    FOREIGN KEY(rap_lot_id) REFERENCES rap_lot(id)
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS anneal_downtime (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date DATE NOT NULL,
-                    minutes INTEGER NOT NULL DEFAULT 0,
-                    kind TEXT,
-                    remarks TEXT
-                )
-            """))
-        else:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS anneal_lot (
-                    id SERIAL PRIMARY KEY,
-                    lot_no TEXT UNIQUE,
-                    date DATE NOT NULL,
-                    weight DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    grade TEXT,
-                    qa_status TEXT DEFAULT 'PENDING',
-                    qa_remarks TEXT,
-                    unit_cost DOUBLE PRECISION DEFAULT 0,
-                    total_cost DOUBLE PRECISION DEFAULT 0,
-                    available_qty DOUBLE PRECISION NOT NULL DEFAULT 0
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS anneal_lot_item (
-                    id SERIAL PRIMARY KEY,
-                    anneal_lot_id INT NOT NULL REFERENCES anneal_lot(id),
-                    rap_lot_id INT NOT NULL REFERENCES rap_lot(id),
-                    qty DOUBLE PRECISION NOT NULL DEFAULT 0
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS anneal_downtime (
-                    id SERIAL PRIMARY KEY,
-                    date DATE NOT NULL,
-                    minutes INT NOT NULL DEFAULT 0,
-                    kind TEXT,
-                    remarks TEXT
-                )
-            """))
-
-        # ------------------------------
-        # Grinding & Screening stage tables
-        # ------------------------------
-        if str(engine.url).startswith("sqlite"):
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS gs_lot (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    lot_no TEXT UNIQUE,
-                    date DATE NOT NULL,
-                    weight REAL NOT NULL DEFAULT 0,
-                    grade TEXT,
-                    qa_status TEXT DEFAULT 'PENDING',
-                    qa_remarks TEXT,
-                    unit_cost REAL DEFAULT 0,
-                    total_cost REAL DEFAULT 0,
-                    available_qty REAL NOT NULL DEFAULT 0
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS gs_lot_item (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    gs_lot_id INTEGER NOT NULL,
-                    anneal_lot_id INTEGER NOT NULL,
-                    qty REAL NOT NULL DEFAULT 0,
-                    FOREIGN KEY(gs_lot_id) REFERENCES gs_lot(id),
-                    FOREIGN KEY(anneal_lot_id) REFERENCES anneal_lot(id)
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS gs_downtime (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date DATE NOT NULL,
-                    minutes INTEGER NOT NULL DEFAULT 0,
-                    kind TEXT,
-                    remarks TEXT
-                )
-            """))
-        else:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS gs_lot (
-                    id SERIAL PRIMARY KEY,
-                    lot_no TEXT UNIQUE,
-                    date DATE NOT NULL,
-                    weight DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    grade TEXT,
-                    qa_status TEXT DEFAULT 'PENDING',
-                    qa_remarks TEXT,
-                    unit_cost DOUBLE PRECISION DEFAULT 0,
-                    total_cost DOUBLE PRECISION DEFAULT 0,
-                    available_qty DOUBLE PRECISION NOT NULL DEFAULT 0
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS gs_lot_item (
-                    id SERIAL PRIMARY KEY,
-                    gs_lot_id INT NOT NULL REFERENCES gs_lot(id),
-                    anneal_lot_id INT NOT NULL REFERENCES anneal_lot(id),
-                    qty DOUBLE PRECISION NOT NULL DEFAULT 0
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS gs_downtime (
-                    id SERIAL PRIMARY KEY,
-                    date DATE NOT NULL,
-                    minutes INT NOT NULL DEFAULT 0,
-                    kind TEXT,
-                    remarks TEXT
-                )
-            """))
-
-        # Anneal QA
-        if str(engine.url).startswith("sqlite"):
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS anneal_qa (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    lot_id INTEGER UNIQUE,
-                    oxygen TEXT,
-                    FOREIGN KEY(lot_id) REFERENCES lot(id)
-                )
-            """))
-        else:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS anneal_qa (
-                    id SERIAL PRIMARY KEY,
-                    lot_id INT UNIQUE REFERENCES lot(id),
-                    oxygen TEXT
-                )
-            """))
-
-        # Screen QA (chem + compressibility)
-        if str(engine.url).startswith("sqlite"):
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS screen_qa (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    lot_id INTEGER UNIQUE,
-                    c TEXT, si TEXT, s TEXT, p TEXT,
-                    cu TEXT, ni TEXT, mn TEXT, fe TEXT,
-                    o TEXT,
-                    compressibility TEXT,
-                    FOREIGN KEY(lot_id) REFERENCES lot(id)
-                )
-            """))
-        else:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS screen_qa (
-                    id SERIAL PRIMARY KEY,
-                    lot_id INT UNIQUE REFERENCES lot(id),
-                    c TEXT, si TEXT, s TEXT, p TEXT,
-                    cu TEXT, ni TEXT, mn TEXT, fe TEXT,
-                    o TEXT,
-                    compressibility TEXT
-                )
-            """))
-
-
-# -------------------------------------------------
-# Constants
-# -------------------------------------------------
-RM_TYPES = ["MS Scrap", "Turnings", "CRC", "TMT end cuts", "FeSi"]
-
-def rm_price_defaults():
-    return {"MS Scrap": 34.0, "Turnings": 33.0, "CRC": 40.0, "TMT end cuts": 37.0, "FeSi": 104.0}
-
-# -------------------------------------------------
-# Models
-# -------------------------------------------------
-class GRN(Base):
-    __tablename__ = "grn"
-    id = Column(Integer, primary_key=True)
-    grn_no = Column(String, unique=True, index=True)
-    date = Column(Date, nullable=False)
-    supplier = Column(String, nullable=False)
-    rm_type = Column(String, nullable=False)
-    qty = Column(Float, nullable=False)
-    remaining_qty = Column(Float, nullable=False)
-    price = Column(Float, nullable=False)
-
-class Heat(Base):
-    __tablename__ = "heat"
-    id = Column(Integer, primary_key=True)
-    heat_no = Column(String, unique=True, index=True)
-    notes = Column(String)
-    slag_qty = Column(Float, default=0)
-    total_inputs = Column(Float, default=0)
-    actual_output = Column(Float, default=0)
-    theoretical = Column(Float, default=0)
-    qa_status = Column(String, default="PENDING")
-    qa_remarks = Column(String)
-
-    # costing
-    rm_cost = Column(Float, default=0.0)
-    process_cost = Column(Float, default=0.0)
-    total_cost = Column(Float, default=0.0)
-    unit_cost = Column(Float, default=0.0)
-
-    # power & downtime
-    power_kwh = Column(Float, default=0.0)
-    kwh_per_ton = Column(Float, default=0.0)
-    downtime_min = Column(Integer, default=0)
-    downtime_type = Column(String)
-    downtime_note = Column(String)
-
-    # partial allocations (mirror of allocated qty in lots)
-    alloc_used = Column(Float, default=0.0)
-
-    rm_consumptions = relationship("HeatRM", back_populates="heat", cascade="all, delete-orphan")
-    chemistry = relationship("HeatChem", uselist=False, back_populates="heat")
-
-class HeatRM(Base):
-    __tablename__ = "heat_rm"
-    id = Column(Integer, primary_key=True)
-    heat_id = Column(Integer, ForeignKey("heat.id"))
-    rm_type = Column(String, nullable=False)
-    grn_id = Column(Integer, ForeignKey("grn.id"))
-    qty = Column(Float, nullable=False)
-
-    heat = relationship("Heat", back_populates="rm_consumptions")
-    grn = relationship("GRN")
-
-class HeatChem(Base):
-    __tablename__ = "heat_chem"
-    id = Column(Integer, primary_key=True)
-    heat_id = Column(Integer, ForeignKey("heat.id"))
-    c = Column(String); si = Column(String); s = Column(String); p = Column(String)
-    cu = Column(String); ni = Column(String); mn = Column(String); fe = Column(String)
-    heat = relationship("Heat", back_populates="chemistry")
-
-class Lot(Base):
-    __tablename__ = "lot"
-    id = Column(Integer, primary_key=True)
-    lot_no = Column(String, unique=True, index=True)
-    weight = Column(Float, default=3000.0)
-    grade = Column(String)  # KRIP / KRFS
-    qa_status = Column(String, default="PENDING")
-    qa_remarks = Column(String)
-
-    # costing
-    unit_cost = Column(Float, default=0.0)
-    total_cost = Column(Float, default=0.0)
-
-    heats = relationship("LotHeat", back_populates="lot", cascade="all, delete-orphan")
-    chemistry = relationship("LotChem", uselist=False, back_populates="lot")
-    phys = relationship("LotPhys", uselist=False, back_populates="lot")
-    psd = relationship("LotPSD", uselist=False, back_populates="lot")
-
-class LotHeat(Base):
-    __tablename__ = "lot_heat"
-    id = Column(Integer, primary_key=True)
-    lot_id = Column(Integer, ForeignKey("lot.id"))
-    heat_id = Column(Integer, ForeignKey("heat.id"))
-    qty = Column(Float, default=0.0)
-    lot = relationship("Lot", back_populates="heats")
-    heat = relationship("Heat")
-
-class LotChem(Base):
-    __tablename__ = "lot_chem"
-    id = Column(Integer, primary_key=True)
-    lot_id = Column(Integer, ForeignKey("lot.id"))
-    c = Column(String); si = Column(String); s = Column(String); p = Column(String)
-    cu = Column(String); ni = Column(String); mn = Column(String); fe = Column(String)
-    lot = relationship("Lot", back_populates="chemistry")
-
-class LotPhys(Base):
-    __tablename__ = "lot_phys"
-    id = Column(Integer, primary_key=True)
-    lot_id = Column(Integer, ForeignKey("lot.id"))
-    ad = Column(String); flow = Column(String)
-    lot = relationship("Lot", back_populates="phys")
-
-class LotPSD(Base):
-    __tablename__ = "lot_psd"
-    id = Column(Integer, primary_key=True)
-    lot_id = Column(Integer, ForeignKey("lot.id"))
-    p212 = Column(String); p180 = Column(String); n180p150 = Column(String)
-    n150p75 = Column(String); n75p45 = Column(String); n45 = Column(String)
-    lot = relationship("Lot", back_populates="psd")
-
-# Optional day-level downtime table (Melting)
-class Downtime(Base):
-    __tablename__ = "downtime"
-    id = Column(Integer, primary_key=True)
-    date = Column(Date, nullable=False)
-    minutes = Column(Integer, default=0)
-    kind = Column(String)
-    remarks = Column(String)
-
-# NEW: Optional day-level downtime table (Atomization)
-class AtomDowntime(Base):
-    __tablename__ = "atom_downtime"
-    id = Column(Integer, primary_key=True)
-    date = Column(Date, nullable=False)
-    minutes = Column(Integer, default=0)
-    kind = Column(String)
-    remarks = Column(String)
-
-# -------------------------------
-# RAP / ULA models (new)
-# -------------------------------
-
-class RAPLot(Base):
-    """
-    A mirror bucket for an Atomization lot that enters RAP stage.
-    We keep available_qty here; allocations reduce it.
-    """
-    __tablename__ = "rap_lot"
-    id = Column(Integer, primary_key=True)
-    lot_id = Column(Integer, ForeignKey("lot.id"), unique=True, index=True)
-    available_qty = Column(Float, default=0.0)
-    # status is informational; available_qty==0 implies closed
-    status = Column(String, default="OPEN")  # OPEN / CLOSED
-
-    lot = relationship("Lot")
-
-class RAPKind(str, Enum):
-    DISPATCH = "DISPATCH"
-    PLANT2   = "PLANT2"
-
-class RAPAlloc(Base):
-    """
-    Individual allocation movement from RAP to a destination (Dispatch or Plant 2).
-    """
-    __tablename__ = "rap_alloc"
-    id = Column(Integer, primary_key=True)
-    rap_lot_id = Column(Integer, ForeignKey("rap_lot.id"), index=True)
-    date = Column(Date, nullable=False)
-    kind = Column(String, nullable=False)   # DISPATCH or PLANT2
-    qty  = Column(Float, nullable=False, default=0.0)
-    remarks = Column(String)
-    dest = Column(String)  # customer name or "Plant 2"
-
-    rap_lot = relationship("RAPLot")
-
-# RAP Dispatch + Transfer Models
-class RAPDispatch(Base):
-    __tablename__ = "rap_dispatch"
-    id = Column(Integer, primary_key=True)
-    date = Column(Date, nullable=False)
-    customer = Column(String, nullable=False)
-    grade = Column(String, nullable=False)
-    total_qty = Column(Float, default=0.0)
-    total_cost = Column(Float, default=0.0)
-
-    items = relationship("RAPDispatchItem", back_populates="dispatch", cascade="all, delete-orphan")
-
-class RAPDispatchItem(Base):
-    __tablename__ = "rap_dispatch_item"
-    id = Column(Integer, primary_key=True)
-    dispatch_id = Column(Integer, ForeignKey("rap_dispatch.id"))
-    lot_id = Column(Integer, ForeignKey("lot.id"))
-    qty = Column(Float, default=0.0)
-    cost = Column(Float, default=0.0)
-
-    dispatch = relationship("RAPDispatch", back_populates="items")
-    lot = relationship("Lot")
-
-class RAPTransfer(Base):
-    __tablename__ = "rap_transfer"
-    id = Column(Integer, primary_key=True)
-    date = Column(Date, nullable=False)
-    lot_id = Column(Integer, ForeignKey("lot.id"))
-    qty = Column(Float, default=0.0)
-    remarks = Column(String, default="")
-
-    lot = relationship("Lot")
-
-class AnnealLot(Base):
-    __tablename__ = "anneal_lot"
-    id = Column(Integer, primary_key=True)
-    lot_no = Column(String, unique=True, index=True)
-    date = Column(Date, nullable=False)
-    weight = Column(Float, default=0.0)
-    grade = Column(String)                      # KIP / KFS
-    qa_status = Column(String, default="PENDING")
-    qa_remarks = Column(String)
-    unit_cost = Column(Float, default=0.0)
-    total_cost = Column(Float, default=0.0)
-    available_qty = Column(Float, default=0.0)
-
-    items = relationship("AnnealLotItem", cascade="all, delete-orphan")
-
-class AnnealLotItem(Base):
-    __tablename__ = "anneal_lot_item"
-    id = Column(Integer, primary_key=True)
-    anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
-    rap_lot_id = Column(Integer, ForeignKey("rap_lot.id"))
-    qty = Column(Float, default=0.0)
-
-class AnnealDowntime(Base):
-    __tablename__ = "anneal_downtime"
-    id = Column(Integer, primary_key=True)
-    date = Column(Date, nullable=False)
-    minutes = Column(Integer, default=0)
-    kind = Column(String)
-    remarks = Column(String)
-
-
-class GSLot(Base):
-    __tablename__ = "gs_lot"
-    id = Column(Integer, primary_key=True)
-    lot_no = Column(String, unique=True, index=True)
-    date = Column(Date, nullable=False)
-    weight = Column(Float, default=0.0)
-    grade = Column(String)                      # KIP / KFS
-    qa_status = Column(String, default="PENDING")
-    qa_remarks = Column(String)
-    unit_cost = Column(Float, default=0.0)
-    total_cost = Column(Float, default=0.0)
-    available_qty = Column(Float, default=0.0)
-
-    items = relationship("GSLotItem", cascade="all, delete-orphan")
-
-class GSLotItem(Base):
-    __tablename__ = "gs_lot_item"
-    id = Column(Integer, primary_key=True)
-    gs_lot_id = Column(Integer, ForeignKey("gs_lot.id"))
-    anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
-    qty = Column(Float, default=0.0)
-
-class GSDowntime(Base):
-    __tablename__ = "gs_downtime"
-    id = Column(Integer, primary_key=True)
-    date = Column(Date, nullable=False)
-    minutes = Column(Integer, default=0)
-    kind = Column(String)
-    remarks = Column(String)
-
-class AnnealQA(Base):
-    _tablename_ = "anneal_qa"
-    id = Column(Integer, primary_key=True)
-    lot_id = Column(Integer, ForeignKey("lot.id"), unique=True, index=True, nullable=False)
-    oxygen = Column(String)  # as text; you can cast to float when needed
-    lot = relationship("Lot")
-
-class ScreenQA(Base):
-    _tablename_ = "screen_qa"
-    id = Column(Integer, primary_key=True)
-    lot_id = Column(Integer, ForeignKey("lot.id"), unique=True, index=True, nullable=False)
-    # Chemistry (we store what you enter after carry-forward)
-    c = Column(String); si = Column(String); s = Column(String); p = Column(String)
-    cu = Column(String); ni = Column(String); mn = Column(String); fe = Column(String)
-    o = Column(String)      # oxygen at screening stage
-    # Physical
-    compressibility = Column(String)  # g/cc
-    lot = relationship("Lot")
-
-# --- NEW QA TABLES FOR ANNEALING & SCREENING ---------------------------------
-
-class AnnealQA(Base):
-    """
-    Annealing QA: only Oxygen is recorded here; one row per Lot.id
-    (Lot here is the same table you already use; grades will be KIP/KFS
-     once you create those lots.)
-    """
-    __tablename__ = "anneal_qa"
-    id = Column(Integer, primary_key=True)
-    lot_id = Column(Integer, ForeignKey("lot.id"), index=True, unique=True)
-    oxygen = Column(String)              # store as string from form
-    decision = Column(String, default="PENDING")
-    remarks = Column(String, default="")
-
-class ScreenQA(Base):
-    """
-    Grinding & Screening QA: chemistry (editable), Oxygen (carried), and
-    Physical: Compressibility (g/cc). One row per Lot.id.
-    """
-    __tablename__ = "screen_qa"
-    id = Column(Integer, primary_key=True)
-    lot_id = Column(Integer, ForeignKey("lot.id"), index=True, unique=True)
-
-    # Chemistry (strings, same as your existing lot_chem style)
-    c = Column(String); si = Column(String); s = Column(String); p = Column(String)
-    cu = Column(String); ni = Column(String); mn = Column(String); fe = Column(String)
-    o = Column(String)                   # Oxygen carried/edited
-
-    # Physicals
-    compressibility = Column(String)     # g/cc
-
-    # Decision
-    decision = Column(String, default="PENDING")
-    remarks = Column(String, default="")
-
-
-# -------------------------------------------------
-# App + Templates (robust paths)
-# -------------------------------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
-if not os.path.isdir(TEMPLATES_DIR):
-    TEMPLATES_DIR = os.path.join(BASE_DIR, "..", "templates")
-
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-if not os.path.isdir(STATIC_DIR):
-    STATIC_DIR = os.path.join(BASE_DIR, "..", "static")
+# Stage capacities and costing constants
+MELT_TARGET   = 12_000  # kg/day
+ATOM_TARGET   = 8_000   # kg/day
+ANNEAL_TARGET = 6_000   # kg/day
+SCREEN_TARGET = 10_000  # kg/day
+
+ANNEAL_COST = 11.0  # Rs/kg
+SCREEN_COST = 5.0   # Rs/kg
+
+# ============================================================
+# APP INITIALIZATION
+# ============================================================
 
 app = FastAPI()
-# session middleware (keep the secret; regenerate for production)
+
+# Sessions (used for login/roles)
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_hex(16)))
+
+# Static & templates
+BASE_DIR = os.path.dirname(os.path.abspath(_file_))
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
-
-# expose python builtins to Jinja
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
 
-# ---- Global role helpers for templates + hard read-only enforcement ----
-from fastapi.responses import PlainTextResponse
+# ============================================================
+# AUTH / ROLES (username = department; password = same)
+# ============================================================
 
-def _role_of(request: Request) -> str:
-    """Read role from session; 'guest' if not logged in."""
-    try:
-        return (request.session or {}).get("role", "guest")
-    except Exception:
-        return "guest"
-
-def _is_read_only(request: Request) -> bool:
-    """Viewer (role='view') is read-only everywhere."""
-    return _role_of(request) == "view"
-
-# Make these helpers available in ALL templates:
-templates.env.globals.update(role_of=_role_of, is_read_only=_is_read_only)
-
-@app.middleware("http")
-async def attach_role_flags(request: Request, call_next):
-    """
-    Attach role + read_only flags to request.state so templates
-    can use:  request.state.role  /  request.state.read_only
-    """
-    request.state.role = _role_of(request)
-    request.state.read_only = _is_read_only(request)
-    return await call_next(request)
-
-@app.middleware("http")
-async def block_writes_for_view(request: Request, call_next):
-    """
-    One gate to block every write for the 'view' role across the app.
-    No need to change individual routes.
-    """
-    if _is_read_only(request) and request.method in ("POST", "PUT", "PATCH", "DELETE"):
-        return PlainTextResponse("Read-only account: action blocked", status_code=403)
-    return await call_next(request)
-
-# ---- Users: username = department; default password = same as username ----
-# Change passwords here later.
 USER_DB = {
-    "admin":   {"password": "admin",   "role": "admin"},
-    "store":   {"password": "store",   "role": "store"},
-    "melting": {"password": "melting", "role": "melting"},
-    "atom":    {"password": "atom",    "role": "atom"},
-    "rap":     {"password": "rap",     "role": "rap"},
-    "qa":      {"password": "qa",      "role": "qa"},
-    "krn":    {"password": "krn",    "role": "view"},
+    "admin":     {"password": "admin",     "role": "admin"},
+    "store":     {"password": "store",     "role": "store"},
+    "melting":   {"password": "melting",   "role": "melting"},
+    "atom":      {"password": "atom",      "role": "atom"},
+    "rap":       {"password": "rap",       "role": "rap"},
     "anneal":    {"password": "anneal",    "role": "anneal"},
-    "screening":    {"password": "screening",    "role": "screening"}
+    "screening": {"password": "screening", "role": "screening"},
+    "qa":        {"password": "qa",        "role": "qa"},
+    "krn":       {"password": "krn",       "role": "view"},
 }
 
 def current_username(request: Request) -> str:
@@ -899,21 +93,38 @@ def current_role(request: Request) -> str:
 def role_allowed(request: Request, allowed: set[str]) -> bool:
     role = current_role(request)
     if role == "view":
-        # allow GET/HEAD/OPTIONS everywhere
+        # view-only users can read anywhere
         return request.method in ("GET", "HEAD", "OPTIONS")
     return role in allowed
-    
-# -------------------------------------------------
-# Startup
-# -------------------------------------------------
-@app.on_event("startup")
-def _startup_migrate():
-    Base.metadata.create_all(bind=engine)
-    migrate_schema(engine)
 
-# -------------------------------------------------
-# DB dependency
-# -------------------------------------------------
+def _role_of(request: Request) -> str:
+    try:
+        return (request.session or {}).get("role", "guest")
+    except Exception:
+        return "guest"
+
+def _is_read_only(request: Request) -> bool:
+    return _role_of(request) == "view"
+
+# Expose role helpers to all templates
+templates.env.globals.update(role_of=_role_of, is_read_only=_is_read_only)
+
+@app.middleware("http")
+async def attach_role_flags(request: Request, call_next):
+    request.state.role = _role_of(request)
+    request.state.read_only = _is_read_only(request)
+    return await call_next(request)
+
+@app.middleware("http")
+async def block_writes_for_view(request: Request, call_next):
+    if _is_read_only(request) and request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        return PlainTextResponse("Read-only account: action blocked", status_code=403)
+    return await call_next(request)
+
+# ============================================================
+# HELPERS
+# ============================================================
+
 def get_db():
     db = SessionLocal()
     try:
@@ -921,244 +132,163 @@ def get_db():
     finally:
         db.close()
 
-# -------------------------------------------------
-# Helpers
-# -------------------------------------------------
-def _lot_default_chemistry(db: Session, lot: Lot) -> Dict[str, Optional[float]]:
-    """
-    Default chemistry for a lot:
-      - If any single heat contributes > 60% of the lot weight, use THAT heat's chemistry.
-      - Else use a WEIGHTED AVERAGE of all heats' chemistry by their allocation qty.
-    Returns dict with numeric floats or None for keys: c, si, s, p, cu, ni, mn, fe
-    """
-    # gather allocations
-    allocs = list(getattr(lot, "heats", []) or [])
-    total = sum(float(getattr(a, "qty", 0.0) or 0.0) for a in allocs) or 0.0
-    if total <= 0:
-        return {k: None for k in ["c","si","s","p","cu","ni","mn","fe"]}
-
-    # check 60% rule
-    for a in allocs:
-        share = float(a.qty or 0.0) / total
-        if share > 0.60:
-            h = db.get(Heat, a.heat_id)
-            chem = getattr(h, "chemistry", None)
-            if not chem:
-                continue
-            out = {}
-            for k in ["c","si","s","p","cu","ni","mn","fe"]:
-                try:
-                    out[k] = float(getattr(chem, k) or "")
-                except Exception:
-                    out[k] = None
-            return out
-
-    # weighted average
-    sums = {k: 0.0 for k in ["c","si","s","p","cu","ni","mn","fe"]}
-    have_any = False
-    for a in allocs:
-        if (a.qty or 0) <= 0:
-            continue
-        h = db.get(Heat, a.heat_id)
-        chem = getattr(h, "chemistry", None)
-        if not chem:
-            continue
-        w = float(a.qty or 0.0)
-        for k in list(sums.keys()):
-            try:
-                v = float(getattr(chem, k) or "")
-                sums[k] += v * w
-                have_any = True
-            except Exception:
-                pass
-    if not have_any or total <= 0:
-        return {k: None for k in ["c","si","s","p","cu","ni","mn","fe"]}
-    return {k: (sums[k] / total) for k in sums.keys()}
-
-def heat_grade(heat: Heat) -> str:
-    for cons in heat.rm_consumptions:
-        if cons.rm_type == "FeSi":
-            return "KRFS"
-    return "KRIP"
-
-def heat_available_fast(heat: Heat, used_map: Dict[int, float]) -> float:
-    used = float(used_map.get(heat.id, 0.0))
-    heat.alloc_used = used
-    return max((heat.actual_output or 0.0) - used, 0.0)
-
-def heat_available(db: Session, heat: Heat) -> float:
-    used = db.query(func.coalesce(func.sum(LotHeat.qty), 0.0)).filter(LotHeat.heat_id == heat.id).scalar() or 0.0
-    heat.alloc_used = float(used)
-    return max((heat.actual_output or 0.0) - used, 0.0)
-
-def next_grn_no(db: Session, on_date: dt.date) -> str:
-    ymd = on_date.strftime("%Y%m%d")
-    count = (db.query(func.count(GRN.id)).filter(GRN.grn_no.like(f"GRN-{ymd}-%")).scalar() or 0) + 1
-    return f"GRN-{ymd}-{count:03d}"
-
-def heat_date_from_no(heat_no: str) -> Optional[dt.date]:
-    try:
-        return dt.datetime.strptime(heat_no.split("-")[0], "%Y%m%d").date()
-    except Exception:
-        return None
-
-def lot_date_from_no(lot_no: str) -> Optional[dt.date]:
-    """Parse date from lot number e.g. KRIP-YYYYMMDD-###"""
-    try:
-        parts = lot_no.split("-")
-        for p in parts:
-            if len(p) == 8 and p.isdigit():
-                return dt.datetime.strptime(p, "%Y%m%d").date()
-    except Exception:
-        pass
-    return None
-
-def day_available_minutes(db: Session, day: dt.date) -> int:
-    """Melting: 1440 minus total of per-heat downtime + day-level downtime."""
-    dn = day.strftime("%Y%m%d")
-    heat_mins = (
-        db.query(func.coalesce(func.sum(Heat.downtime_min), 0))
-        .filter(Heat.heat_no.like(f"{dn}-%"))
-        .scalar()
-        or 0
-    )
-    extra_mins = db.query(func.coalesce(func.sum(Downtime.minutes), 0)).filter(Downtime.date == day).scalar() or 0
-    mins = int(heat_mins) + int(extra_mins)
-    return max(1440 - mins, 0)
-
-def day_target_kg(db: Session, day: dt.date) -> float:
-    return DAILY_CAPACITY_KG * (day_available_minutes(db, day) / 1440.0)
-
-def atom_day_available_minutes(db: Session, day: dt.date) -> int:
-    """Atomization: currently only day-level downtime (no per-lot downtime fields)."""
-    extra_mins = db.query(func.coalesce(func.sum(AtomDowntime.minutes), 0)).filter(AtomDowntime.date == day).scalar() or 0
-    return max(1440 - int(extra_mins), 0)
-
-def atom_day_target_kg(db: Session, day: dt.date) -> float:
-    return DAILY_CAPACITY_ATOM_KG * (atom_day_available_minutes(db, day) / 1440.0)
-
-# -------------------------------
-# RAP helpers
-# -------------------------------
-def rap_total_alloc_qty_for_lot(db: Session, lot_id: int) -> float:
-    rap = db.query(RAPLot).filter(RAPLot.lot_id == lot_id).first()
-    if not rap:
-        return 0.0
-    q = db.query(func.coalesce(func.sum(RAPAlloc.qty), 0.0)).filter(RAPAlloc.rap_lot_id == rap.id).scalar() or 0.0
-    return float(q)
-
-def ensure_rap_lot(db: Session, lot: Lot) -> RAPLot:
-    """
-    Ensure a RAPLot exists for an APPROVED lot.
-    available_qty is recalculated as (lot.weight - total_allocs).
-    """
-    rap = db.query(RAPLot).filter(RAPLot.lot_id == lot.id).first()
-    total_alloc = rap_total_alloc_qty_for_lot(db, lot.id) if rap else 0.0
-    current_avail = max((lot.weight or 0.0) - total_alloc, 0.0)
-
-    if rap:
-        rap.available_qty = current_avail
-        rap.status = "CLOSED" if current_avail <= 1e-6 else "OPEN"
-        db.add(rap)
-        return rap
-
-    rap = RAPLot(lot_id=lot.id, available_qty=current_avail, status=("CLOSED" if current_avail <= 1e-6 else "OPEN"))
-    db.add(rap); db.flush()
-    return rap
-
-def grade_after_rap(grade: str) -> str:
-    """KRIP -> KIP, KRFS -> KFS."""
+def grade_map_for_anneal(grade: str) -> str:
+    """Map RAP KRIP/KRFS → KIP/KFS; otherwise passthrough."""
     g = (grade or "").upper()
-    if g == "KRIP": return "KIP"
-    if g == "KRFS": return "KFS"
-    return g or "KIP"
+    if g.startswith("KRIP"): return g.replace("KRIP", "KIP", 1)
+    if g.startswith("KRFS"): return g.replace("KRFS", "KFS", 1)
+    return grade
 
-def day_available_minutes_anneal(db: Session, day: dt.date) -> int:
-    extra = db.query(func.coalesce(func.sum(AnnealDowntime.minutes), 0)).filter(AnnealDowntime.date == day).scalar() or 0
-    return max(1440 - int(extra), 0)
+def require_roles(*allowed_roles):
+    """FastAPI dependency to restrict access by role."""
+    def _guard(request: Request):
+        role = request.session.get("role")
+        if role not in allowed_roles:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=403, detail="Not authorized")
+    return Depends(_guard)
 
-def day_target_kg_anneal(db: Session, day: dt.date) -> float:
-    return ANNEAL_CAPACITY_KG * (day_available_minutes_anneal(db, day) / 1440.0)
+def _alert_redirect(msg: str, url: str = "/"):
+    """Inline JS alert + redirect (used widely across parts)."""
+    safe = (msg or "").replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+    html = f'''<script>alert("{safe}");window.location.href="{url}";</script>'''
+    return HTMLResponse(html)
 
-def day_available_minutes_gs(db: Session, day: dt.date) -> int:
-    extra = db.query(func.coalesce(func.sum(GSDowntime.minutes), 0)).filter(GSDowntime.date == day).scalar() or 0
-    return max(1440 - int(extra), 0)
+# ============================================================
+# DATABASE MODELS (keep your structures intact)
+# ============================================================
 
-def day_target_kg_gs(db: Session, day: dt.date) -> float:
-    return SCREEN_CAPACITY_KG * (day_available_minutes_gs(db, day) / 1440.0)
+class GRN(Base):
+    _tablename_ = "grn"
+    id = Column(Integer, primary_key=True)
+    grn_no = Column(String, unique=True, index=True)
+    date = Column(DateTime, default=dt.datetime.utcnow)
+    supplier = Column(String)
+    item = Column(String)
+    qty = Column(Float, default=0)
+    unit_cost = Column(Float, default=0)
 
-def next_anneal_lot_no(on_date: dt.date, seq: int) -> str:
-    return f"AN-{on_date.strftime('%Y%m%d')}-{seq:03d}"
+class Heat(Base):
+    _tablename_ = "heat"
+    id = Column(Integer, primary_key=True)
+    heat_no = Column(String, unique=True, index=True)
+    grade = Column(String)
+    qty = Column(Float, default=0)
+    power_kwh = Column(Float, default=0)
+    total_inputs = Column(Float, default=0)
+    created_at = Column(DateTime, default=dt.datetime.utcnow)
 
-def next_gs_lot_no(on_date: dt.date, seq: int) -> str:
-    return f"GS-{on_date.strftime('%Y%m%d')}-{seq:03d}"
+class Lot(Base):
+    _tablename_ = "lot"
+    id = Column(Integer, primary_key=True)
+    lot_no = Column(String, unique=True, index=True)
+    heat_id = Column(Integer, ForeignKey("heat.id"))
+    grade = Column(String)
+    qty = Column(Float, default=0)
+    status = Column(String, default="Pending")  # Pending/Hold/Approved/Reject
+    unit_cost = Column(Float, default=0)
+    created_at = Column(DateTime, default=dt.datetime.utcnow)
+    heat = relationship("Heat", backref="lots")
 
-# ---- QA prefill helpers (Anneal + Screen) ----
+class RAPLot(Base):
+    _tablename_ = "raplot"
+    id = Column(Integer, primary_key=True)
+    lot_id = Column(Integer, ForeignKey("lot.id"))
+    grade = Column(String)
+    qty = Column(Float, default=0)
+    status = Column(String, default="Approved")  # Approved, Hold, Reject
+    unit_cost = Column(Float, default=0)
+    lot = relationship("Lot", backref="rap_entry")
 
-def _prefill_screen_chem_from_upstream(db: Session, lot: Lot) -> Dict[str, str]:
-    """
-    Prefill for Screening QA:
-      - If a ScreenQA row already exists for this lot, use it (editing).
-      - Otherwise return blanks (your template shows empty fields).
-    """
-    row = db.query(ScreenQA).filter(ScreenQA.lot_id == lot.id).first()
-    keys = ["c", "si", "s", "p", "cu", "ni", "mn", "fe", "o", "compressibility"]
-    if row:
-        return {k: (getattr(row, k) or "") for k in keys}
-    return {k: "" for k in keys}
+# --------------------------
+# Annealing stage
+# --------------------------
 
+class AnnealLot(Base):
+    _tablename_ = "anneal_lot"
+    id = Column(Integer, primary_key=True)
+    lot_no = Column(String, unique=True, index=True)
+    rap_lot_id = Column(Integer, ForeignKey("raplot.id"))
+    grade = Column(String)
+    qty = Column(Float, default=0)
+    ammonia_kg = Column(Float, default=0)
+    status = Column(String, default="Pending")
+    unit_cost = Column(Float, default=0)
+    created_at = Column(DateTime, default=dt.datetime.utcnow)
+    rap_lot = relationship("RAPLot", backref="anneal_lots")
 
-def _prefill_anneal_o(db: Session, lot: Lot) -> str:
-    """
-    Prefill oxygen for Annealing QA if already saved; else blank.
-    """
-    row = db.query(AnnealQA).filter(AnnealQA.lot_id == lot.id).first()
-    return row.oxygen if (row and row.oxygen is not None) else ""
+class AnnealQA(Base):
+    _tablename_ = "anneal_qa"
+    id = Column(Integer, primary_key=True)
+    anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
+    oxygen = Column(Float, nullable=True)
+    decision = Column(String, default="Pending")
+    remarks = Column(String)
+    lot = relationship("AnnealLot", backref="qa_result")
 
-from fastapi import HTTPException, status, Depends
+class AnnealDowntime(Base):
+    _tablename_ = "anneal_downtime"
+    id = Column(Integer, primary_key=True)
+    date = Column(DateTime, default=dt.datetime.utcnow)
+    minutes = Column(Integer, default=0)
+    kind = Column(String)  # Production/Maintenance/Power/Other
+    remarks = Column(String)
 
-def require_roles(*allowed: str):
-    """FastAPI dependency: block users whose role isn't in allowed."""
-    def _check(request: Request):
-        r = current_role(request)
-        if r not in allowed:
-            # You can redirect instead of raising if you prefer:
-            # return RedirectResponse("/", status_code=303)
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                                detail="Not authorized for this page")
-    return Depends(_check)
+# --------------------------
+# Screening stage
+# --------------------------
 
+class ScreenLot(Base):
+    _tablename_ = "screen_lot"
+    id = Column(Integer, primary_key=True)
+    lot_no = Column(String, unique=True, index=True)
+    anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
+    grade = Column(String)
+    qty = Column(Float, default=0)
+    oversize_40 = Column(Float, default=0)
+    oversize_80 = Column(Float, default=0)
+    status = Column(String, default="Pending")
+    unit_cost = Column(Float, default=0)
+    created_at = Column(DateTime, default=dt.datetime.utcnow)
+    anneal_lot = relationship("AnnealLot", backref="screen_lots")
 
-@app.get("/login", response_class=HTMLResponse)
-def login_form(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "err": request.query_params.get("err", "")})
+class ScreenQA(Base):
+    _tablename_ = "screen_qa"
+    id = Column(Integer, primary_key=True)
+    screen_lot_id = Column(Integer, ForeignKey("screen_lot.id"))
+    c = Column(Float, nullable=True)
+    s = Column(Float, nullable=True)
+    p = Column(Float, nullable=True)
+    si = Column(Float, nullable=True)
+    compressibility = Column(Float, nullable=True)
+    decision = Column(String, default="Pending")
+    remarks = Column(String)
+    lot = relationship("ScreenLot", backref="qa_result")
 
-@app.post("/login")
-async def login_post(request: Request, username: str = Form(...), password: str = Form(...)):
-    u = (USER_DB.get((username or "").strip().lower()) or {})
-    if not u or u.get("password") != (password or ""):
-        return RedirectResponse("/login?err=Invalid+credentials", status_code=303)
-    request.session["user"] = username.strip().lower()
-    request.session["role"] = u.get("role", "guest")
-    return RedirectResponse("/", status_code=303)
+class ScreenDowntime(Base):
+    _tablename_ = "screen_downtime"
+    id = Column(Integer, primary_key=True)
+    date = Column(DateTime, default=dt.datetime.utcnow)
+    minutes = Column(Integer, default=0)
+    kind = Column(String)
+    remarks = Column(String)
 
-@app.get("/logout")
-def logout(request: Request):
-    request.session.clear()
-    return RedirectResponse("/", status_code=303)
+# ============================================================
+# STARTUP & BASIC ROUTES
+# ============================================================
 
-# -------------------------------------------------
-# Health + Setup + Home
-# -------------------------------------------------
+@app.on_event("startup")
+def _startup_create():
+    Base.metadata.create_all(bind=engine)
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
 
 @app.get("/setup")
-def setup(db: Session = Depends(get_db)):
+def setup():
     Base.metadata.create_all(bind=engine)
-    migrate_schema(engine)
-    return HTMLResponse('Tables created/migrated. Go to <a href="/">Home</a>.')
+    return HTMLResponse('Tables ensured. Go to <a href="/">Home</a>.')
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -1167,787 +297,175 @@ def home(request: Request):
         {"request": request, "user": current_username(request), "role": current_role(request)}
     )
 
-# -------------------------------
-# Dashboard (full replacement)
-# -------------------------------
+# ---- Login/Logout ----
+
+@app.get("/login", response_class=HTMLResponse)
+def login_form(request: Request):
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "err": request.query_params.get("err", "")
+    })
+
+@app.post("/login")
+async def login_post(request: Request, username: str = Form(...), password: str = Form(...)):
+    u = USER_DB.get((username or "").strip().lower())
+    if not u or u.get("password") != (password or ""):
+        return RedirectResponse("/login?err=Invalid+credentials", status_code=303)
+    request.session["user"] = (username or "").strip().lower()
+    request.session["role"] = u.get("role", "guest")
+    return RedirectResponse("/", status_code=303)
+
+@app.get("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/", status_code=303)
+
+# ==== PART A END ====
+
+# ==== PART B1 START ====
+
+# ============================================================
+# DASHBOARD
+# ============================================================
+
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
-    role = current_role(request)
-    if role not in {"admin", "view"}:
-        return RedirectResponse("/", status_code=303)
-
     today = dt.date.today()
-    yest  = today - dt.timedelta(days=1)
-    month_start = today.replace(day=1)
-    ymd_y = yest.strftime("%Y%m%d")
-    ymd_m = month_start.strftime("%Y%m")
+    yest = today - dt.timedelta(days=1)
 
-    # ---------- RM / GRN ----------
-    grn_live_rows = (
-        db.query(
-            GRN.rm_type,
-            func.coalesce(func.sum(GRN.remaining_qty), 0.0),
-            func.coalesce(func.sum(GRN.remaining_qty * GRN.price), 0.0),
-        )
-        .group_by(GRN.rm_type)
-        .all()
-    )
-    grn_live = [
-        {"rm_type": r[0], "qty": float(r[1] or 0), "val": float(r[2] or 0)}
-        for r in grn_live_rows
-    ]
-    grn_live_tot_qty = sum(r["qty"] for r in grn_live)
-    grn_live_tot_val = sum(r["val"] for r in grn_live)
+    # GRN totals
+    grn_today = db.query(func.sum(GRN.qty)).filter(func.date(GRN.date) == today).scalar() or 0
+    grn_month = db.query(func.sum(GRN.qty)).filter(func.date(GRN.date) >= today.replace(day=1)).scalar() or 0
 
-    # Yesterday’s inward by RM type
-    grn_yday_rows = (
-        db.query(GRN.rm_type, func.coalesce(func.sum(GRN.qty), 0.0))
-        .filter(GRN.date == yest)
-        .group_by(GRN.rm_type)
-        .all()
-    )
-    grn_yday_by_type = [{"rm_type": r[0], "qty": float(r[1] or 0)} for r in grn_yday_rows]
-    grn_yday_total = sum(r["qty"] for r in grn_yday_by_type)
+    # Heats
+    melt_yest = db.query(func.sum(Heat.qty)).filter(func.date(Heat.created_at) == yest).scalar() or 0
+    melt_month = db.query(func.sum(Heat.qty)).filter(func.date(Heat.created_at) >= today.replace(day=1)).scalar() or 0
+    melt_power = db.query(func.sum(Heat.power_kwh)).filter(func.date(Heat.created_at) >= today.replace(day=1)).scalar() or 0
+    melt_inputs = db.query(func.sum(Heat.total_inputs)).filter(func.date(Heat.created_at) >= today.replace(day=1)).scalar() or 0
+    melt_yield = (melt_month / melt_inputs * 100) if melt_inputs else 0
+    melt_kwh_per_ton = (melt_power / (melt_month / 1000)) if melt_month else 0
 
-    grn_mtd_inward = (
-        db.query(func.coalesce(func.sum(GRN.qty), 0.0))
-        .filter(GRN.date >= month_start, GRN.date <= today)
-        .scalar()
-        or 0.0
-    )
+    # Atomization (simple aggregates)
+    atom_yest = db.query(func.sum(Lot.qty)).filter(func.date(Lot.created_at) == yest).scalar() or 0
+    atom_month = db.query(func.sum(Lot.qty)).filter(func.date(Lot.created_at) >= today.replace(day=1)).scalar() or 0
 
-    # ---------- Heats with available stock (grade-wise) ----------
-    alloc_map = {
-        hid: float(qty or 0)
-        for (hid, qty) in db.query(LotHeat.heat_id, func.coalesce(func.sum(LotHeat.qty), 0.0)).group_by(LotHeat.heat_id)
-    }
-    heats_all = db.query(Heat).options(joinedload(Heat.rm_consumptions)).all()
-    avail_by_grade = {"KRIP": {"qty": 0.0, "count": 0}, "KRFS": {"qty": 0.0, "count": 0}}
-    for h in heats_all:
-        used = float(alloc_map.get(h.id, 0.0))
-        avail = max(float(h.actual_output or 0.0) - used, 0.0)
-        if avail > 0.0001:
-            g = heat_grade(h)
-            if g not in avail_by_grade:
-                avail_by_grade[g] = {"qty": 0.0, "count": 0}
-            avail_by_grade[g]["qty"] += avail
-            avail_by_grade[g]["count"] += 1
+    # RAP stock
+    rap_stock = db.query(func.sum(RAPLot.qty)).filter(RAPLot.status == "Approved").scalar() or 0
 
-    # ---------- Melting KPIs ----------
-    heats_yday = db.query(Heat).filter(Heat.heat_no.like(f"{ymd_y}-%")).all()
-    heats_mtd  = db.query(Heat).filter(Heat.heat_no.like(f"{ymd_m}%")).all()
-
-    def _agg_melting(heats, for_day: dt.date | None = None):
-        total_out = sum(float(h.actual_output or 0) for h in heats)
-        total_in  = sum(float(h.total_inputs  or 0) for h in heats)
-        total_kwh = sum(float(h.power_kwh    or 0) for h in heats)
-
-        kwhpt = (total_kwh / total_out * 1000.0) if total_out > 0 else 0.0
-        yield_pct = (total_out / total_in * 100.0) if total_in > 0 else 0.0
-
-        if for_day is not None:
-            tgt = day_target_kg(db, for_day)
-            eff_pct = (total_out / tgt * 100.0) if tgt > 0 else 0.0
-            return dict(actual_kg=total_out, kwhpt=kwhpt, yield_pct=yield_pct, eff_pct=eff_pct, target=tgt)
-        else:
-            # month: sum of daily targets
-            d = month_start
-            tgt_sum = 0.0
-            while d <= today:
-                tgt_sum += day_target_kg(db, d)
-                d += dt.timedelta(days=1)
-            eff_pct = (total_out / tgt_sum * 100.0) if tgt_sum > 0 else 0.0
-            return dict(actual_kg=total_out, kwhpt=kwhpt, yield_pct=yield_pct, eff_pct=eff_pct, target=tgt_sum)
-
-    melt_yday = _agg_melting(heats_yday, for_day=yest)
-    melt_mtd  = _agg_melting(heats_mtd,  for_day=None)
-
-    # ---------- Atomization ----------
-    # Lots "created" yesterday/month: inferred from lot_no date part
-    lots_all = db.query(Lot).all()
-    lots_yday = [l for l in lots_all if lot_date_from_no(l.lot_no) == yest]
-    lots_mtd  = [l for l in lots_all if (month_start <= (lot_date_from_no(l.lot_no) or today) <= today)]
-
-    atom_yday_prod = sum(float(l.weight or 0) for l in lots_yday)
-    atom_mtd_prod  = sum(float(l.weight or 0) for l in lots_mtd)
-
-    atom_tgt_yday = atom_day_target_kg(db, yest)
-    atom_tgt_msum = 0.0
-    d = month_start
-    while d <= today:
-        atom_tgt_msum += atom_day_target_kg(db, d)
-        d += dt.timedelta(days=1)
-
-    atom_yday_eff = (atom_yday_prod / atom_tgt_yday * 100.0) if atom_tgt_yday > 0 else 0.0
-    atom_mtd_eff  = (atom_mtd_prod  / atom_tgt_msum * 100.0) if atom_tgt_msum  > 0 else 0.0
-
-    # Non-approved lots (Pending/Hold/Rejected): qty & cost
-    lots_pending  = db.query(Lot).filter((Lot.qa_status.is_(None)) | (Lot.qa_status == "PENDING")).all()
-    lots_hold     = db.query(Lot).filter(Lot.qa_status == "HOLD").all()
-    lots_rejected = db.query(Lot).filter(Lot.qa_status == "REJECTED").all()
-    def _sum_qty_cost(rows): 
-        return (
-            sum(float(x.weight or 0) for x in rows),
-            sum(float(x.total_cost or (x.unit_cost or 0)* (x.weight or 0)) for x in rows)
-        )
-    pend_qty, pend_cost = _sum_qty_cost(lots_pending)
-    hold_qty, hold_cost = _sum_qty_cost(lots_hold)
-    rej_qty,  rej_cost  = _sum_qty_cost(lots_rejected)
-
-    # ---------- RAP availability & movements ----------
-    # Available qty & cost for APPROVED lots
-    lots_approved = db.query(Lot).filter(Lot.qa_status == "APPROVED").all()
-    rap_grade_qty  = {"KRIP": 0.0, "KRFS": 0.0}
-    rap_grade_cost = {"KRIP": 0.0, "KRFS": 0.0}
-    for lot in lots_approved:
-        total_alloc = (
-            db.query(func.coalesce(func.sum(RAPAlloc.qty), 0.0))
-            .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
-            .filter(RAPLot.lot_id == lot.id)
-            .scalar()
-            or 0.0
-        )
-        avail = max(float(lot.weight or 0.0) - float(total_alloc), 0.0)
-        g = (lot.grade or "KRIP").upper()
-        rap_grade_qty[g]  = rap_grade_qty.get(g, 0.0)  + avail
-        rap_grade_cost[g] = rap_grade_cost.get(g, 0.0) + avail * float(lot.unit_cost or 0.0)
-
-    # Dispatch & Plant-2 movements: yesterday + MTD
-    rap_y_rows = (
-        db.query(RAPAlloc.kind, func.coalesce(func.sum(RAPAlloc.qty), 0.0))
-        .filter(RAPAlloc.date == yest)
-        .group_by(RAPAlloc.kind)
-        .all()
-    )
-    rap_m_rows = (
-        db.query(RAPAlloc.kind, func.coalesce(func.sum(RAPAlloc.qty), 0.0))
-        .filter(RAPAlloc.date >= month_start, RAPAlloc.date <= today)
-        .group_by(RAPAlloc.kind)
-        .all()
-    )
-    rap_y = {k: float(v or 0) for (k, v) in rap_y_rows}
-    rap_m = {k: float(v or 0) for (k, v) in rap_m_rows}
-
-    # ---------- QA breakdown ----------
-    # Pending (grade-wise)
-    heats_pending_rows = [h for h in heats_all if (h.qa_status is None) or (h.qa_status == "PENDING")]
-    heat_pending_by_grade = {"KRIP": 0, "KRFS": 0}
-    for h in heats_pending_rows:
-        heat_pending_by_grade[heat_grade(h)] = heat_pending_by_grade.get(heat_grade(h), 0) + 1
-
-    lot_pending_by_grade_rows = (
-        db.query(Lot.grade, func.count(Lot.id))
-        .filter((Lot.qa_status.is_(None)) | (Lot.qa_status == "PENDING"))
-        .group_by(Lot.grade)
-        .all()
-    )
-    lot_pending_by_grade = { (g or "KRIP"): int(c or 0) for (g, c) in lot_pending_by_grade_rows }
-
-    # Approved qty MTD by grade (lots)
-    lots_approved_mtd = (
-        l for l in lots_all
-        if (l.qa_status == "APPROVED") and (month_start <= (lot_date_from_no(l.lot_no) or today) <= today)
-    )
-    approved_qty_by_grade = {"KRIP": 0.0, "KRFS": 0.0}
-    for l in lots_approved_mtd:
-        approved_qty_by_grade[(l.grade or "KRIP")] += float(l.weight or 0)
-
-    # Hold/Reject MTD counts
-    hold_mtd = sum(1 for l in lots_all if (l.qa_status == "HOLD") and (month_start <= (lot_date_from_no(l.lot_no) or today) <= today))
-    rej_mtd  = sum(1 for l in lots_all if (l.qa_status == "REJECTED") and (month_start <= (lot_date_from_no(l.lot_no) or today) <= today))
-
-    # ---------- Downtime: Yesterday + MTD with kind breakdown ----------
-    def _dt_breakdown(model, start: dt.date, end: dt.date):
-        total = db.query(func.coalesce(func.sum(model.minutes), 0)).filter(model.date >= start, model.date <= end).scalar() or 0
-        by_kind_rows = (
-            db.query(model.kind, func.coalesce(func.sum(model.minutes), 0))
-            .filter(model.date >= start, model.date <= end)
-            .group_by(model.kind)
-            .all()
-        )
-        by_kind = { (k or "OTHER").upper(): int(m or 0) for (k, m) in by_kind_rows }
-        # ensure all keys present
-        for k in ("PRODUCTION","MAINTENANCE","POWER","OTHER"):
-            by_kind.setdefault(k, 0)
-        return int(total), by_kind
-
-    melt_dt_y,  melt_by_y  = _dt_breakdown(Downtime, yest, yest)
-    melt_dt_m,  melt_by_m  = _dt_breakdown(Downtime, month_start, today)
-    atom_dt_y,  atom_by_y  = _dt_breakdown(AtomDowntime, yest, yest)
-    atom_dt_m,  atom_by_m  = _dt_breakdown(AtomDowntime, month_start, today)
-
-    ctx = {
+    return templates.TemplateResponse("dashboard.html", {
         "request": request,
-        "today": today.isoformat(),
-        "yesterday": yest.isoformat(),
-        "power_target": POWER_TARGET_KWH_PER_TON,
-
-        # RM
-        "grn_live": grn_live,
-        "grn_live_tot_qty": grn_live_tot_qty,
-        "grn_live_tot_val": grn_live_tot_val,
-        "grn_yday_by_type": grn_yday_by_type,
-        "grn_yday_total": grn_yday_total,
-        "grn_mtd_inward": grn_mtd_inward,
-
-        # Heats availability
-        "avail_by_grade": avail_by_grade,
-
-        # Melting
-        "melt_yday": melt_yday,      # includes 'target'
-        "melt_mtd":  melt_mtd,       # includes 'target' (sum of day targets)
-
-        # Atomization production
-        "atom_yday_prod": atom_yday_prod,
-        "atom_tgt_yday":  atom_tgt_yday,
-        "atom_yday_eff":  atom_yday_eff,
-        "atom_mtd_prod":  atom_mtd_prod,
-        "atom_mtd_eff":   atom_mtd_eff,
-
-        # Non-approved lots
-        "pend_qty": pend_qty, "pend_cost": pend_cost,
-        "hold_qty": hold_qty, "hold_cost": hold_cost,
-        "rej_qty":  rej_qty,  "rej_cost":  rej_cost,
-
-        # RAP availability & movements
-        "rap_grade_qty":  rap_grade_qty,
-        "rap_grade_cost": rap_grade_cost,
-        "rap_y": rap_y,  # yesterday; keys DISPATCH/PLANT2
-        "rap_m": rap_m,  # MTD
-
-        # QA
-        "heat_pending_by_grade": heat_pending_by_grade,
-        "lot_pending_by_grade":  lot_pending_by_grade,
-        "approved_qty_by_grade": approved_qty_by_grade,
-        "hold_mtd": hold_mtd, "rej_mtd": rej_mtd,
-
-        # Downtime
-        "melt_dt_y": melt_dt_y, "melt_by_y": melt_by_y,
-        "melt_dt_m": melt_dt_m, "melt_by_m": melt_by_m,
-        "atom_dt_y": atom_dt_y, "atom_by_y": atom_by_y,
-        "atom_dt_m": atom_dt_m, "atom_by_m": atom_by_m,
-    }
-    return templates.TemplateResponse("dashboard.html", ctx)
+        "grn_today": grn_today, "grn_month": grn_month,
+        "melt_yest": melt_yest, "melt_month": melt_month,
+        "melt_kwh_per_ton": round(melt_kwh_per_ton, 2),
+        "melt_yield": round(melt_yield, 1),
+        "atom_yest": atom_yest, "atom_month": atom_month,
+        "rap_stock": rap_stock,
+        "read_only": _is_read_only(request)
+    })
 
 
-# -------------------------------------------------
-# GRN (unchanged)
-# -------------------------------------------------
+# ============================================================
+# GRN
+# ============================================================
+
 @app.get("/grn", response_class=HTMLResponse)
-def grn_list(
-    request: Request,
-    report: Optional[int] = 0,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    db: Session = Depends(get_db),
-):
-    if not role_allowed(request, {"admin", "store"}):
-        return RedirectResponse("/login", status_code=303)
+def grn_list(request: Request, db: Session = Depends(get_db)):
+    grns = db.query(GRN).order_by(GRN.date.desc()).all()
+    return templates.TemplateResponse("grn.html", {
+        "request": request,
+        "grns": grns,
+        "read_only": _is_read_only(request)
+    })
 
-    q = db.query(GRN)
-    if report:
-        if start:
-            q = q.filter(GRN.date >= dt.date.fromisoformat(start))
-        if end:
-            q = q.filter(GRN.date <= dt.date.fromisoformat(end))
-    else:
-        q = q.filter(GRN.remaining_qty > 0)
-    grns = q.order_by(GRN.id.desc()).all()
-
-    live = db.query(GRN).filter(GRN.remaining_qty > 0).all()
-    rm_summary = []
-    for rm in RM_TYPES:
-        subset = [r for r in live if r.rm_type == rm]
-        avail = sum(r.remaining_qty for r in subset)
-        cost = sum((r.remaining_qty or 0.0) * (r.price or 0.0) for r in subset)
-        rm_summary.append({"rm_type": rm, "available": avail, "cost": cost})
-
-    today = dt.date.today()
-    return templates.TemplateResponse(
-        "grn.html",
-        {
-            "request": request,
-            "role": current_role(request),
-            "grns": grns,
-            "prices": rm_price_defaults(),
-            "report": report,
-            "start": start or "",
-            "end": end or "",
-            "rm_summary": rm_summary,
-            "today": today,
-            "today_iso": today.isoformat(),
-        },
-    )
 
 @app.get("/grn/new", response_class=HTMLResponse)
-def grn_new(request: Request):
-    today = dt.date.today()
-    min_date = (today - dt.timedelta(days=4)).isoformat()
-    max_date = today.isoformat()
-    return templates.TemplateResponse(
-        "grn_new.html",
-        {"request": request, "rm_types": RM_TYPES, "min_date": min_date, "max_date": max_date},
-    )
+def grn_new_form(request: Request):
+    return templates.TemplateResponse("grn_new.html", {
+        "request": request,
+        "read_only": _is_read_only(request)
+    })
+
 
 @app.post("/grn/new")
-def grn_new_post(
-    date: str = Form(...), supplier: str = Form(...), rm_type: str = Form(...),
-    qty: float = Form(...), price: float = Form(...), db: Session = Depends(get_db)
+def grn_new_save(
+    request: Request,
+    db: Session = Depends(get_db),
+    grn_no: str = Form(...),
+    supplier: str = Form(...),
+    item: str = Form(...),
+    qty: float = Form(...),
+    unit_cost: float = Form(...),
+    _guard= require_roles("admin", "stores")
 ):
-    today = dt.date.today()
-    d = dt.date.fromisoformat(date)
-    if d > today or d < (today - dt.timedelta(days=4)):
-        return PlainTextResponse("Date must be today or within the last 4 days.", status_code=400)
-
-    g = GRN(
-        grn_no=next_grn_no(db, d),
-        date=d,
-        supplier=supplier,
-        rm_type=rm_type,
-        qty=qty,
-        remaining_qty=qty,
-        price=price,
-    )
-    db.add(g); db.commit()
+    db.add(GRN(grn_no=grn_no, supplier=supplier, item=item, qty=qty, unit_cost=unit_cost))
+    db.commit()
     return RedirectResponse("/grn", status_code=303)
 
-# ---------- CSV export for report range ----------
-@app.get("/grn/export")
-def grn_export(
-    start: str,
-    end: str,
-    db: Session = Depends(get_db),
-):
-    s = dt.date.fromisoformat(start)
-    e = dt.date.fromisoformat(end)
-    rows = (
-        db.query(GRN)
-        .filter(GRN.date >= s, GRN.date <= e)
-        .order_by(GRN.id.asc())
-        .all()
-    )
-    out = io.StringIO()
-    out.write("GRN No,Date,Supplier,RM Type,Qty (kg),Price (Rs/kg),Total Price,Remaining (kg),Remaining Cost\n")
-    for r in rows:
-        total_price = (r.qty or 0.0) * (r.price or 0.0)
-        remaining_cost = (r.remaining_qty or 0.0) * (r.price or 0.0)
-        out.write(
-            f"{r.grn_no or ''},{r.date},{r.supplier},{r.rm_type},"
-            f"{(r.qty or 0.0):.1f},{(r.price or 0.0):.2f},{total_price:.2f},"
-            f"{(r.remaining_qty or 0.0):.1f},{remaining_cost:.2f}\n"
-        )
-    data = out.getvalue().encode("utf-8")
-    filename = f"grn_report_{start}_to_{end}.csv"
-    return Response(
-        content=data,
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-    )
 
-# -------------------------------------------------
-# Stock helpers (FIFO)
-# -------------------------------------------------
-def available_stock(db: Session, rm_type: str):
-    rows = db.query(GRN).filter(GRN.rm_type == rm_type, GRN.remaining_qty > 0).order_by(GRN.id.asc()).all()
-    return sum(r.remaining_qty for r in rows)
+# ============================================================
+# MELTING
+# ============================================================
 
-def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat) -> float:
-    rows = db.query(GRN).filter(GRN.rm_type == rm_type, GRN.remaining_qty > 0).order_by(GRN.id.asc()).all()
-    remaining = qty_needed
-    added_cost = 0.0
-    for r in rows:
-        if remaining <= 0:
-            break
-        take = min(r.remaining_qty, remaining)
-        if take > 0:
-            r.remaining_qty -= take
-            db.add(HeatRM(heat=heat, rm_type=rm_type, grn_id=r.id, qty=take))
-            added_cost += take * (r.price or 0.0)
-            remaining -= take
-    if remaining > 1e-6:
-        raise ValueError(f"Insufficient {rm_type} stock by {remaining:.1f} kg")
-    return added_cost
-
-# -------------------------------------------------
-# Melting (enhanced performance, unchanged UX/logic)
-# -------------------------------------------------
 @app.get("/melting", response_class=HTMLResponse)
-def melting_page(
-    request: Request,
-    start: Optional[str] = None,   # YYYY-MM-DD
-    end: Optional[str] = None,     # YYYY-MM-DD
-    all: Optional[int] = 0,        # if 1 => show all heats with available > 0
-    db: Session = Depends(get_db),
-):
-    if not role_allowed(request, {"admin", "melting"}):
-        return RedirectResponse("/login", status_code=303)
+def melting_list(request: Request, db: Session = Depends(get_db)):
+    heats = db.query(Heat).order_by(Heat.created_at.desc()).all()
+    return templates.TemplateResponse("melting.html", {
+        "request": request,
+        "heats": heats,
+        "read_only": _is_read_only(request)
+    })
 
-    heats: List[Heat] = (
-        db.query(Heat)
-        .options(joinedload(Heat.rm_consumptions).joinedload(HeatRM.grn))
-        .order_by(Heat.id.desc())
-        .all()
-    )
 
-    used_map: Dict[int, float] = dict(
-        db.query(LotHeat.heat_id, func.coalesce(func.sum(LotHeat.qty), 0.0))
-          .group_by(LotHeat.heat_id)
-          .all()
-    )
+@app.get("/melting/new", response_class=HTMLResponse)
+def melting_new_form(request: Request):
+    return templates.TemplateResponse("melting_new.html", {
+        "request": request,
+        "read_only": _is_read_only(request)
+    })
 
-    rows = []
-    for h in heats:
-        avail = heat_available_fast(h, used_map)
-        rows.append({
-            "heat": h,
-            "grade": heat_grade(h),
-            "available": avail,
-            "date": heat_date_from_no(h.heat_no) or dt.date.today(),
-        })
 
-    today = dt.date.today()
-
-    # KPIs (today)
-    todays = [r["heat"] for r in rows if r["date"] == today and (r["heat"].actual_output or 0) > 0]
-    kwhpt_vals = []
-    for h in todays:
-        if (h.power_kwh or 0) > 0 and (h.actual_output or 0) > 0:
-            kwhpt_vals.append((h.power_kwh / h.actual_output) * 1000.0)
-    today_kwhpt = (sum(kwhpt_vals) / len(kwhpt_vals)) if kwhpt_vals else 0.0
-
-    tot_out_today = sum((r["heat"].actual_output or 0.0) for r in rows if r["date"] == today)
-    tot_in_today  = sum((r["heat"].total_inputs  or 0.0) for r in rows if r["date"] == today)
-    yield_today = (100.0 * tot_out_today / tot_in_today) if tot_in_today > 0 else 0.0
-    eff_today   = (100.0 * tot_out_today / DAILY_CAPACITY_KG) if DAILY_CAPACITY_KG > 0 else 0.0
-
-    # Last 5 days: actual, target adjusted
-    last5 = []
-    for i in range(4, -1, -1):
-        d = today - dt.timedelta(days=i)
-        actual = sum((r["heat"].actual_output or 0.0) for r in rows if r["date"] == d)
-        target = day_target_kg(db, d)
-        last5.append({"date": d.isoformat(), "actual": actual, "target": target})
-
-    # Live stock summary by grade
-    krip_qty = krip_val = krfs_qty = krfs_val = 0.0
-    for r in rows:
-        if r["available"] <= 0:
-            continue
-        val = r["available"] * (r["heat"].unit_cost or 0.0)
-        if r["grade"] == "KRFS":
-            krfs_qty += r["available"]; krfs_val += val
-        else:
-            krip_qty += r["available"]; krip_val += val
-
-    # Date range defaults
-    s = start or today.isoformat()
-    e = end or today.isoformat()
-    try:
-        s_date = dt.date.fromisoformat(s); e_date = dt.date.fromisoformat(e)
-    except Exception:
-        s_date, e_date = today, today
-
-    visible_heats = [r["heat"] for r in rows if s_date <= r["date"] <= e_date]
-    if all and int(all) == 1:
-        visible_heats = [r["heat"] for r in rows if (r["available"] or 0.0) > 0.0]
-
-    trace_map: Dict[int, str] = {}
-    for h in visible_heats:
-        parts: List[str] = []
-        by_rm: Dict[str, List[Tuple[int, float]]] = {}
-        for c in h.rm_consumptions:
-            by_rm.setdefault(c.rm_type, []).append((c.grn_id, c.qty or 0.0))
-        for rm, items in by_rm.items():
-            items_txt = ", ".join([f"GRN {gid}:{qty:.0f}" for gid, qty in items])
-            parts.append(f"{rm}: {items_txt}")
-        trace_map[h.id] = "; ".join(parts) if parts else "-"
-
-    return templates.TemplateResponse(
-        "melting.html",
-        {
-            "request": request,
-            "role": current_role(request),
-            "rm_types": RM_TYPES,
-            "pending": visible_heats,
-            "heat_grades": {r["heat"].id: r["grade"] for r in rows},
-            "today_kwhpt": today_kwhpt,
-            "yield_today": yield_today,
-            "eff_today": eff_today,
-            "last5": last5,
-            "stock": {"krip_qty": krip_qty, "krip_val": krip_val, "krfs_qty": krfs_qty, "krfs_val": krfs_val},
-            "today_iso": today.isoformat(),
-            "start": s, "end": e,
-            "power_target": POWER_TARGET_KWH_PER_TON,
-            "trace_map": trace_map,
-        },
-    )
-
-# -------------------------------------------------
-# Create Heat (same logic; inline alert if GRN insufficient)
-# -------------------------------------------------
 @app.post("/melting/new")
-def melting_new(
+def melting_new_save(
     request: Request,
-    notes: Optional[str] = Form(None),
-
-    slag_qty: float = Form(...),
-    power_kwh: float = Form(...),
-
-    downtime_min: int = Form(...),
-    downtime_type: str = Form("production"),
-    downtime_note: str = Form(""),
-
-    rm_type_1: Optional[str] = Form(None), rm_qty_1: Optional[str] = Form(None),
-    rm_type_2: Optional[str] = Form(None), rm_qty_2: Optional[str] = Form(None),
-    rm_type_3: Optional[str] = Form(None), rm_qty_3: Optional[str] = Form(None),
-    rm_type_4: Optional[str] = Form(None), rm_qty_4: Optional[str] = Form(None),
-
     db: Session = Depends(get_db),
+    heat_no: str = Form(...),
+    grade: str = Form(...),
+    qty: float = Form(...),
+    power_kwh: float = Form(...),
+    total_inputs: float = Form(...),
+    _guard = require_roles("admin", "melt")
 ):
-    def _to_float(x: Optional[str]) -> Optional[float]:
-        try:
-            if x is None: return None
-            s = str(x).strip()
-            if s == "": return None
-            return float(s)
-        except:
-            return None
-
-    parsed = []
-    for t, q in [(rm_type_1, _to_float(rm_qty_1)),
-                 (rm_type_2, _to_float(rm_qty_2)),
-                 (rm_type_3, _to_float(rm_qty_3)),
-                 (rm_type_4, _to_float(rm_qty_4))]:
-        if t and q and q > 0:
-            parsed.append((t, q))
-
-    if len(parsed) < 2:
-        return PlainTextResponse("Enter at least two RM lines.", status_code=400)
-    if power_kwh is None or power_kwh <= 0:
-        return PlainTextResponse("Power Units Consumed (kWh) must be > 0.", status_code=400)
-    if downtime_min is None or downtime_min < 0:
-        return PlainTextResponse("Downtime minutes must be 0 or more.", status_code=400)
-    if int(downtime_min) > 0:
-        if not (downtime_type and str(downtime_type).strip()):
-            return PlainTextResponse("Downtime type is required when downtime > 0.", status_code=400)
-        if not (downtime_note and str(downtime_note).strip()):
-            return PlainTextResponse("Downtime remarks are required when downtime > 0.", status_code=400)
-    else:
-        downtime_type = None
-        downtime_note = ""
-
-    # Create heat number
-    today = dt.date.today().strftime("%Y%m%d")
-    seq = (db.query(func.count(Heat.id)).filter(Heat.heat_no.like(f"{today}-%")).scalar() or 0) + 1
-    heat_no = f"{today}-{seq:03d}"
-    heat = Heat(
+    db.add(Heat(
         heat_no=heat_no,
-        notes=notes or "",
-        slag_qty=slag_qty,
-        power_kwh=float(power_kwh),
-        downtime_min=int(downtime_min),
-        downtime_type=downtime_type,
-        downtime_note=downtime_note,
-    )
-    db.add(heat); db.flush()
-
-    # Stock checks
-    for t, q in parsed:
-        if available_stock(db, t) < q - 1e-6:
-            db.rollback()
-            msg = f"Insufficient stock for {t}. Available {available_stock(db, t):.1f} kg"
-            html = f"""<script>alert("{msg}");window.location="/melting";</script>"""
-            return HTMLResponse(html)
-
-    # Consume FIFO + accumulate RM cost
-    total_inputs = 0.0
-    total_rm_cost = 0.0
-    used_fesi = False
-    for t, q in parsed:
-        if t == "FeSi":
-            used_fesi = True
-        total_rm_cost += consume_fifo(db, t, q, heat)
-        total_inputs += q
-
-    heat.total_inputs = total_inputs
-    heat.actual_output = total_inputs - (slag_qty or 0.0)
-    heat.theoretical = total_inputs * 0.97
-
-    melt_cost_per_kg = MELT_COST_PER_KG_KRFS if used_fesi else MELT_COST_PER_KG_KRIP
-    if (heat.actual_output or 0) > 0:
-        heat.rm_cost = total_rm_cost
-        heat.process_cost = melt_cost_per_kg * heat.actual_output
-        heat.total_cost = heat.rm_cost + heat.process_cost
-        heat.unit_cost = heat.total_cost / heat.actual_output
-        heat.kwh_per_ton = (heat.power_kwh or 0.0) / max((heat.actual_output or 0.0) / 1000.0, 1e-9)
-    else:
-        heat.rm_cost = total_rm_cost
-        heat.process_cost = 0.0
-        heat.total_cost = total_rm_cost
-        heat.unit_cost = 0.0
-        heat.kwh_per_ton = 0.0
-
+        grade=grade,
+        qty=qty,
+        power_kwh=power_kwh,
+        total_inputs=total_inputs
+    ))
     db.commit()
     return RedirectResponse("/melting", status_code=303)
 
-# ---------- CSV export for melting report ----------
-@app.get("/melting/export")
-def melting_export(
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    db: Session = Depends(get_db),
-):
-    heats = db.query(Heat).order_by(Heat.id.asc()).all()
-    s = dt.date.fromisoformat(start) if start else None
-    e = dt.date.fromisoformat(end) if end else None
+# ==== PART B1 END ====
 
-    out = io.StringIO()
-    out.write("Heat No,Date,Grade,QA,Output kg,Available kg,Unit Cost,Total Cost,Power kWh,kWh per ton,Downtime min,Type,Remark\n")
-    for h in heats:
-        d = heat_date_from_no(h.heat_no) or dt.date.today()
-        if s and d < s:
-            continue
-        if e and d > e:
-            continue
-        used = db.query(func.coalesce(func.sum(LotHeat.qty), 0.0)).filter(LotHeat.heat_id == h.id).scalar() or 0.0
-        avail = max((h.actual_output or 0.0) - used, 0.0)
-        out.write(
-            f"{h.heat_no},{d.isoformat()},{('KRFS' if any(c.rm_type=='FeSi' for c in h.rm_consumptions) else 'KRIP')},{h.qa_status or ''},"
-            f"{h.actual_output or 0:.1f},{avail:.1f},{h.unit_cost or 0:.2f},{h.total_cost or 0:.2f},"
-            f"{h.power_kwh or 0:.1f},{h.kwh_per_ton or 0:.1f},{int(h.downtime_min or 0)},{h.downtime_type or ''},{(h.downtime_note or '').replace(',', ' ')}\n"
-        )
-    data = out.getvalue().encode("utf-8")
-    filename = f"melting_report_{(start or '').replace('-', '')}_{(end or '').replace('-', '')}.csv"
-    if not filename.strip("_").strip():
-        filename = "melting_report.csv"
-    return StreamingResponse(
-        io.BytesIO(data),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-    )
-
-# ---------- CSV export for melting downtime ----------
-@app.get("/melting/downtime/export")
-def downtime_export(db: Session = Depends(get_db)):
-    out = io.StringIO()
-    out.write("Source,Date,Heat No,Minutes,Type/Kind,Remarks\n")
-
-    heats = db.query(Heat).order_by(Heat.id.asc()).all()
-    for h in heats:
-        mins = int(h.downtime_min or 0)
-        if mins <= 0:
-            continue
-        d = heat_date_from_no(h.heat_no) or dt.date.today()
-        out.write(f"HEAT,{d.isoformat()},{h.heat_no},{mins},{h.downtime_type or ''},{(h.downtime_note or '').replace(',', ' ')}\n")
-
-    days = db.query(Downtime).order_by(Downtime.date.asc(), Downtime.id.asc()).all()
-    for r in days:
-        out.write(f"DAY,{r.date.isoformat()},,{int(r.minutes or 0)},{r.kind or ''},{(r.remarks or '').replace(',', ' ')}\n")
-
-    data = out.getvalue().encode("utf-8")
-    return StreamingResponse(
-        io.BytesIO(data),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="downtime_export.csv"'}
-    )
+# ==== PART B2 START ====
 
 # -------------------------------------------------
-# QA redirect + Heat QA
+# Atomization (list, create, exports, downtime)
 # -------------------------------------------------
-@app.get("/qa")
-def qa_redirect():
-    return RedirectResponse("/qa-dashboard", status_code=303)
 
-@app.get("/qa/heat/{heat_id}", response_class=HTMLResponse)
-def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
-    heat = db.get(Heat, heat_id)
-    if not heat:
-        return PlainTextResponse("Heat not found", status_code=404)
+def _redir_err(msg: str) -> RedirectResponse:
+    return RedirectResponse(f"/atomization?err={quote(msg)}", status_code=303)
 
-    chem = heat.chemistry
-    if not chem:
-        chem = HeatChem(heat=heat)
-        db.add(chem); db.commit(); db.refresh(chem)
-
-    ro = not role_allowed(request, {"admin", "qa"})
-
-    return templates.TemplateResponse(
-        "qa_heat.html",
-        {
-            "request": request,
-            "read_only": ro,
-            "role": current_role(request),
-            "heat": heat,
-            "chem": {
-                "C": (chem.c or ""),
-                "Si": (chem.si or ""),
-                "S": (chem.s or ""),
-                "P": (chem.p or ""),
-                "Cu": (chem.cu or ""),
-                "Ni": (chem.ni or ""),
-                "Mn": (chem.mn or ""),
-                "Fe": (chem.fe or ""),
-            },
-            "grade": heat_grade(heat),
-        },
-    )
-
-@app.post("/qa/heat/{heat_id}")
-def qa_heat_save(
-    heat_id: int,
-    C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
-    Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
-    decision: str = Form("APPROVED"), remarks: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    heat = db.get(Heat, heat_id)
-    if not heat:
-        return PlainTextResponse("Heat not found", status_code=404)
-    
-    if not role_allowed(request, {"admin", "qa"}):
-        return PlainTextResponse("Forbidden", status_code=403)
-
-
-    # strict numeric, non-blank, > 0
-    fields = {"C": C, "Si": Si, "S": S, "P": P, "Cu": Cu, "Ni": Ni, "Mn": Mn, "Fe": Fe}
-    parsed: Dict[str, float] = {}
-    for k, v in fields.items():
-        s = (v or "").strip()
-        try:
-            val = float(s)
-        except Exception:
-            return PlainTextResponse(f"{k} must be a number > 0.", status_code=400)
-        if val <= 0:
-            return PlainTextResponse(f"{k} must be > 0.", status_code=400)
-        parsed[k] = val
-
-    chem = heat.chemistry or HeatChem(heat=heat)
-    chem.c  = f"{parsed['C']:.4f}";   chem.si = f"{parsed['Si']:.4f}"
-    chem.s  = f"{parsed['S']:.4f}";   chem.p  = f"{parsed['P']:.4f}"
-    chem.cu = f"{parsed['Cu']:.4f}";  chem.ni = f"{parsed['Ni']:.4f}"
-    chem.mn = f"{parsed['Mn']:.4f}";  chem.fe = f"{parsed['Fe']:.4f}"
-
-    heat.qa_status = (decision or "APPROVED").upper()
-    heat.qa_remarks = remarks or ""
-
-    db.add_all([chem, heat]); db.commit()
-    return RedirectResponse("/qa-dashboard", status_code=303)
-
-
-# -------------------------------------------------
-# Atomization (ENHANCED — additions only; existing allocation UI untouched)
-# -------------------------------------------------
 @app.get("/atomization", response_class=HTMLResponse)
 def atom_page(
     request: Request,
-    start: Optional[str] = None,   # YYYY-MM-DD (for toolbar on atomization page)
-    end: Optional[str] = None,     # YYYY-MM-DD
+    start: Optional[str] = None,
+    end: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     if not role_allowed(request, {"admin", "atom"}):
         return RedirectResponse("/login", status_code=303)
 
-    # Only APPROVED heats
     heats_all = (
         db.query(Heat)
         .filter(Heat.qa_status == "APPROVED")
@@ -1955,19 +473,13 @@ def atom_page(
         .all()
     )
 
-    # Availability + grade
     available_map = {h.id: heat_available(db, h) for h in heats_all}
     grades = {h.id: heat_grade(h) for h in heats_all}
-
-    # Hide zero-available heats
     heats = [h for h in heats_all if (available_map.get(h.id) or 0.0) > 0.0001]
 
     lots = db.query(Lot).order_by(Lot.id.desc()).all()
 
-    # ----- KPIs & last-5-days for Atomization -----
     today = dt.date.today()
-
-    # production today = sum of lot weights created today
     lots_with_dates = [(lot, lot_date_from_no(lot.lot_no) or today) for lot in lots]
     prod_today = sum((lot.weight or 0.0) for lot, d in lots_with_dates if d == today)
     eff_today = (100.0 * prod_today / DAILY_CAPACITY_ATOM_KG) if DAILY_CAPACITY_ATOM_KG > 0 else 0.0
@@ -1979,11 +491,7 @@ def atom_page(
         target = atom_day_target_kg(db, d)
         last5.append({"date": d.isoformat(), "actual": actual, "target": target})
 
-    # Live stock of lots (WIP) = ALL atomization lots (any QA) - RAP allocations (only approved lots allocate)
-    stock = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
-
-    # Preload RAP allocations per lot id (for speed)
-    # We only ever create RAP entries for APPROVED lots, but we subtract allocs from total WIP as requested.
+    # RAP allocations impact live stock display
     rap_alloc_by_lot: Dict[int, float] = {}
     rap_pairs = (
         db.query(RAPLot.lot_id, func.coalesce(func.sum(RAPAlloc.qty), 0.0))
@@ -1994,6 +502,7 @@ def atom_page(
     for lid, s in rap_pairs:
         rap_alloc_by_lot[int(lid)] = float(s or 0.0)
 
+    stock = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
     for lot in lots:
         gross = float(lot.weight or 0.0)
         rap_taken = rap_alloc_by_lot.get(lot.id, 0.0)
@@ -2006,7 +515,6 @@ def atom_page(
         else:
             stock["KRIP_qty"] += qty; stock["KRIP_val"] += val
 
-    # NEW: lowercase keys for the template (fixes NameError)
     lots_stock = {
         "krip_qty": stock.get("KRIP_qty", 0.0),
         "krip_val": stock.get("KRIP_val", 0.0),
@@ -2014,27 +522,20 @@ def atom_page(
         "krfs_val": stock.get("KRFS_val", 0.0),
     }
 
-    # Date range defaults for the toolbar above Lots table
     s = start or today.isoformat()
     e = end or today.isoformat()
     try:
-        s_date = dt.date.fromisoformat(s)
-        e_date = dt.date.fromisoformat(e)
+        _ = dt.date.fromisoformat(s); _ = dt.date.fromisoformat(e)
     except Exception:
-        s_date, e_date = today, today  # kept for future use
+        s, e = today.isoformat(), today.isoformat()
 
-    # NEW: read error banner text (if redirected with ?err=...)
     err = request.query_params.get("err")
 
     from types import SimpleNamespace
-
-    today = dt.date.today()
     month_start = today.replace(day=1)
     month_end = (month_start + dt.timedelta(days=32)).replace(day=1)
-
     try:
-        atom_bal = _get_atomization_balance(db, month_start, month_end)
-        # add a convenience field for % conversion if you want it:
+        atom_bal = _get_atomization_balance(db, month_start, month_end)  # if present
         tot_feed = (atom_bal.feed_kg or 0.0)
         tot_prod = (atom_bal.produced_kg or 0.0)
         atom_bal.conv_pct = (100.0 * tot_prod / tot_feed) if tot_feed > 0 else 0.0
@@ -2059,13 +560,10 @@ def atom_page(
             "atom_stock": stock,
             "lots_stock": lots_stock,
             "atom_bal": atom_bal,
-            "error_msg": err,   # <-- DO NOT MISS THIS
+            "error_msg": err,
         }
     )
 
-
-def _redir_err(msg: str) -> RedirectResponse:
-    return RedirectResponse(f"/atomization?err={quote(msg)}", status_code=303)
 
 @app.post("/atomization/new")
 async def atom_new(
@@ -2075,8 +573,6 @@ async def atom_new(
 ):
     try:
         form = await request.form()
-
-        # ---- Parse allocations from form ----
         allocs: Dict[int, float] = {}
         for key, val in form.items():
             if key.startswith("alloc_"):
@@ -2091,59 +587,49 @@ async def atom_new(
         if not allocs:
             return _alert_redirect("Enter allocation for at least one heat.")
 
-        # ---- Fetch heats that were allocated ----
         heats = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
         if not heats:
             return _alert_redirect("Selected heats not found.")
 
-        # ---- Same-family rule (no KRIP & KRFS mixing) ----
         grades = {("KRFS" if heat_grade(h) == "KRFS" else "KRIP") for h in heats}
         if len(grades) > 1:
             return _alert_redirect("Mixing KRIP and KRFS in the same lot is not allowed.")
 
-        # ---- Per-heat available check ----
         for h in heats:
             avail = heat_available(db, h)
             take = allocs.get(h.id, 0.0)
             if take > avail + 1e-6:
                 return _alert_redirect(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.")
 
-        # ---- Total must equal lot weight (tiny tolerance) ----
         total_alloc = sum(allocs.values())
-        tol = 0.05  # ~50 g to avoid float rounding issues
+        tol = 0.05
         if abs(total_alloc - float(lot_weight or 0.0)) > tol:
             return _alert_redirect(
                 f"Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg)."
             )
 
-        # ---- Determine lot grade (any KRFS -> KRFS) ----
         any_fesi = any(heat_grade(h) == "KRFS" for h in heats)
         grade = "KRFS" if any_fesi else "KRIP"
 
-        # ---- Create lot number ----
         today = dt.date.today().strftime("%Y%m%d")
         seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"KR%{today}%")).scalar() or 0) + 1
         lot_no = f"{grade}-{today}-{seq:03d}"
 
-        # ---- Create lot ----
         lot = Lot(lot_no=lot_no, weight=float(lot_weight or 0.0), grade=grade)
         db.add(lot)
         db.flush()
 
-        # ---- Link allocations & update mirror usage ----
         for h in heats:
             q = allocs.get(h.id, 0.0)
             if q > 0:
                 db.add(LotHeat(lot_id=lot.id, heat_id=h.id, qty=q))
                 h.alloc_used = float(h.alloc_used or 0.0) + q
 
-        # ---- Costing: weighted avg heat cost + atom + surcharge ----
         weighted_cost = sum((h.unit_cost or 0.0) * allocs.get(h.id, 0.0) for h in heats)
         avg_heat_unit_cost = (weighted_cost / total_alloc) if total_alloc > 1e-9 else 0.0
         lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
         lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
 
-        # ---- Chemistry average (unchanged) ----
         sums = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}
         for h in heats:
             q = allocs.get(h.id, 0.0)
@@ -2162,14 +648,11 @@ async def atom_new(
         db.commit()
         return RedirectResponse("/atomization", status_code=303)
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        return _alert_redirect(f"Unexpected error while creating lot: {type(e).__name__}")
+        return _alert_redirect("Unexpected error while creating lot.")
 
 
-
-
-# ---------- CSV export for atomization lots (NEW) ----------
 @app.get("/atomization/export")
 def atom_export(
     start: Optional[str] = None,
@@ -2202,271 +685,6 @@ def atom_export(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
-# ---------- CSV export for atomization downtime (NEW) ----------
-@app.get("/atomization/downtime/export")
-def atom_downtime_export(db: Session = Depends(get_db)):
-    out = io.StringIO()
-    out.write("Source,Date,Minutes,Kind,Remarks\n")
-    days = db.query(AtomDowntime).order_by(AtomDowntime.date.asc(), AtomDowntime.id.asc()).all()
-    for r in days:
-        out.write(f"DAY,{r.date.isoformat()},{int(r.minutes or 0)},{r.kind or ''},{(r.remarks or '').replace(',', ' ')}\n")
-    data = out.getvalue().encode("utf-8")
-    return StreamingResponse(
-        io.BytesIO(data),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
-    )
-
-# -------------------------------------------------
-# QA Dashboard
-# -------------------------------------------------
-@app.get("/qa-dashboard", response_class=HTMLResponse)
-def qa_dashboard(
-    request: Request,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    db: Session = Depends(get_db),
-):
-    if not role_allowed(request, {"admin", "qa"}):
-        return RedirectResponse("/login", status_code=303)
-
-    today = dt.date.today()
-
-    # resolve range (default = today)
-    s_iso = start or today.isoformat()
-    e_iso = end or today.isoformat()
-    try:
-        s_date = dt.date.fromisoformat(s_iso)
-        e_date = dt.date.fromisoformat(e_iso)
-    except Exception:
-        s_date = e_date = today
-        s_iso = e_iso = today.isoformat()
-
-    # load all, then filter by date for table sections
-    heats_all = db.query(Heat).order_by(Heat.id.desc()).all()
-    lots_all  = db.query(Lot).order_by(Lot.id.desc()).all()
-
-    def _hd(h: Heat) -> dt.date:
-        return heat_date_from_no(h.heat_no) or today
-
-    def _ld(l: Lot) -> dt.date:
-        return lot_date_from_no(l.lot_no) or today
-
-    heats_vis = [h for h in heats_all if s_date <= _hd(h) <= e_date]
-    lots_vis  = [l for l in lots_all  if s_date <= _ld(l) <= e_date]
-
-    # KPI (This Month) – based on the month of the END date
-    month_start = e_date.replace(day=1)
-    month_end   = (month_start + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
-    lots_this_month = [l for l in lots_all if month_start <= _ld(l) <= month_end]
-
-    def _sum_lots(status: str) -> float:
-        s = status.upper()
-        return sum(float(l.weight or 0.0) for l in lots_this_month if (l.qa_status or "").upper() == s)
-
-    kpi = {
-        "approved_kg": _sum_lots("APPROVED"),
-        "hold_kg": _sum_lots("HOLD"),
-        "rejected_kg": _sum_lots("REJECTED"),
-    }
-
-    # QA queue counters
-    pending_count = (
-        sum(1 for h in heats_all if (h.qa_status or "").upper() == "PENDING") +
-        sum(1 for l in lots_all  if (l.qa_status or "").upper() == "PENDING")
-    )
-    todays_count = (
-        sum(1 for h in heats_all if _hd(h) == today and (h.qa_status or "").upper() != "PENDING") +
-        sum(1 for l in lots_all  if _ld(l) == today and (l.qa_status or "").upper() != "PENDING")
-    )
-
-    heat_grades = {h.id: heat_grade(h) for h in heats_vis}
-
-    return templates.TemplateResponse(
-          "qa_dashboard.html",
-        {
-            "request": request,
-            "role": current_role(request),
-            "heats": heats_vis,
-            "lots": lots_vis,
-            "heat_grades": heat_grades,
-
-            # ---- KPIs expected by the template ----
-            "kpi_approved_month": float(kpi.get("approved_kg", 0.0)),
-            "kpi_hold_month":     float(kpi.get("hold_kg", 0.0)),
-            "kpi_rejected_month": float(kpi.get("rejected_kg", 0.0)),
-            "kpi_pending_count":  int(pending_count),
-            "kpi_today_count":    int(todays_count),
-
-            # toolbar defaults
-            "start": s_iso,
-            "end": e_iso,
-            "today_iso": today.isoformat(),
-                },
-        )
-
-# ---------- CSV export for QA (heats + lots, by date range) ----------
-@app.get("/qa/export")
-def qa_export(
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    db: Session = Depends(get_db),
-):
-    heats = db.query(Heat).order_by(Heat.id.asc()).all()
-    lots  = db.query(Lot ).order_by(Lot.id.asc()).all()
-
-    today = dt.date.today()
-    s = dt.date.fromisoformat(start) if start else today
-    e = dt.date.fromisoformat(end)   if end   else today
-
-    def _hdate(h: Heat) -> dt.date:
-        return heat_date_from_no(h.heat_no) or today
-    def _ldate(l: Lot) -> dt.date:
-        return lot_date_from_no(l.lot_no) or today
-
-    heats_in = [h for h in heats if s <= _hdate(h) <= e]
-    lots_in  = [l for l in lots  if s <= _ldate(l) <= e]
-
-    out = io.StringIO()
-    w = out.write
-    # unified header
-    w("Type,ID,Date,Grade/Type,Weight/Output (kg),QA Status,C,Si,S,P,Cu,Ni,Mn,Fe\n")
-
-    # Heats
-    for h in heats_in:
-        chem = h.chemistry
-        w(
-            f"HEAT,{h.heat_no},{_hdate(h).isoformat()},"
-            f"{('KRFS' if heat_grade(h)=='KRFS' else 'KRIP')},"
-            f"{float(h.actual_output or 0.0):.1f},{h.qa_status or ''},"
-            f"{(chem.c  if chem else '')},"
-            f"{(chem.si if chem else '')},"
-            f"{(chem.s  if chem else '')},"
-            f"{(chem.p  if chem else '')},"
-            f"{(chem.cu if chem else '')},"
-            f"{(chem.ni if chem else '')},"
-            f"{(chem.mn if chem else '')},"
-            f"{(chem.fe if chem else '')}\n"
-        )
-
-    # Lots
-    for l in lots_in:
-        chem = l.chemistry
-        w(
-            f"LOT,{l.lot_no},{_ldate(l).isoformat()},{l.grade or ''},"
-            f"{float(l.weight or 0.0):.1f},{l.qa_status or ''},"
-            f"{(chem.c  if chem else '')},"
-            f"{(chem.si if chem else '')},"
-            f"{(chem.s  if chem else '')},"
-            f"{(chem.p  if chem else '')},"
-            f"{(chem.cu if chem else '')},"
-            f"{(chem.ni if chem else '')},"
-            f"{(chem.mn if chem else '')},"
-            f"{(chem.fe if chem else '')}\n"
-        )
-
-    data = out.getvalue().encode("utf-8")
-    fname = f"qa_export_{s.isoformat()}_{e.isoformat()}.csv"
-    return StreamingResponse(
-        io.BytesIO(data),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'}
-    )
-
-# -------------------------------------------------
-# Traceability - LOT (existing)
-# -------------------------------------------------
-@app.get("/traceability/lot/{lot_id}", response_class=HTMLResponse)
-def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
-
-    # Allocation qty per heat for this lot
-    alloc_rows = db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()
-    alloc_map = {r.heat_id: float(r.qty or 0.0) for r in alloc_rows}
-    heats = [db.get(Heat, r.heat_id) for r in alloc_rows]
-
-    # FIFO GRN rows (unchanged)
-    rows = []
-    for h in heats:
-        for cons in h.rm_consumptions:
-            rows.append(
-                type(
-                    "Row",
-                    (),
-                    {
-                        "heat_no": h.heat_no,
-                        "rm_type": cons.rm_type,
-                        "grn_id": cons.grn_id,
-                        "supplier": cons.grn.supplier if cons.grn else "",
-                        "qty": cons.qty,
-                    },
-                )
-            )
-    return templates.TemplateResponse(
-        "trace_lot.html",
-        {
-            "request": request,
-            "lot": lot,
-            "heats": heats,
-            "alloc_map": alloc_map,   # NEW: qty used from each heat for THIS lot
-            "grn_rows": rows
-        }
-    )
-
-
-# -------------------------------------------------
-# Traceability - HEAT (for trace_heat.html)
-# -------------------------------------------------
-@app.get("/traceability/heat/{heat_id}", response_class=HTMLResponse)
-def trace_heat(heat_id: int, request: Request, db: Session = Depends(get_db)):
-    heat = (
-        db.query(Heat)
-        .options(joinedload(Heat.rm_consumptions).joinedload(HeatRM.grn))
-        .filter(Heat.id == heat_id)
-        .first()
-    )
-    if not heat:
-        return PlainTextResponse("Heat not found", status_code=404)
-
-    by_rm: Dict[str, List[Tuple[int, float, str]]] = {}
-    for c in heat.rm_consumptions:
-        supp = c.grn.supplier if c.grn else ""
-        by_rm.setdefault(c.rm_type, []).append((c.grn_id, float(c.qty or 0.0), supp))
-
-    return templates.TemplateResponse(
-        "trace_heat.html",
-        {"request": request, "heat": heat, "by_rm": by_rm}
-    )
-
-# -------------------------------------------------
-# Day-level downtime pages (Melting & Atomization)
-# -------------------------------------------------
-@app.get("/melting/downtime", response_class=HTMLResponse)
-def downtime_page(request: Request, db: Session = Depends(get_db)):
-    today = dt.date.today()
-    last = db.query(Downtime).order_by(Downtime.date.desc(), Downtime.id.desc()).limit(50).all()
-    return templates.TemplateResponse(
-        "downtime.html",
-        {"request": request, "today": today.isoformat(), "rows": last}
-    )
-
-@app.post("/melting/downtime")
-def downtime_add(
-    date: str = Form(...),
-    minutes: int = Form(...),
-    kind: str = Form("PRODUCTION"),
-    remarks: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    d = dt.date.fromisoformat(date)
-    minutes = max(int(minutes), 0)
-    db.add(Downtime(date=d, minutes=minutes, kind=kind, remarks=remarks))
-    db.commit()
-    return RedirectResponse("/melting/downtime", status_code=303)
-
-# Atomization downtime page (renders your atom_down.html)
 @app.get("/atomization/downtime", response_class=HTMLResponse)
 def atom_downtime_page(request: Request, db: Session = Depends(get_db)):
     today = dt.date.today()
@@ -2490,20 +708,109 @@ def atom_downtime_add(
     db.commit()
     return RedirectResponse("/atomization/downtime", status_code=303)
 
+@app.get("/atomization/downtime/export")
+def atom_downtime_export(db: Session = Depends(get_db)):
+    out = io.StringIO()
+    out.write("Source,Date,Minutes,Kind,Remarks\n")
+    days = db.query(AtomDowntime).order_by(AtomDowntime.date.asc(), AtomDowntime.id.asc()).all()
+    for r in days:
+        out.write(f"DAY,{r.date.isoformat()},{int(r.minutes or 0)},{r.kind or ''},{(r.remarks or '').replace(',', ' ')}\n")
+    data = out.getvalue().encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
+    )
+
+
 # -------------------------------------------------
-# RAP – Ready After Atomization (final)
+# QA Dashboard (unchanged structure, kept for completeness)
+# -------------------------------------------------
+@app.get("/qa-dashboard", response_class=HTMLResponse)
+def qa_dashboard(
+    request: Request,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    if not role_allowed(request, {"admin", "qa"}):
+        return RedirectResponse("/login", status_code=303)
+
+    today = dt.date.today()
+    s_iso = start or today.isoformat()
+    e_iso = end or today.isoformat()
+    try:
+        s_date = dt.date.fromisoformat(s_iso)
+        e_date = dt.date.fromisoformat(e_iso)
+    except Exception:
+        s_date = e_date = today
+        s_iso = e_iso = today.isoformat()
+
+    heats_all = db.query(Heat).order_by(Heat.id.desc()).all()
+    lots_all  = db.query(Lot).order_by(Lot.id.desc()).all()
+
+    def _hd(h: Heat) -> dt.date:
+        return heat_date_from_no(h.heat_no) or today
+    def _ld(l: Lot) -> dt.date:
+        return lot_date_from_no(l.lot_no) or today
+
+    heats_vis = [h for h in heats_all if s_date <= _hd(h) <= e_date]
+    lots_vis  = [l for l in lots_all  if s_date <= _ld(l) <= e_date]
+
+    month_start = e_date.replace(day=1)
+    month_end   = (month_start + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
+    lots_this_month = [l for l in lots_all if month_start <= _ld(l) <= month_end]
+
+    def _sum_lots(status: str) -> float:
+        s = status.upper()
+        return sum(float(l.weight or 0.0) for l in lots_this_month if (l.qa_status or "").upper() == s)
+
+    kpi = {
+        "approved_kg": _sum_lots("APPROVED"),
+        "hold_kg": _sum_lots("HOLD"),
+        "rejected_kg": _sum_lots("REJECTED"),
+    }
+
+    pending_count = (
+        sum(1 for h in heats_all if (h.qa_status or "").upper() == "PENDING") +
+        sum(1 for l in lots_all  if (l.qa_status or "").upper() == "PENDING")
+    )
+    todays_count = (
+        sum(1 for h in heats_all if _hd(h) == today and (h.qa_status or "").upper() != "PENDING") +
+        sum(1 for l in lots_all  if _ld(l) == today and (l.qa_status or "").upper() != "PENDING")
+    )
+
+    heat_grades = {h.id: heat_grade(h) for h in heats_vis}
+
+    return templates.TemplateResponse(
+        "qa_dashboard.html",
+        {
+            "request": request,
+            "role": current_role(request),
+            "heats": heats_vis,
+            "lots": lots_vis,
+            "heat_grades": heat_grades,
+            "kpi_approved_month": float(kpi.get("approved_kg", 0.0)),
+            "kpi_hold_month":     float(kpi.get("hold_kg", 0.0)),
+            "kpi_rejected_month": float(kpi.get("rejected_kg", 0.0)),
+            "kpi_pending_count":  int(pending_count),
+            "kpi_today_count":    int(todays_count),
+            "start": s_iso,
+            "end": e_iso,
+            "today_iso": today.isoformat(),
+        },
+    )
+
+
+# -------------------------------------------------
+# RAP (page, allocate, exports, PDFs, multi-lot dispatch)
 # -------------------------------------------------
 @app.get("/rap", response_class=HTMLResponse)
 def rap_page(request: Request, db: Session = Depends(get_db)):
     if not role_allowed(request, {"admin", "rap"}):
         return RedirectResponse("/login", status_code=303)
-    """
-    Show APPROVED atomization lots in RAP, ensure RAPLot rows exist,
-    and compute grade-wise available KPIs.
-    """
-    today = dt.date.today()
 
-    # Bring in all APPROVED lots
+    today = dt.date.today()
     lots = (
         db.query(Lot)
         .filter(Lot.qa_status == "APPROVED")
@@ -2511,13 +818,11 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
         .all()
     )
 
-    # Ensure RAP rows exist & are up to date
     rap_rows: List[RAPLot] = []
     for lot in lots:
         rap_rows.append(ensure_rap_lot(db, lot))
-    db.commit()  # persist any ensure updates
+    db.commit()
 
-    # KPIs: Available stock & value in RAP (ready stock)
     kpi = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
     for rap in rap_rows:
         lot = rap.lot
@@ -2526,15 +831,11 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
             continue
         val = qty * float(lot.unit_cost or 0.0)
         if (lot.grade or "KRIP") == "KRFS":
-            kpi["KRFS_qty"] += qty
-            kpi["KRFS_val"] += val
+            kpi["KRFS_qty"] += qty; kpi["KRFS_val"] += val
         else:
-            kpi["KRIP_qty"] += qty
-            kpi["KRIP_val"] += val
+            kpi["KRIP_qty"] += qty; kpi["KRIP_val"] += val
 
-    # --- Monthly RAP KPI Trends ---
     month_start = today.replace(day=1)
-
     trend = (
         db.query(RAPAlloc.kind, Lot.grade, func.sum(RAPAlloc.qty))
         .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
@@ -2543,19 +844,10 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
         .group_by(RAPAlloc.kind, Lot.grade)
         .all()
     )
-
-    kpi_trends = {
-        "DISPATCH": {"KRIP": 0, "KRFS": 0},
-        "PLANT2": {"KRIP": 0, "KRFS": 0},
-    }
+    kpi_trends = {"DISPATCH": {"KRIP": 0, "KRFS": 0}, "PLANT2": {"KRIP": 0, "KRFS": 0}}
     for kind, grade, qty in trend:
-        kpi_trends[kind][grade or "KRIP"] = float(qty or 0)
+        kpi_trends[kind][(grade or "KRIP")] = float(qty or 0)
 
-    # compute date boundaries for the allocation form
-    today_iso = today.isoformat()
-    min_date_iso = (today - dt.timedelta(days=3)).isoformat()
-
-    # ✅ Correct indentation here (only 4 spaces in, not 8)
     return templates.TemplateResponse(
         "rap.html",
         {
@@ -2564,29 +856,25 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
             "rows": rap_rows,
             "kpi": kpi,
             "kpi_trends": kpi_trends,
-            "today": today_iso,
-            "min_date": min_date_iso,
+            "today": today.isoformat(),
+            "min_date": (today - dt.timedelta(days=3)).isoformat(),
         }
     )
-# -------------------------------------------------
-# RAP per-lot allocation (Dispatch / Plant 2)
-# -------------------------------------------------
+
+
 @app.post("/rap/allocate")
 def rap_allocate(
     rap_lot_id: int = Form(...),
     date: str = Form(...),
-    kind: str = Form(...),            # "DISPATCH" or "PLANT2"
+    kind: str = Form(...),
     qty: float = Form(...),
     dest: str = Form(""),
     remarks: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    # Fetch RAP lot
     rap = db.get(RAPLot, rap_lot_id)
     if not rap:
         return _alert_redirect("RAP lot not found.", url="/rap")
-
-    # Date validation: only today or last 3 days; no future
     try:
         d = dt.date.fromisoformat(date)
     except Exception:
@@ -2595,7 +883,6 @@ def rap_allocate(
     if d > today or d < (today - dt.timedelta(days=3)):
         return _alert_redirect("Date must be today or within the last 3 days.", url="/rap")
 
-    # Quantity must be > 0
     try:
         qty = float(qty or 0.0)
     except Exception:
@@ -2603,29 +890,15 @@ def rap_allocate(
     if qty <= 0:
         return _alert_redirect("Quantity must be > 0.", url="/rap")
 
-    # Underlying lot must be APPROVED
     lot = db.get(Lot, rap.lot_id)
     if not lot or (lot.qa_status or "") != "APPROVED":
         return _alert_redirect("Underlying lot is not APPROVED.", url="/rap")
 
-    # Available = lot.weight - total RAP allocations
-    # If you already have rap_total_alloc_qty_for_lot(), this will use it.
-    try:
-        total_alloc = rap_total_alloc_qty_for_lot(db, lot.id)
-    except NameError:
-        total_alloc = (
-            db.query(func.coalesce(func.sum(RAPAlloc.qty), 0.0))
-              .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
-              .filter(RAPLot.lot_id == lot.id)
-              .scalar()
-            or 0.0
-        )
-
+    total_alloc = rap_total_alloc_qty_for_lot(db, lot.id)
     avail = max(float(lot.weight or 0.0) - float(total_alloc or 0.0), 0.0)
     if qty > avail + 1e-6:
         return _alert_redirect(f"Over-allocation. Available {avail:.1f} kg.", url="/rap")
 
-    # Kind & destination rules
     kind = (kind or "").upper()
     if kind not in ("DISPATCH", "PLANT2"):
         kind = "DISPATCH"
@@ -2635,7 +908,6 @@ def rap_allocate(
     else:
         dest = "Plant 2"
 
-    # Insert allocation and flush to get id
     rec = RAPAlloc(
         rap_lot_id=rap.id,
         date=d,
@@ -2644,36 +916,25 @@ def rap_allocate(
         remarks=remarks,
         dest=dest,
     )
-    db.add(rec)
-    db.flush()  # rec.id is now available
+    db.add(rec); db.flush()
 
-    # Update RAPLot mirror
     rap.available_qty = max(avail - qty, 0.0)
     rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
-    db.add(rap)
-    db.commit()
+    db.add(rap); db.commit()
 
-    # If dispatch, open the Dispatch Note PDF; else return to RAP
     if rec.kind == "DISPATCH":
         return RedirectResponse(f"/rap/dispatch/{rec.id}/pdf", status_code=303)
     return RedirectResponse("/rap", status_code=303)
 
 
-# ---------- CSV export for Dispatch movements ----------
-
-
+# --- Exports (Dispatch / Plant2) ---
 @app.get("/rap/dispatch/export")
 def export_rap_dispatch(db: Session = Depends(get_db)):
     import csv, io
     from fastapi.responses import StreamingResponse
-
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow([
-        "Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹/kg)",
-        "Value (₹)", "Customer", "Remarks", "Alloc ID"
-    ])
-
+    writer.writerow(["Date","Lot","Grade","Qty (kg)","Unit Cost (₹/kg)","Value (₹)","Customer","Remarks","Alloc ID"])
     rows = (
         db.query(RAPAlloc, RAPLot, Lot)
           .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
@@ -2682,42 +943,27 @@ def export_rap_dispatch(db: Session = Depends(get_db)):
           .order_by(RAPAlloc.date.asc(), RAPAlloc.id.asc())
           .all()
     )
-
     for alloc, rap, lot in rows:
         qty = float(alloc.qty or 0.0)
         unit = float(lot.unit_cost or 0.0)
         val = qty * unit
         writer.writerow([
             (alloc.date or dt.date.today()).isoformat(),
-            lot.lot_no or "",
-            lot.grade or "",
-            f"{qty:.1f}",
-            f"{unit:.2f}",
-            f"{val:.2f}",
-            alloc.dest or "",
-            (alloc.remarks or "").replace(",", " "),
-            alloc.id,
+            lot.lot_no or "", lot.grade or "",
+            f"{qty:.1f}", f"{unit:.2f}", f"{val:.2f}",
+            alloc.dest or "", (alloc.remarks or "").replace(",", " "), alloc.id
         ])
-
     buf.seek(0)
-    return StreamingResponse(
-        io.StringIO(buf.getvalue()),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="dispatch_movements.csv"'},
-    )
+    return StreamingResponse(io.StringIO(buf.getvalue()), media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="dispatch_movements.csv"'})
 
-# ---------- CSV export for Plant-2 transfers ----------
 @app.get("/rap/transfer/export")
 def export_rap_transfers(db: Session = Depends(get_db)):
     import csv, io
     from fastapi.responses import StreamingResponse
-
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow([
-        "Date", "Lot", "Grade", "Qty (kg)", "Unit Cost (₹/kg)", "Value (₹)", "Remarks", "Alloc ID"
-    ])
-
+    writer.writerow(["Date","Lot","Grade","Qty (kg)","Unit Cost (₹/kg)","Value (₹)","Remarks","Alloc ID"])
     rows = (
         db.query(RAPAlloc, RAPLot, Lot)
           .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
@@ -2726,544 +972,34 @@ def export_rap_transfers(db: Session = Depends(get_db)):
           .order_by(RAPAlloc.date.asc(), RAPAlloc.id.asc())
           .all()
     )
-
     for alloc, rl, lot in rows:
         qty  = float(alloc.qty or 0.0)
         unit = float(lot.unit_cost or 0.0)
         val  = qty * unit
         writer.writerow([
             (alloc.date or dt.date.today()).isoformat(),
-            lot.lot_no or "",
-            lot.grade or "",
-            f"{qty:.1f}",
-            f"{unit:.2f}",
-            f"{val:.2f}",
-            (alloc.remarks or "").replace(",", " "),
-            alloc.id,
+            lot.lot_no or "", lot.grade or "",
+            f"{qty:.1f}", f"{unit:.2f}", f"{val:.2f}",
+            (alloc.remarks or "").replace(",", " "), alloc.id
         ])
-
     buf.seek(0)
-    return StreamingResponse(
-        io.StringIO(buf.getvalue()),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="plant2_transfers.csv"'},)
+    return StreamingResponse(io.StringIO(buf.getvalue()), media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="plant2_transfers.csv"'})
 
-    buf.seek(0)
-    return StreamingResponse(
-        io.StringIO(buf.getvalue()),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="plant2_transfers.csv"'},
-    )
-        
-# -------------------------------------------------
-# Lot quick views used by RAP "Docs" column
-# -------------------------------------------------
-@app.get("/lot/{lot_id}/trace", response_class=HTMLResponse)
-def lot_trace_view(lot_id: int, db: Session = Depends(get_db)):
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return HTMLResponse("<p>Lot not found</p>", status_code=404)
-
-    rows = []
-    for lh in getattr(lot, "heats", []):
-        h = db.get(Heat, lh.heat_id)
-        if not h:
-            continue
-        # parent row = heat
-        rows.append({
-            "heat_no": h.heat_no,
-            "alloc": float(lh.qty or 0.0),
-            "out": float(h.actual_output or 0.0),
-            "qa": h.qa_status or "",
-            "rm_type": "",
-            "grn_id": "",
-            "supplier": "",
-            "rm_qty": ""
-        })
-        # children rows = FIFO GRNs
-        for cons in getattr(h, "rm_consumptions", []):
-            g = cons.grn
-            rows.append({
-                "heat_no": "",
-                "alloc": "",
-                "out": "",
-                "qa": "",
-                "rm_type": cons.rm_type,
-                "grn_id": cons.grn_id,
-                "supplier": (g.supplier if g else ""),
-                "rm_qty": f"{float(cons.qty or 0.0):.1f}"
-            })
-
-    html = [
-        "<h3>Trace – Lot ", lot.lot_no or "", "</h3>",
-        "<table border=1 cellpadding=6 cellspacing=0>",
-        "<thead><tr>",
-        "<th>Heat</th><th>Alloc to Lot (kg)</th><th>Heat Out (kg)</th><th>QA</th>",
-        "<th>RM Type</th><th>GRN #</th><th>Supplier</th><th>RM Qty (kg)</th>",
-        "</tr></thead><tbody>"
-    ]
-    for r in rows:
-        html.append(
-            f"<tr><td>{r['heat_no']}</td><td>{r['alloc']}</td><td>{r['out']}</td><td>{r['qa']}</td>"
-            f"<td>{r['rm_type']}</td><td>{r['grn_id']}</td><td>{r['supplier']}</td><td>{r['rm_qty']}</td></tr>"
-        )
-    html.append("</tbody></table>")
-    html.append('<p style="margin-top:12px"><a href="/rap">← Back to RAP</a></p>')
-    return HTMLResponse("".join(html))
-    
-@app.get("/lot/{lot_id}/qa", response_class=HTMLResponse)
-def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
-
-    # helpers to show value or dash
-    def v(x): return ("—" if x in (None, "",) else x)
-
-    rows = []
-    for lh in getattr(lot, "heats", []):
-        h = db.get(Heat, lh.heat_id)
-        if not h:
-            continue
-        rows.append({
-            "heat_no": h.heat_no,
-            "qa": getattr(h, "qa_status", "") or "—",
-            "notes": getattr(h, "qa_notes", "") if hasattr(h, "qa_notes") else "—",
-        })
-
-    # Pull QA blocks from Lot if present (adjust attribute names to your models)
-    chem = getattr(lot, "chemistry", None)
-    phys = getattr(lot, "phys", None)
-    psd  = getattr(lot, "psd", None)
-
-    html = [
-        f"<h2>QA snapshot – Lot {lot.lot_no}</h2>",
-        "<table border='1' cellpadding='6' cellspacing='0'>",
-        "<tr><th>Heat</th><th>QA</th><th>Notes</th></tr>",
-    ]
-    for r in rows:
-        html.append(f"<tr><td>{r['heat_no']}</td><td>{r['qa']}</td><td>{r['notes']}</td></tr>")
-    if not rows:
-        html.append("<tr><td colspan='3'>No heats recorded.</td></tr>")
-    html.append("</table><br>")
-
-    # Chemistry table
-    html += ["<h3>Chemistry</h3>",
-             "<table border='1' cellpadding='6' cellspacing='0'>",
-             "<tr><th>C</th><th>Si</th><th>S</th><th>P</th><th>Cu</th><th>Ni</th><th>Mn</th><th>Fe</th></tr>"]
-    if chem:
-        html.append(f"<tr><td>{v(getattr(chem,'c',None))}</td>"
-                    f"<td>{v(getattr(chem,'si',None))}</td>"
-                    f"<td>{v(getattr(chem,'s',None))}</td>"
-                    f"<td>{v(getattr(chem,'p',None))}</td>"
-                    f"<td>{v(getattr(chem,'cu',None))}</td>"
-                    f"<td>{v(getattr(chem,'ni',None))}</td>"
-                    f"<td>{v(getattr(chem,'mn',None))}</td>"
-                    f"<td>{v(getattr(chem,'fe',None))}</td></tr>")
-    else:
-        html.append("<tr><td colspan='8'>—</td></tr>")
-    html.append("</table><br>")
-
-    # Physical table
-    html += ["<h3>Physical</h3>",
-             "<table border='1' cellpadding='6' cellspacing='0'>",
-             "<tr><th>AD (g/cc)</th><th>Flow (s/50g)</th></tr>"]
-    if phys:
-        html.append(f"<tr><td>{v(getattr(phys,'ad',None))}</td><td>{v(getattr(phys,'flow',None))}</td></tr>")
-    else:
-        html.append("<tr><td colspan='2'>—</td></tr>")
-    html.append("</table><br>")
-
-    # PSD table
-    html += ["<h3>PSD</h3>",
-             "<table border='1' cellpadding='6' cellspacing='0'>",
-             "<tr><th>+212</th><th>+180</th><th>-180+150</th><th>-150+75</th><th>-75+45</th><th>-45</th></tr>"]
-    if psd:
-        html.append(
-            f"<tr><td>{v(getattr(psd,'p212',None))}</td>"
-            f"<td>{v(getattr(psd,'p180',None))}</td>"
-            f"<td>{v(getattr(psd,'n180p150',None))}</td>"
-            f"<td>{v(getattr(psd,'n150p75',None))}</td>"
-            f"<td>{v(getattr(psd,'n75p45',None))}</td>"
-            f"<td>{v(getattr(psd,'n45',None))}</td></tr>"
-        )
-    else:
-        html.append("<tr><td colspan='6'>—</td></tr>")
-    html.append("</table><p><a href='/rap'>← Back to RAP</a></p>")
-    return HTMLResponse("".join(html))
-
-@app.get("/qa/lot/{lot_id}", response_class=HTMLResponse)
-def qa_lot_form(lot_id: int, request: Request, db: Session = Depends(get_db)):
-    """
-    Editable Lot QA form for QA/Admin; everyone else read-only.
-    Prefills chemistry using 60% rule else weighted average.
-    """
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
-
-    ro = not role_allowed(request, {"admin", "qa"})  # read-only for non QA/Admin
-
-    # existing or default chemistry
-    if lot.chemistry:
-        chem_defaults = {}
-        for k in ["c","si","s","p","cu","ni","mn","fe"]:
-            try:
-                chem_defaults[k] = float(getattr(lot.chemistry, k) or "")
-            except Exception:
-                chem_defaults[k] = None
-    else:
-        chem_defaults = _lot_default_chemistry(db, lot)
-
-    # ensure phys/psd objects exist for form rendering
-    phys = lot.phys or LotPhys(lot=lot, ad="", flow="")
-    psd  = lot.psd  or LotPSD(lot=lot, p212="", p180="", n180p150="", n150p75="", n75p45="", n45="")
-
-    return templates.TemplateResponse(
-        "qa_lot.html",
-        {
-            "request": request,
-            "read_only": ro,
-            "role": current_role(request),
-            "lot": lot,
-            "grade": (lot.grade or "KRIP"),
-            "chem": {
-                "C":  "" if chem_defaults["c"]  is None else f"{chem_defaults['c']:.4f}",
-                "Si": "" if chem_defaults["si"] is None else f"{chem_defaults['si']:.4f}",
-                "S":  "" if chem_defaults["s"]  is None else f"{chem_defaults['s']:.4f}",
-                "P":  "" if chem_defaults["p"]  is None else f"{chem_defaults['p']:.4f}",
-                "Cu": "" if chem_defaults["cu"] is None else f"{chem_defaults['cu']:.4f}",
-                "Ni": "" if chem_defaults["ni"] is None else f"{chem_defaults['ni']:.4f}",
-                "Mn": "" if chem_defaults["mn"] is None else f"{chem_defaults['mn']:.4f}",
-                "Fe": "" if chem_defaults["fe"] is None else f"{chem_defaults['fe']:.4f}",
-            },
-            "phys": {"ad": phys.ad or "", "flow": phys.flow or ""},
-            "psd": {
-                "p212": psd.p212 or "", "p180": psd.p180 or "",
-                "n180p150": psd.n180p150 or "", "n150p75": psd.n150p75 or "",
-                "n75p45": psd.n75p45 or "", "n45": psd.n45 or "",
-            },
-        },
-    )
-
-@app.post("/qa/lot/{lot_id}")
-def qa_lot_save(
-    lot_id: int,
-    # chemistry
-    C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
-    Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
-    # physical
-    ad: str = Form(""), flow: str = Form(""),
-    # psd
-    p212: str = Form(""), p180: str = Form(""), n180p150: str = Form(""),
-    n150p75: str = Form(""), n75p45: str = Form(""), n45: str = Form(""),
-    # decision
-    decision: str = Form("APPROVED"), remarks: str = Form(""),
-    request: Request = None,
-    db: Session = Depends(get_db),
-):
-    # access gate: only admin/qa can save
-    if not role_allowed(request, {"admin", "qa"}):
-        return PlainTextResponse("Forbidden", status_code=403)
-
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
-
-    # strict numeric validations (non-blank, numeric, > 0) for ALL fields
-    def _req_pos_float(name: str, val: str) -> float:
-        s = (val or "").strip()
-        try:
-            f = float(s)
-        except Exception:
-            raise ValueError(f"{name} must be a number > 0.")
-        if f <= 0:
-            raise ValueError(f"{name} must be > 0.")
-        return f
-
-    try:
-        chem_fields = {
-            "C": _req_pos_float("C", C), "Si": _req_pos_float("Si", Si),
-            "S": _req_pos_float("S", S), "P": _req_pos_float("P", P),
-            "Cu": _req_pos_float("Cu", Cu), "Ni": _req_pos_float("Ni", Ni),
-            "Mn": _req_pos_float("Mn", Mn), "Fe": _req_pos_float("Fe", Fe),
-        }
-        phys_ad   = _req_pos_float("AD", ad)
-        phys_flow = _req_pos_float("Flow", flow)
-        psd_fields = {
-            "p212": _req_pos_float("+212", p212),
-            "p180": _req_pos_float("+180", p180),
-            "n180p150": _req_pos_float("-180+150", n180p150),
-            "n150p75":  _req_pos_float("-150+75", n150p75),
-            "n75p45":   _req_pos_float("-75+45", n75p45),
-            "n45":      _req_pos_float("-45", n45),
-        }
-    except ValueError as ve:
-        return PlainTextResponse(str(ve), status_code=400)
-
-    # upsert LotChem / LotPhys / LotPSD
-    lchem = lot.chemistry or LotChem(lot=lot)
-    lchem.c  = f"{chem_fields['C']:.4f}";   lchem.si = f"{chem_fields['Si']:.4f}"
-    lchem.s  = f"{chem_fields['S']:.4f}";   lchem.p  = f"{chem_fields['P']:.4f}"
-    lchem.cu = f"{chem_fields['Cu']:.4f}";  lchem.ni = f"{chem_fields['Ni']:.4f}"
-    lchem.mn = f"{chem_fields['Mn']:.4f}";  lchem.fe = f"{chem_fields['Fe']:.4f}"
-
-    lphys = lot.phys or LotPhys(lot=lot)
-    lphys.ad = f"{phys_ad:.4f}"
-    lphys.flow = f"{phys_flow:.4f}"
-
-    lpsd = lot.psd or LotPSD(lot=lot)
-    lpsd.p212 = f"{psd_fields['p212']:.4f}"
-    lpsd.p180 = f"{psd_fields['p180']:.4f}"
-    lpsd.n180p150 = f"{psd_fields['n180p150']:.4f}"
-    lpsd.n150p75  = f"{psd_fields['n150p75']:.4f}"
-    lpsd.n75p45   = f"{psd_fields['n75p45']:.4f}"
-    lpsd.n45      = f"{psd_fields['n45']:.4f}"
-
-    lot.qa_status  = (decision or "APPROVED").upper()
-    lot.qa_remarks = remarks or ""
-
-    db.add_all([lchem, lphys, lpsd, lot]); db.commit()
-    return RedirectResponse("/qa-dashboard", status_code=303)
-
-
-@app.get("/lot/{lot_id}/pdf")
-def lot_pdf_view(lot_id: int, db: Session = Depends(get_db)):
-    """Minimal 1-page summary PDF for the lot (separate from Dispatch Note)."""
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return PlainTextResponse("Lot not found", status_code=404)
-
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    w, h = A4
-
-    # simple header (re-use your existing helper if you have one)
-    try:
-        draw_header(c, "Lot Summary")
-    except Exception:
-        c.setFont("Helvetica-Bold", 18)
-        c.drawString(2 * cm, h - 2.5 * cm, "KRN Alloys Pvt. Ltd")
-        c.setFont("Helvetica", 12)
-        c.drawString(2 * cm, h - 3.2 * cm, "Lot Summary")
-
-    y = h - 4 * cm
-    c.setFont("Helvetica", 11)
-    c.drawString(2 * cm, y, f"Lot: {lot.lot_no}    Grade: {lot.grade or '-'}"); y -= 14
-    c.drawString(2 * cm, y, f"Lot Weight: {float(lot.weight or 0):.1f} kg"); y -= 14
-    c.drawString(2 * cm, y, f"Unit Cost: ₹{float(lot.unit_cost or 0):.2f}"); y -= 20
-
-    # Heats + GRN (FIFO) section
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(2 * cm, y, "Heats & GRN (FIFO)"); y -= 14
-    c.setFont("Helvetica", 10)
-
-    def new_page():
-        nonlocal y
-        c.showPage()
-        # re-draw header
-        try:
-            draw_header(c, "Lot Summary")
-        except Exception:
-            c.setFont("Helvetica-Bold", 18)
-            c.drawString(2 * cm, h - 2.5 * cm, "KRN Alloys Pvt. Ltd")
-            c.setFont("Helvetica", 12)
-            c.drawString(2 * cm, h - 3.2 * cm, "Lot Summary")
-        y = h - 4 * cm
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(2 * cm, y, "Heats & GRN (FIFO)"); y -= 14
-        c.setFont("Helvetica", 10)
-
-    for lh in getattr(lot, "heats", []):
-        hobj = db.get(Heat, lh.heat_id)
-        if not hobj:
-            continue
-        # Heat row
-        if y < 3 * cm:
-            new_page()
-        c.drawString(2.2 * cm, y, f"{hobj.heat_no} | Alloc: {float(lh.qty or 0):.1f} kg | QA: {hobj.qa_status or ''}")
-        y -= 12
-
-        # GRN (FIFO) child rows under this heat
-        for cons in getattr(hobj, "rm_consumptions", []):
-            if y < 3 * cm:
-                new_page()
-            g = cons.grn
-            supplier = (g.supplier if g else "")
-            c.drawString(
-                2.8 * cm, y,
-                f"– {cons.rm_type} | GRN #{cons.grn_id} | {supplier} | {float(cons.qty or 0):.1f} kg"
-            )
-            y -= 12
-
-    c.showPage(); c.save()
-    buf.seek(0)
-    return StreamingResponse(
-        buf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="lot_{lot.lot_no}.pdf"'}
-    )
-
-# -------------------------------------------------
-# RAP Dispatch + Transfer
-# -------------------------------------------------
-@app.get("/rap/dispatch/new", response_class=HTMLResponse)
-def rap_dispatch_new(request: Request, db: Session = Depends(get_db)):
-    lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").all()
-    return templates.TemplateResponse("rap_dispatch_new.html", {"request": request, "lots": lots})
-
-# ---------- Multi-lot dispatch: create items + reduce RAP availability ----------
-from fastapi import Request
-
-@app.post("/rap/dispatch/save")
-async def rap_dispatch_save(request: Request, db: Session = Depends(get_db)):
-    form = await request.form()
-    customer = (form.get("customer") or "").strip()
-    if not customer:
-        return _alert_redirect("Customer is required.", url="/rap")
-
-    # selected RAPLot ids
-    lot_ids = form.getlist("lot_ids")
-    if not lot_ids:
-        return _alert_redirect("Select at least one lot.", url="/rap")
-
-    # date
-    try:
-        d = dt.date.fromisoformat(form.get("date") or "")
-    except Exception:
-        d = dt.date.today()
-
-    # total qty (optional check – UI already enforces)
-    total_qty = float(form.get("total_qty") or 0.0)
-
-    # Build items, enforce single grade & availability
-    items = []
-    sel_grade = None
-    for rid in lot_ids:
-        rap = db.get(RAPLot, int(rid))
-        if not rap:
-            return _alert_redirect("RAP lot not found.", url="/rap")
-        lot = db.get(Lot, rap.lot_id)
-        if not lot or (lot.qa_status or "") != "APPROVED":
-            return _alert_redirect("Underlying lot is not APPROVED.", url="/rap")
-
-        q = float(form.get(f"qty_{rid}") or 0.0)
-        if q <= 0:
-            return _alert_redirect("Enter quantity for every selected lot.", url="/rap")
-
-        # recompute available
-        total_alloc = rap_total_alloc_qty_for_lot(db, lot.id)
-        avail = max(float(lot.weight or 0.0) - float(total_alloc or 0.0), 0.0)
-        if q > avail + 1e-6:
-            return _alert_redirect(f"Over-allocation on {lot.lot_no}. Available {avail:.1f} kg.", url="/rap")
-
-        g = (lot.grade or "KRIP")
-        sel_grade = sel_grade or g
-        if g != sel_grade:
-            return _alert_redirect("Select lots of a single grade per dispatch.", url="/rap")
-
-        items.append((rap, lot, q))
-
-    if total_qty > 0:
-        s = sum(q for _, _, q in items)
-        if abs(total_qty - s) > 0.05:
-            return _alert_redirect("Total Dispatch Qty must equal the sum of selected lot quantities.", url="/rap")
-
-    # Create RAPDispatch + items
-    disp = RAPDispatch(date=d, customer=customer, grade=sel_grade, total_qty=0.0, total_cost=0.0)
-    db.add(disp); db.flush()
-
-    total_qty_acc = 0.0
-    total_cost_acc = 0.0
-
-    for rap, lot, q in items:
-        db.add(RAPDispatchItem(dispatch_id=disp.id, lot_id=lot.id, qty=q, cost=float(lot.unit_cost or 0.0)))
-        total_qty_acc += q
-        total_cost_acc += q * float(lot.unit_cost or 0.0)
-
-        # Mirror a DISPATCH allocation (so RAP available reduces)
-        alloc = RAPAlloc(
-            rap_lot_id=rap.id,
-            date=d,
-            kind="DISPATCH",
-            qty=q,
-            remarks=f"Dispatch #{disp.id}",
-            dest=customer,
-        )
-        db.add(alloc)
-        db.flush()
-
-        # Update RAPLot mirror
-        # (available = lot.weight - sum(alloc))
-        total_alloc_after = rap_total_alloc_qty_for_lot(db, lot.id)
-        rap.available_qty = max(float(lot.weight or 0.0) - total_alloc_after, 0.0)
-        rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"
-        db.add(rap)
-
-    disp.total_qty = total_qty_acc
-    disp.total_cost = total_cost_acc
-    db.add(disp)
-    db.commit()
-
-    # multi-lot PDF
-    return RedirectResponse(f"/rap/dispatch/pdf/{disp.id}", status_code=303)
-
-@app.get("/rap/dispatch/pdf/{disp_id}")
-def rap_dispatch_pdf(disp_id: int, db: Session = Depends(get_db)):
-    from .rap_dispatch_pdf import draw_dispatch_note
-    disp = db.get(RAPDispatch, disp_id)
-    if not disp:
-        return PlainTextResponse("Dispatch not found", status_code=404)
-    items = db.query(RAPDispatchItem).filter(RAPDispatchItem.dispatch_id == disp_id).all()
-    buf = io.BytesIO()
-    from reportlab.pdfgen import canvas
-    c = canvas.Canvas(buf, pagesize=A4)
-    draw_dispatch_note(c, disp, items, db)
-        # clickable "Back to RAP" text on the PDF (top-right)
-    c.setFont("Helvetica", 9)
-    c.drawRightString(20.0*cm, 1.2*cm, "Back to RAP")
-    c.linkURL("/rap", (18.5*cm, 0.9*cm, 20.0*cm, 1.3*cm), relative=1)
-    c.showPage(); c.save()
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename=\"dispatch_{disp.id}.pdf\"'})
-
-@app.get("/rap/transfer/new", response_class=HTMLResponse)
-def rap_transfer_new(request: Request, db: Session = Depends(get_db)):
-    lots = db.query(Lot).filter(Lot.qa_status == "APPROVED").all()
-    return templates.TemplateResponse("rap_transfer_new.html", {"request": request, "lots": lots})
-
-@app.post("/rap/transfer/save")
-def rap_transfer_save(
-    lot_id: int = Form(...), qty: float = Form(...), remarks: str = Form(""),
-    db: Session = Depends(get_db)
-):
-    today = dt.date.today()
-    t = RAPTransfer(date=today, lot_id=lot_id, qty=qty, remarks=remarks)
-    db.add(t); db.commit()
-    return RedirectResponse("/rap", status_code=303)
-
-# -------------------------------------------------
-# RAP Dispatch Note PDF
-# -------------------------------------------------
+# --- Single-alloc dispatch PDF (with annexure) ---
 @app.get("/rap/dispatch/{alloc_id}/pdf")
 def rap_dispatch_pdf(alloc_id: int, db: Session = Depends(get_db)):
-    # Load allocation + linked RAPLot + Lot
     alloc = db.get(RAPAlloc, alloc_id)
     if not alloc:
         return PlainTextResponse("Dispatch allocation not found.", status_code=404)
-
     rap = db.get(RAPLot, alloc.rap_lot_id)
     if not rap:
         return PlainTextResponse("RAP lot not found.", status_code=404)
-
     lot = db.get(Lot, rap.lot_id)
     if not lot:
         return PlainTextResponse("Lot not found.", status_code=404)
 
-    # Collect trace items (heats & FIFO rows) for annexure
-    heats = []
-    fifo_rows = []
+    heats, fifo_rows = [], []
     for lh in lot.heats:
         h = db.get(Heat, lh.heat_id)
         if not h:
@@ -3272,67 +1008,50 @@ def rap_dispatch_pdf(alloc_id: int, db: Session = Depends(get_db)):
         for cons in h.rm_consumptions:
             g = cons.grn
             fifo_rows.append({
-                "heat_no": h.heat_no,
-                "rm_type": cons.rm_type,
-                "grn_id": cons.grn_id,
-                "supplier": g.supplier if g else "",
-                "qty": float(cons.qty or 0.0)
+                "heat_no": h.heat_no, "rm_type": cons.rm_type, "grn_id": cons.grn_id,
+                "supplier": g.supplier if g else "", "qty": float(cons.qty or 0.0)
             })
 
-    # Make PDF
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     width, height = A4
-
-    # Header
     draw_header(c, "Dispatch Note")
 
-    # Top fields
     y = height - 4 * cm
     c.setFont("Helvetica", 11)
-    c.drawString(2 * cm, y, f"Date/Time: {(alloc.date or dt.date.today()).isoformat()}  {dt.datetime.now().strftime('%H:%M')}"); y -= 14
-    c.drawString(2 * cm, y, f"Customer: {alloc.dest or ''}"); y -= 14
-    c.drawString(2 * cm, y, f"Note Type: DISPATCH"); y -= 14
+    c.drawString(2*cm, y, f"Date/Time: {(alloc.date or dt.date.today()).isoformat()}  {dt.datetime.now().strftime('%H:%M')}"); y -= 14
+    c.drawString(2*cm, y, f"Customer: {alloc.dest or ''}"); y -= 14
+    c.drawString(2*cm, y, f"Note Type: DISPATCH"); y -= 14
 
-    # Lot summary
     y -= 6
-    c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "Lot Details"); y -= 14
+    c.setFont("Helvetica-Bold", 11); c.drawString(2*cm, y, "Lot Details"); y -= 14
     c.setFont("Helvetica", 10)
-    c.drawString(2 * cm, y, f"Lot: {lot.lot_no}    Grade: {lot.grade or '-'}"); y -= 12
-    c.drawString(2 * cm, y, f"Allocated Qty (kg): {float(alloc.qty or 0):.1f}"); y -= 12
-    c.drawString(2 * cm, y, f"Cost / kg (₹): {float(lot.unit_cost or 0):.2f}    Cost Value (₹): {float(lot.unit_cost or 0) * float(alloc.qty or 0):.2f}"); y -= 16
+    c.drawString(2*cm, y, f"Lot: {lot.lot_no}    Grade: {lot.grade or '-'}"); y -= 12
+    c.drawString(2*cm, y, f"Allocated Qty (kg): {float(alloc.qty or 0):.1f}"); y -= 12
+    c.drawString(2*cm, y, f"Cost / kg (₹): {float(lot.unit_cost or 0):.2f}    Cost Value (₹): {float(lot.unit_cost or 0) * float(alloc.qty or 0):.2f}"); y -= 16
 
-    # Blank sell-rate placeholder
     c.setFont("Helvetica-Oblique", 10)
-    c.drawString(2 * cm, y, "SELL RATE (₹/kg): _________________________     Amount (₹): _________________________"); y -= 18
+    c.drawString(2*cm, y, "SELL RATE (₹/kg): _________________________     Amount (₹): _________________________"); y -= 18
 
-    # Annexure – QA & Trace
-    c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "Annexure: QA Certificates & GRN Trace"); y -= 14
+    c.setFont("Helvetica-Bold", 11); c.drawString(2*cm, y, "Annexure: QA Certificates & GRN Trace"); y -= 14
     c.setFont("Helvetica", 10)
 
-    # Heats table (lot allocations)
-    c.drawString(2 * cm, y, "Heats used in this lot (lot allocation vs. heat out / QA):"); y -= 12
+    c.drawString(2*cm, y, "Heats used in this lot (lot allocation vs. heat out / QA):"); y -= 12
     for h, qalloc in heats:
-        c.drawString(2.2 * cm, y,
-            f"{h.heat_no}  | Alloc to lot: {qalloc:.1f} kg  | Heat Out: {float(h.actual_output or 0):.1f} kg  | QA: {h.qa_status or ''}"
-        )
+        c.drawString(2.2*cm, y, f"{h.heat_no}  | Alloc to lot: {qalloc:.1f} kg  | Heat Out: {float(h.actual_output or 0):.1f} kg  | QA: {h.qa_status or ''}")
         y -= 12
-        if y < 3 * cm:
-            c.showPage(); draw_header(c, "Dispatch Note"); y = height - 4 * cm
+        if y < 3*cm:
+            c.showPage(); draw_header(c, "Dispatch Note"); y = height - 4*cm
 
-    # FIFO rows
     y -= 6
-    c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "GRN Consumption (FIFO)"); y -= 14
+    c.setFont("Helvetica-Bold", 11); c.drawString(2*cm, y, "GRN Consumption (FIFO)"); y -= 14
     c.setFont("Helvetica", 10)
     for r in fifo_rows:
-        c.drawString(2.2 * cm, y,
-            f"Heat {r['heat_no']} | {r['rm_type']} | GRN #{r['grn_id']} | {r['supplier']} | {r['qty']:.1f} kg"
-        )
+        c.drawString(2.2*cm, y, f"Heat {r['heat_no']} | {r['rm_type']} | GRN #{r['grn_id']} | {r['supplier']} | {r['qty']:.1f} kg")
         y -= 12
-        if y < 3 * cm:
-            c.showPage(); draw_header(c, "Dispatch Note"); y = height - 4 * cm
+        if y < 3*cm:
+            c.showPage(); draw_header(c, "Dispatch Note"); y = height - 4*cm
 
-    # Footer note & signature
     y -= 8
     c.setFont("Helvetica-Bold", 10)
     c.drawString(2 * cm, y, "This document is a Dispatch Note for Invoice purpose only."); y -= 16
@@ -3340,33 +1059,31 @@ def rap_dispatch_pdf(alloc_id: int, db: Session = Depends(get_db)):
     c.setFont("Helvetica", 10)
     c.drawString(2 * cm, y, "Authorized Sign: ____________________________"); y -= 24
 
-        # --- QA Annexure for each lot in this dispatch ---
-    for item in dispatch.items:
-        draw_lot_qa_annexure(c, item.lot)
+    # Optional: annexure per lot
+    try:
+        draw_lot_qa_annexure(c, lot)
+    except Exception:
+        pass
 
     c.showPage(); c.save()
     buf.seek(0)
     filename = f"Dispatch_{lot.lot_no}_{alloc.id}.pdf"
-    return StreamingResponse(
-        buf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'}
-    )
+    return StreamingResponse(buf, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
-from fastapi import Query
 
+# -------------------------------------------------
+# Annealing (page, create, downtime, export, QA)
+# -------------------------------------------------
 @app.get("/annealing", response_class=HTMLResponse)
 def anneal_page(request: Request, start: str|None=None, end: str|None=None,
                 db: Session = Depends(get_db),
                 _guard = require_roles("admin","anneal")):
 
-    # Dates
     today = dt.date.today()
     start_d = dt.date.fromisoformat(start) if start else today
     end_d = dt.date.fromisoformat(end) if end else today
 
-    # --- KPI (today)
-    # Produced today = sum of anneal lot weights created today
     produced_today = (
         db.query(func.coalesce(func.sum(AnnealLot.weight), 0.0))
           .filter(AnnealLot.date == today)
@@ -3375,7 +1092,6 @@ def anneal_page(request: Request, start: str|None=None, end: str|None=None,
     cap = ANNEAL_CAPACITY_KG * (day_available_minutes_anneal(db, today) / 1440.0)
     eff_today = (produced_today / cap * 100.0) if cap > 0 else 0.0
 
-    # --- Last 5 days
     last5 = []
     for i in range(5):
         d = today - dt.timedelta(days=i)
@@ -3384,8 +1100,6 @@ def anneal_page(request: Request, start: str|None=None, end: str|None=None,
         last5.append({"date": d.isoformat(), "actual": p, "target": t})
     last5 = list(reversed(last5))
 
-    # --- Live Stock: RAP APPROVED lots available (mapped to KIP/KFS)
-    # Sum available from RAPLot where underlying Lot.qa_status == 'APPROVED'
     q = (
         db.query(
             Lot.grade,
@@ -3406,7 +1120,6 @@ def anneal_page(request: Request, start: str|None=None, end: str|None=None,
             rap_live["KIP_qty"] += float(qty or 0)
             rap_live["KIP_val"] += float(val or 0)
 
-    # --- Anneal lots list in range
     lots = (
         db.query(AnnealLot)
         .filter(AnnealLot.date >= start_d, AnnealLot.date <= end_d)
@@ -3414,26 +1127,17 @@ def anneal_page(request: Request, start: str|None=None, end: str|None=None,
         .all()
     )
 
-    # Context aliases (to be friendly with atomization-like templates)
     ctx = {
         "request": request,
         "role": current_role(request),
         "today_iso": today.isoformat(),
         "start": start_d.isoformat(),
         "end": end_d.isoformat(),
-
-        # KPI + last 5
         "ann_capacity": ANNEAL_CAPACITY_KG,
         "ann_eff_today": eff_today,
         "ann_last5": last5,
-
-        # live stock
         "ann_live": rap_live,
-
-        # lots
         "ann_lots": lots,
-
-        # Aliases some templates might expect:
         "atom_capacity": ANNEAL_CAPACITY_KG,
         "atom_eff_today": eff_today,
         "atom_last5": last5,
@@ -3449,12 +1153,9 @@ def anneal_new(
     request: Request,
     db: Session = Depends(get_db),
     lot_weight: float = Form(...),
-    _guard = require_roles("admin", "anneal"),   # <-- guard here
-    **allocs,  # your existing dynamic fields: alloc_<rap_lot_id>=qty
+    _guard = require_roles("admin", "anneal"),
+    **allocs,
 ):
-
-    # Collect allocations
-    # Find all form keys that start with "alloc_"
     pairs: List[Tuple[int, float]] = []
     for k, v in allocs.items():
         if not k.startswith("alloc_"):
@@ -3474,14 +1175,12 @@ def anneal_new(
     if abs(total_alloc - float(lot_weight or 0)) > 0.05:
         return _alert_redirect("Allocated qty must equal the new lot weight.", "/annealing")
 
-    # Validate available
     rap_rows = db.query(RAPLot, Lot).join(Lot, Lot.id == RAPLot.lot_id).filter(RAPLot.id.in_([rid for rid,_ in pairs])).all()
     avail_map = {row.RAPLot.id: float(row.RAPLot.available_qty or 0) for row in rap_rows}
     for rid, q in pairs:
         if q > avail_map.get(rid, 0.0) + 1e-6:
             return _alert_redirect("Allocation exceeds available qty for a RAP lot.", "/annealing")
 
-    # Derive grade from dominant source (by qty); map to KIP/KFS
     by_grade: Dict[str, float] = {}
     cost_sum = 0.0
     for rid, q in pairs:
@@ -3494,12 +1193,10 @@ def anneal_new(
 
     dom_grade = max(by_grade.items(), key=lambda x: x[1])[0] if by_grade else "KIP"
 
-    # Weighted input cost per kg + stage add-on
     input_unit_cost = (cost_sum / total_alloc) if total_alloc > 0 else 0.0
     unit_cost = input_unit_cost + ANNEAL_COST_PER_KG
     total_cost = unit_cost * float(lot_weight or 0)
 
-    # Create new anneal lot
     today = dt.date.today()
     seq = (db.query(func.count(AnnealLot.id)).filter(AnnealLot.date == today).scalar() or 0) + 1
     lot_no = next_anneal_lot_no(today, seq)
@@ -3515,7 +1212,6 @@ def anneal_new(
     )
     db.add(newlot); db.flush()
 
-    # Child items + reduce RAP available
     for rid, q in pairs:
         db.add(AnnealLotItem(anneal_lot_id=newlot.id, rap_lot_id=rid, qty=q))
         rap = db.query(RAPLot).get(rid)
@@ -3530,18 +1226,10 @@ def anneal_new(
 @app.get("/annealing/downtime", response_class=HTMLResponse)
 def anneal_downtime_page(request: Request, db: Session = Depends(get_db),
                          _guard = require_roles("admin","anneal")):
-
-    rows = (
-        db.query(AnnealDowntime)
-          .order_by(AnnealDowntime.date.desc(), AnnealDowntime.id.desc())
-          .limit(50).all()
-    )
+    rows = db.query(AnnealDowntime).order_by(AnnealDowntime.date.desc(), AnnealDowntime.id.desc()).limit(50).all()
     return templates.TemplateResponse("anneal_downtime.html", {
-        "request": request,
-        "rows": rows,
-        "today": dt.date.today().isoformat(),
+        "request": request, "rows": rows, "today": dt.date.today().isoformat()
     })
-
 
 @app.post("/annealing/downtime")
 def anneal_downtime_save(
@@ -3551,14 +1239,12 @@ def anneal_downtime_save(
     minutes: int = Form(...),
     kind: Optional[str] = Form(None),
     remarks: Optional[str] = Form(None),
-    _guard = require_roles("admin", "anneal"),   # 👈 role guard
+    _guard = require_roles("admin", "anneal"),
 ):
-
     d = dt.date.fromisoformat(date)
     db.add(AnnealDowntime(date=d, minutes=int(minutes or 0), kind=kind, remarks=remarks))
     db.commit()
     return RedirectResponse("/annealing/downtime", status_code=303)
-
 
 @app.get("/annealing/downtime/export")
 def anneal_downtime_csv(db: Session = Depends(get_db)):
@@ -3574,17 +1260,58 @@ def anneal_downtime_csv(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="anneal_downtime.csv"'}
     )
 
-# Screening pages
+# --- Annealing QA (oxygen only; carry forward rest) ---
+@app.get("/qa/anneal/lot/{lot_id}", response_class=HTMLResponse)
+def qa_anneal_lot_form(lot_id: int,
+                       request: Request,
+                       db: Session = Depends(get_db),
+                       _guard = require_roles("admin","anneal","qa","view")):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return _alert_redirect("Lot not found", "/annealing")
+    grade = (lot.grade or "KIP")
+    read_only = _is_read_only(request) or (current_role(request) not in ("admin","anneal","qa"))
+    oxygen_val = _prefill_anneal_o(db, lot)
+    return templates.TemplateResponse("qa_anneal_lot.html", {
+        "request": request,
+        "lot": lot, "grade": grade, "oxygen": oxygen_val,
+        "read_only": read_only, "role": current_role(request),
+    })
+
+@app.post("/qa/anneal/lot/{lot_id}")
+def qa_anneal_lot_save(lot_id: int,
+                       request: Request,
+                       oxygen: str = Form(""),
+                       decision: str = Form(...),
+                       remarks: str = Form(""),
+                       db: Session = Depends(get_db),
+                       _guard = require_roles("admin","anneal","qa")):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return _alert_redirect("Lot not found", "/annealing")
+    row = db.query(AnnealQA).filter(AnnealQA.lot_id == lot.id).first()
+    if not row:
+        row = AnnealQA(lot_id=lot.id, oxygen=oxygen)
+    else:
+        row.oxygen = oxygen
+    db.add(row)
+    lot.qa_status = decision or "PENDING"
+    lot.qa_remarks = remarks or ""
+    db.add(lot); db.commit()
+    return RedirectResponse(f"/qa/anneal/lot/{lot.id}", status_code=303)
+
+
+# -------------------------------------------------
+# Screening (page, create, downtime, export, QA)
+# -------------------------------------------------
 @app.get("/screening", response_class=HTMLResponse)
 def gs_page(request: Request, start: str|None=None, end: str|None=None,
             db: Session = Depends(get_db),
             _guard = require_roles("admin","screening")):
-
     today = dt.date.today()
     start_d = dt.date.fromisoformat(start) if start else today
     end_d = dt.date.fromisoformat(end) if end else today
 
-    # KPI (today)
     produced_today = (
         db.query(func.coalesce(func.sum(GSLot.weight), 0.0))
           .filter(GSLot.date == today)
@@ -3593,7 +1320,6 @@ def gs_page(request: Request, start: str|None=None, end: str|None=None,
     cap = SCREEN_CAPACITY_KG * (day_available_minutes_gs(db, today) / 1440.0)
     eff_today = (produced_today / cap * 100.0) if cap > 0 else 0.0
 
-    # Last 5 days
     last5 = []
     for i in range(5):
         d = today - dt.timedelta(days=i)
@@ -3602,7 +1328,6 @@ def gs_page(request: Request, start: str|None=None, end: str|None=None,
         last5.append({"date": d.isoformat(), "actual": p, "target": t})
     last5 = list(reversed(last5))
 
-    # Live stock: Anneal lots available (sum by KIP/KFS)
     q = (
         db.query(
             AnnealLot.grade,
@@ -3615,13 +1340,10 @@ def gs_page(request: Request, start: str|None=None, end: str|None=None,
     for g, qty, val in q.all():
         g2 = (g or "KIP").upper()
         if g2 == "KFS":
-            live["KFS_qty"] += float(qty or 0)
-            live["KFS_val"] += float(val or 0)
+            live["KFS_qty"] += float(qty or 0); live["KFS_val"] += float(val or 0)
         else:
-            live["KIP_qty"] += float(qty or 0)
-            live["KIP_val"] += float(val or 0)
+            live["KIP_qty"] += float(qty or 0); live["KIP_val"] += float(val or 0)
 
-    # GS lots list in range
     lots = (
         db.query(GSLot)
         .filter(GSLot.date >= start_d, GSLot.date <= end_d)
@@ -3629,22 +1351,17 @@ def gs_page(request: Request, start: str|None=None, end: str|None=None,
         .all()
     )
 
-    # Context aliases
     ctx = {
         "request": request,
         "role": current_role(request),
         "today_iso": today.isoformat(),
         "start": start_d.isoformat(),
         "end": end_d.isoformat(),
-
         "gs_capacity": SCREEN_CAPACITY_KG,
         "gs_eff_today": eff_today,
         "gs_last5": last5,
-
         "gs_live": live,
         "gs_lots": lots,
-
-        # Aliases to atomization-style names if your template reused them:
         "atom_capacity": SCREEN_CAPACITY_KG,
         "atom_eff_today": eff_today,
         "atom_last5": last5,
@@ -3660,8 +1377,8 @@ def gs_new(
     request: Request,
     db: Session = Depends(get_db),
     lot_weight: float = Form(...),
-     _guard = require_roles("admin", "screening"),   # <-- guard here
-    **allocs,  # alloc_<anneal_lot_id>=qty
+    _guard = require_roles("admin", "screening"),
+    **allocs,
 ):
     pairs: List[Tuple[int, float]] = []
     for k, v in allocs.items():
@@ -3682,14 +1399,12 @@ def gs_new(
     if abs(total_alloc - float(lot_weight or 0)) > 0.05:
         return _alert_redirect("Allocated qty must equal the new lot weight.", "/screening")
 
-    # Validate available
     a_rows = db.query(AnnealLot).filter(AnnealLot.id.in_([aid for aid,_ in pairs])).all()
     avail_map = {a.id: float(a.available_qty or 0) for a in a_rows}
     for aid, q in pairs:
         if q > avail_map.get(aid, 0.0) + 1e-6:
             return _alert_redirect("Allocation exceeds available qty for an Anneal lot.", "/screening")
 
-    # Grade by dominant qty
     by_grade: Dict[str, float] = {}
     cost_sum = 0.0
     for aid, q in pairs:
@@ -3699,14 +1414,12 @@ def gs_new(
         g = (a.grade or "KIP").upper()
         by_grade[g] = by_grade.get(g, 0.0) + q
         cost_sum += q * float(a.unit_cost or 0.0)
-
     dom_grade = max(by_grade.items(), key=lambda x: x[1])[0] if by_grade else "KIP"
 
     input_unit_cost = (cost_sum / total_alloc) if total_alloc > 0 else 0.0
     unit_cost = input_unit_cost + SCREEN_COST_PER_KG
     total_cost = unit_cost * float(lot_weight or 0)
 
-    # Create GS lot
     today = dt.date.today()
     seq = (db.query(func.count(GSLot.id)).filter(GSLot.date == today).scalar() or 0) + 1
     lot_no = next_gs_lot_no(today, seq)
@@ -3722,7 +1435,6 @@ def gs_new(
     )
     db.add(newlot); db.flush()
 
-    # Items + reduce anneal available
     for aid, q in pairs:
         db.add(GSLotItem(gs_lot_id=newlot.id, anneal_lot_id=aid, qty=q))
         a = db.query(AnnealLot).get(aid)
@@ -3736,18 +1448,10 @@ def gs_new(
 @app.get("/screening/downtime", response_class=HTMLResponse)
 def gs_downtime_page(request: Request, db: Session = Depends(get_db),
                      _guard = require_roles("admin","screening")):
-
-    rows = (
-        db.query(GSDowntime)
-          .order_by(GSDowntime.date.desc(), GSDowntime.id.desc())
-          .limit(50).all()
-    )
+    rows = db.query(GSDowntime).order_by(GSDowntime.date.desc(), GSDowntime.id.desc()).limit(50).all()
     return templates.TemplateResponse("gs_downtime.html", {
-        "request": request,
-        "rows": rows,
-        "today": dt.date.today().isoformat(),
+        "request": request, "rows": rows, "today": dt.date.today().isoformat()
     })
-
 
 @app.post("/screening/downtime")
 def gs_downtime_save(
@@ -3757,13 +1461,12 @@ def gs_downtime_save(
     minutes: int = Form(...),
     kind: Optional[str] = Form(None),
     remarks: Optional[str] = Form(None),
-      _guard = require_roles("admin", "screening"),   # 👈 role guard
+    _guard = require_roles("admin", "screening"),
 ):
     d = dt.date.fromisoformat(date)
     db.add(GSDowntime(date=d, minutes=int(minutes or 0), kind=kind, remarks=remarks))
     db.commit()
     return RedirectResponse("/screening/downtime", status_code=303)
-
 
 @app.get("/screening/downtime/export")
 def gs_downtime_csv(db: Session = Depends(get_db)):
@@ -3779,56 +1482,7 @@ def gs_downtime_csv(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="screening_downtime.csv"'}
     )
 
-# ---------- ANNEALING QA ----------
-@app.get("/qa/anneal/lot/{lot_id}", response_class=HTMLResponse)
-def qa_anneal_lot_form(lot_id: int,
-                       request: Request,
-                       db: Session = Depends(get_db),
-                       _guard = require_roles("admin","anneal","qa","view")):
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return _alert_redirect("Lot not found", "/annealing")
-
-    # grade label already changed upstream to KIP/KFS in your flow
-    grade = (lot.grade or "KIP")
-    read_only = _is_read_only(request) or (current_role(request) not in ("admin","anneal","qa"))
-    oxygen_val = _prefill_anneal_o(db, lot)
-
-    return templates.TemplateResponse("qa_anneal_lot.html", {
-        "request": request,
-        "lot": lot,
-        "grade": grade,
-        "oxygen": oxygen_val,
-        "read_only": read_only,
-        "role": current_role(request),
-    })
-
-@app.post("/qa/anneal/lot/{lot_id}")
-def qa_anneal_lot_save(lot_id: int,
-                       request: Request,
-                       oxygen: str = Form(""),
-                       decision: str = Form(...),
-                       remarks: str = Form(""),
-                       db: Session = Depends(get_db),
-                       _guard = require_roles("admin","anneal","qa")):
-    lot = db.get(Lot, lot_id)
-    if not lot:
-        return _alert_redirect("Lot not found", "/annealing")
-
-    row = db.query(AnnealQA).filter(AnnealQA.lot_id == lot.id).first()
-    if not row:
-        row = AnnealQA(lot_id=lot.id, oxygen=oxygen)
-    else:
-        row.oxygen = oxygen
-    db.add(row)
-
-    lot.qa_status = decision or "PENDING"
-    lot.qa_remarks = remarks or ""
-    db.add(lot)
-    db.commit()
-    return RedirectResponse(f"/qa/anneal/lot/{lot.id}", status_code=303)
-
-# ---------- SCREENING QA ----------
+# --- Screening QA (chem incl. O, plus compressibility) ---
 @app.get("/qa/screen/lot/{lot_id}", response_class=HTMLResponse)
 def qa_screen_lot_form(lot_id: int,
                        request: Request,
@@ -3837,11 +1491,9 @@ def qa_screen_lot_form(lot_id: int,
     lot = db.get(Lot, lot_id)
     if not lot:
         return _alert_redirect("Lot not found", "/screening")
-
-    grade = (lot.grade or "KIP")   # KIP/KFS in your screening stage
+    grade = (lot.grade or "KIP")
     read_only = _is_read_only(request) or (current_role(request) not in ("admin","screening","qa"))
     data = _prefill_screen_chem_from_upstream(db, lot)
-
     return templates.TemplateResponse("qa_screen_lot.html", {
         "request": request,
         "lot": lot,
@@ -3855,13 +1507,10 @@ def qa_screen_lot_form(lot_id: int,
 @app.post("/qa/screen/lot/{lot_id}")
 def qa_screen_lot_save(lot_id: int,
                        request: Request,
-                       # Chemistry
                        c: str = Form(""), si: str = Form(""), s: str = Form(""), p: str = Form(""),
                        cu: str = Form(""), ni: str = Form(""), mn: str = Form(""), fe: str = Form(""),
                        o: str = Form(""),
-                       # Physical
                        compressibility: str = Form(""),
-                       # Decision
                        decision: str = Form(...),
                        remarks: str = Form(""),
                        db: Session = Depends(get_db),
@@ -3869,7 +1518,6 @@ def qa_screen_lot_save(lot_id: int,
     lot = db.get(Lot, lot_id)
     if not lot:
         return _alert_redirect("Lot not found", "/screening")
-
     row = db.query(ScreenQA).filter(ScreenQA.lot_id == lot.id).first()
     if not row:
         row = ScreenQA(lot_id=lot.id)
@@ -3878,85 +1526,355 @@ def qa_screen_lot_save(lot_id: int,
     row.o = o
     row.compressibility = compressibility
     db.add(row)
-
     lot.qa_status = decision or "PENDING"
     lot.qa_remarks = remarks or ""
-    db.add(lot)
-    db.commit()
+    db.add(lot); db.commit()
     return RedirectResponse(f"/qa/screen/lot/{lot.id}", status_code=303)
 
+# ==== PART B2 END ====
+
+# ==== PART B3 START ====
+
 # -------------------------------------------------
-# PDF (no cost in PDF)
+# Traceability – LOT (full chain: heats + FIFO GRNs)
 # -------------------------------------------------
-def draw_header(c: canvas.Canvas, title: str):
-    width, height = A4
-    logo_w = 4 * cm
-    logo_h = 3 * cm
-    logo_x = 1.5 * cm
-    logo_y = height - 3 * cm
-    logo_path = os.path.join(os.path.dirname(__file__), "..", "static", "KRN_Logo.png")
-    if os.path.exists(logo_path):
-        c.drawImage(logo_path, logo_x, logo_y, width=logo_w, height=logo_h, preserveAspectRatio=True, mask="auto")
+@app.get("/traceability/lot/{lot_id}", response_class=HTMLResponse)
+def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
 
-    c.setFont("Helvetica-Bold", 36)
-    c.drawString(7 * cm, height - 2.0 * cm, "KRN Alloys Pvt Ltd")
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(7 * cm, height - 2.7 * cm, title)
-    c.line(1.5 * cm, height - 3.3 * cm, width - 1.5 * cm, height - 3.3 * cm)
+    # Allocation qty per heat for this lot
+    alloc_rows = db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()
+    alloc_map = {r.heat_id: float(r.qty or 0.0) for r in alloc_rows}
+    heats = [db.get(Heat, r.heat_id) for r in alloc_rows]
 
-def draw_lot_qa_annexure(c: canvas.Canvas, lot: Lot, start_y: float = None):
-    """
-    Add QA annexure pages (Chemistry, Physical, PSD) for a given lot.
-    """
-    width, height = A4
-    y = start_y or (height - 4 * cm)
+    # FIFO GRN rows
+    rows = []
+    for h in heats:
+        for cons in h.rm_consumptions:
+            rows.append(
+                type(
+                    "Row",
+                    (),
+                    {
+                        "heat_no": h.heat_no,
+                        "rm_type": cons.rm_type,
+                        "grn_id": cons.grn_id,
+                        "supplier": cons.grn.supplier if cons.grn else "",
+                        "qty": cons.qty,
+                    },
+                )
+            )
+    return templates.TemplateResponse(
+        "trace_lot.html",
+        {
+            "request": request,
+            "lot": lot,
+            "heats": heats,
+            "alloc_map": alloc_map,
+            "grn_rows": rows
+        }
+    )
 
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(2 * cm, y, f"QA Certificate – Lot {lot.lot_no}"); y -= 20
 
-    # Chemistry
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(2 * cm, y, "Chemistry:"); y -= 16
-    c.setFont("Helvetica", 10)
-    if lot.chemistry:
-        for k, v in vars(lot.chemistry).items():
-            if k in ("id", "lot_id"): continue
-            c.drawString(2.5 * cm, y, f"{k.upper()}: {v or ''}"); y -= 12
-            if y < 3 * cm:
-                c.showPage(); draw_header(c, f"QA Certificate – {lot.lot_no}"); y = height - 4 * cm
+# -------------------------------------------------
+# Traceability – HEAT (RM → GRN FIFO breakdown)
+# -------------------------------------------------
+@app.get("/traceability/heat/{heat_id}", response_class=HTMLResponse)
+def trace_heat(heat_id: int, request: Request, db: Session = Depends(get_db)):
+    heat = (
+        db.query(Heat)
+        .options(joinedload(Heat.rm_consumptions).joinedload(HeatRM.grn))
+        .filter(Heat.id == heat_id)
+        .first()
+    )
+    if not heat:
+        return PlainTextResponse("Heat not found", status_code=404)
+
+    by_rm: Dict[str, List[Tuple[int, float, str]]] = {}
+    for c in heat.rm_consumptions:
+        supp = c.grn.supplier if c.grn else ""
+        by_rm.setdefault(c.rm_type, []).append((c.grn_id, float(c.qty or 0.0), supp))
+
+    return templates.TemplateResponse(
+        "trace_heat.html",
+        {"request": request, "heat": heat, "by_rm": by_rm}
+    )
+
+
+# -------------------------------------------------
+# Lot quick views for RAP “Docs” column (Trace + QA)
+# -------------------------------------------------
+@app.get("/lot/{lot_id}/trace", response_class=HTMLResponse)
+def lot_trace_view(lot_id: int, db: Session = Depends(get_db)):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return HTMLResponse("<p>Lot not found</p>", status_code=404)
+
+    rows = []
+    for lh in getattr(lot, "heats", []):
+        h = db.get(Heat, lh.heat_id)
+        if not h:
+            continue
+        rows.append({
+            "heat_no": h.heat_no,
+            "alloc": float(lh.qty or 0.0),
+            "out": float(h.actual_output or 0.0),
+            "qa": h.qa_status or "",
+            "rm_type": "", "grn_id": "", "supplier": "", "rm_qty": ""
+        })
+        for cons in getattr(h, "rm_consumptions", []):
+            g = cons.grn
+            rows.append({
+                "heat_no": "", "alloc": "", "out": "", "qa": "",
+                "rm_type": cons.rm_type, "grn_id": cons.grn_id,
+                "supplier": (g.supplier if g else ""),
+                "rm_qty": f"{float(cons.qty or 0.0):.1f}"
+            })
+
+    html = [
+        "<h3>Trace – Lot ", lot.lot_no or "", "</h3>",
+        "<table border=1 cellpadding=6 cellspacing=0>",
+        "<thead><tr>",
+        "<th>Heat</th><th>Alloc to Lot (kg)</th><th>Heat Out (kg)</th><th>QA</th>",
+        "<th>RM Type</th><th>GRN #</th><th>Supplier</th><th>RM Qty (kg)</th>",
+        "</tr></thead><tbody>"
+    ]
+    for r in rows:
+        html.append(
+            f"<tr><td>{r['heat_no']}</td><td>{r['alloc']}</td><td>{r['out']}</td><td>{r['qa']}</td>"
+            f"<td>{r['rm_type']}</td><td>{r['grn_id']}</td><td>{r['supplier']}</td><td>{r['rm_qty']}</td></tr>"
+        )
+    html.append("</tbody></table>")
+    html.append('<p style="margin-top:12px"><a href="/rap">← Back to RAP</a></p>')
+    return HTMLResponse("".join(html))
+
+
+@app.get("/lot/{lot_id}/qa", response_class=HTMLResponse)
+def lot_qa_view(lot_id: int, db: Session = Depends(get_db)):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+
+    def v(x): return ("—" if x in (None, "",) else x)
+
+    rows = []
+    for lh in getattr(lot, "heats", []):
+        h = db.get(Heat, lh.heat_id)
+        if not h:
+            continue
+        rows.append({
+            "heat_no": h.heat_no,
+            "qa": getattr(h, "qa_status", "") or "—",
+            "notes": getattr(h, "qa_notes", "") if hasattr(h, "qa_notes") else "—",
+        })
+
+    chem = getattr(lot, "chemistry", None)
+    phys = getattr(lot, "phys", None)
+    psd  = getattr(lot, "psd", None)
+
+    html = [
+        f"<h2>QA snapshot – Lot {lot.lot_no}</h2>",
+        "<table border='1' cellpadding='6' cellspacing='0'>",
+        "<tr><th>Heat</th><th>QA</th><th>Notes</th></tr>",
+    ]
+    for r in rows:
+        html.append(f"<tr><td>{r['heat_no']}</td><td>{r['qa']}</td><td>{r['notes']}</td></tr>")
+    if not rows:
+        html.append("<tr><td colspan='3'>No heats recorded.</td></tr>")
+    html.append("</table><br>")
+
+    html += ["<h3>Chemistry</h3>",
+             "<table border='1' cellpadding='6' cellspacing='0'>",
+             "<tr><th>C</th><th>Si</th><th>S</th><th>P</th><th>Cu</th><th>Ni</th><th>Mn</th><th>Fe</th></tr>"]
+    if chem:
+        html.append(f"<tr><td>{v(getattr(chem,'c',None))}</td>"
+                    f"<td>{v(getattr(chem,'si',None))}</td>"
+                    f"<td>{v(getattr(chem,'s',None))}</td>"
+                    f"<td>{v(getattr(chem,'p',None))}</td>"
+                    f"<td>{v(getattr(chem,'cu',None))}</td>"
+                    f"<td>{v(getattr(chem,'ni',None))}</td>"
+                    f"<td>{v(getattr(chem,'mn',None))}</td>"
+                    f"<td>{v(getattr(chem,'fe',None))}</td></tr>")
     else:
-        c.drawString(2.5 * cm, y, "No chemistry data"); y -= 16
+        html.append("<tr><td colspan='8'>—</td></tr>")
+    html.append("</table><br>")
 
-    # Physical
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(2 * cm, y, "Physical:"); y -= 16
-    c.setFont("Helvetica", 10)
-    if lot.phys:
-        for k, v in vars(lot.phys).items():
-            if k in ("id", "lot_id"): continue
-            c.drawString(2.5 * cm, y, f"{k.upper()}: {v or ''}"); y -= 12
-            if y < 3 * cm:
-                c.showPage(); draw_header(c, f"QA Certificate – {lot.lot_no}"); y = height - 4 * cm
+    html += ["<h3>Physical</h3>",
+             "<table border='1' cellpadding='6' cellspacing='0'>",
+             "<tr><th>AD (g/cc)</th><th>Flow (s/50g)</th></tr>"]
+    if phys:
+        html.append(f"<tr><td>{v(getattr(phys,'ad',None))}</td><td>{v(getattr(phys,'flow',None))}</td></tr>")
     else:
-        c.drawString(2.5 * cm, y, "No physical data"); y -= 16
+        html.append("<tr><td colspan='2'>—</td></tr>")
+    html.append("</table><br>")
 
-    # PSD
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(2 * cm, y, "Particle Size Distribution:"); y -= 16
-    c.setFont("Helvetica", 10)
-    if lot.psd:
-        for k, v in vars(lot.psd).items():
-            if k in ("id", "lot_id"): continue
-            c.drawString(2.5 * cm, y, f"{k.upper()}: {v or ''}"); y -= 12
-            if y < 3 * cm:
-                c.showPage(); draw_header(c, f"QA Certificate – {lot.lot_no}"); y = height - 4 * cm
+    html += ["<h3>PSD</h3>",
+             "<table border='1' cellpadding='6' cellspacing='0'>",
+             "<tr><th>+212</th><th>+180</th><th>-180+150</th><th>-150+75</th><th>-75+45</th><th>-45</th></tr>"]
+    if psd:
+        html.append(
+            f"<tr><td>{v(getattr(psd,'p212',None))}</td>"
+            f"<td>{v(getattr(psd,'p180',None))}</td>"
+            f"<td>{v(getattr(psd,'n180p150',None))}</td>"
+            f"<td>{v(getattr(psd,'n150p75',None))}</td>"
+            f"<td>{v(getattr(psd,'n75p45',None))}</td>"
+            f"<td>{v(getattr(psd,'n45',None))}</td></tr>"
+        )
     else:
-        c.drawString(2.5 * cm, y, "No PSD data"); y -= 16
+        html.append("<tr><td colspan='6'>—</td></tr>")
+    html.append("</table><p><a href='/rap'>← Back to RAP</a></p>")
+    return HTMLResponse("".join(html))
+
+
+# -------------------------------------------------
+# QA Export (heats + lots) – by date range
+# -------------------------------------------------
+@app.get("/qa/export")
+def qa_export(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    heats = db.query(Heat).order_by(Heat.id.asc()).all()
+    lots  = db.query(Lot ).order_by(Lot.id.asc()).all()
+
+    today = dt.date.today()
+    s = dt.date.fromisoformat(start) if start else today
+    e = dt.date.fromisoformat(end)   if end   else today
+
+    def _hdate(h: Heat) -> dt.date:
+        return heat_date_from_no(h.heat_no) or today
+    def _ldate(l: Lot) -> dt.date:
+        return lot_date_from_no(l.lot_no) or today
+
+    heats_in = [h for h in heats if s <= _hdate(h) <= e]
+    lots_in  = [l for l in lots  if s <= _ldate(l) <= e]
+
+    out = io.StringIO()
+    w = out.write
+    w("Type,ID,Date,Grade/Type,Weight/Output (kg),QA Status,C,Si,S,P,Cu,Ni,Mn,Fe\n")
+
+    for h in heats_in:
+        chem = h.chemistry
+        w(
+            f"HEAT,{h.heat_no},{_hdate(h).isoformat()},"
+            f"{('KRFS' if heat_grade(h)=='KRFS' else 'KRIP')},"
+            f"{float(h.actual_output or 0.0):.1f},{h.qa_status or ''},"
+            f"{(chem.c  if chem else '')},"
+            f"{(chem.si if chem else '')},"
+            f"{(chem.s  if chem else '')},"
+            f"{(chem.p  if chem else '')},"
+            f"{(chem.cu if chem else '')},"
+            f"{(chem.ni if chem else '')},"
+            f"{(chem.mn if chem else '')},"
+            f"{(chem.fe if chem else '')}\n"
+        )
+
+    for l in lots_in:
+        chem = l.chemistry
+        w(
+            f"LOT,{l.lot_no},{_ldate(l).isoformat()},{l.grade or ''},"
+            f"{float(l.weight or 0.0):.1f},{l.qa_status or ''},"
+            f"{(chem.c  if chem else '')},"
+            f"{(chem.si if chem else '')},"
+            f"{(chem.s  if chem else '')},"
+            f"{(chem.p  if chem else '')},"
+            f"{(chem.cu if chem else '')},"
+            f"{(chem.ni if chem else '')},"
+            f"{(chem.mn if chem else '')},"
+            f"{(chem.fe if chem else '')}\n"
+        )
+
+    data = out.getvalue().encode("utf-8")
+    fname = f"qa_export_{s.isoformat()}_{e.isoformat()}.csv"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'}
+    )
+
+
+# -------------------------------------------------
+# Lot PDFs (1) quick summary used anywhere  (2) generic /pdf/lot
+# -------------------------------------------------
+@app.get("/lot/{lot_id}/pdf")
+def lot_pdf_view(lot_id: int, db: Session = Depends(get_db)):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+
+    # header
+    try:
+        draw_header(c, "Lot Summary")
+    except Exception:
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(2 * cm, h - 2.5 * cm, "KRN Alloys Pvt. Ltd")
+        c.setFont("Helvetica", 12)
+        c.drawString(2 * cm, h - 3.2 * cm, "Lot Summary")
+
+    y = h - 4 * cm
+    c.setFont("Helvetica", 11)
+    c.drawString(2 * cm, y, f"Lot: {lot.lot_no}    Grade: {lot.grade or '-'}"); y -= 14
+    c.drawString(2 * cm, y, f"Lot Weight: {float(lot.weight or 0):.1f} kg"); y -= 14
+    c.drawString(2 * cm, y, f"Unit Cost: ₹{float(lot.unit_cost or 0):.2f}"); y -= 20
+
+    # section title
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(2 * cm, y, "Heats & GRN (FIFO)"); y -= 14
+    c.setFont("Helvetica", 10)
+
+    def new_page():
+        nonlocal y
+        c.showPage()
+        try:
+            draw_header(c, "Lot Summary")
+        except Exception:
+            c.setFont("Helvetica-Bold", 18)
+            c.drawString(2 * cm, h - 2.5 * cm, "KRN Alloys Pvt. Ltd")
+            c.setFont("Helvetica", 12)
+            c.drawString(2 * cm, h - 3.2 * cm, "Lot Summary")
+        y = h - 4 * cm
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(2 * cm, y, "Heats & GRN (FIFO)"); y -= 14
+        c.setFont("Helvetica", 10)
+
+    # parent rows (heats) + child rows (GRN FIFO)
+    for lh in getattr(lot, "heats", []):
+        hobj = db.get(Heat, lh.heat_id)
+        if not hobj:
+            continue
+        if y < 3 * cm:
+            new_page()
+        c.drawString(2.2 * cm, y, f"{hobj.heat_no} | Alloc: {float(lh.qty or 0):.1f} kg | QA: {hobj.qa_status or ''} | Out: {float(hobj.actual_output or 0):.1f} kg")
+        y -= 12
+        for cons in getattr(hobj, "rm_consumptions", []):
+            if y < 3 * cm:
+                new_page()
+            g = cons.grn
+            supplier = (g.supplier if g else "")
+            c.drawString(2.8 * cm, y, f"– {cons.rm_type} | GRN #{cons.grn_id} | {supplier} | {float(cons.qty or 0):.1f} kg")
+            y -= 12
+
+    c.showPage(); c.save()
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="lot_{lot.lot_no}.pdf"'}
+    )
 
 
 @app.get("/pdf/lot/{lot_id}")
 def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
     lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     width, height = A4
@@ -3964,25 +1882,20 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
 
     y = height - 4 * cm
     c.setFont("Helvetica", 11)
-    c.drawString(2 * cm, y, f"Grade: {lot.grade}"); y -= 14
-    c.drawString(2 * cm, y, f"Weight: {lot.weight:.1f} kg"); y -= 14
-    c.drawString(2 * cm, y, f"Lot QA: {lot.qa_status}"); y -= 18
+    c.drawString(2 * cm, y, f"Grade: {lot.grade or '-'}"); y -= 14
+    c.drawString(2 * cm, y, f"Weight: {float(lot.weight or 0):.1f} kg"); y -= 14
+    c.drawString(2 * cm, y, f"Lot QA: {lot.qa_status or '-'}"); y -= 18
 
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(2 * cm, y, "Heats (Allocation)")
-    y -= 14
-
+    c.drawString(2 * cm, y, "Heats (Allocation)"); y -= 14
     c.setFont("Helvetica", 10)
     for lh in lot.heats:
         h = lh.heat
-        c.drawString(
-            2.2 * cm, y,
-            f"{h.heat_no}  | Alloc to lot: {float(lh.qty or 0):.1f} kg  | Heat Out: {float(h.actual_output or 0):.1f} kg  | QA: {h.qa_status}"
-        )
+        c.drawString(2.2 * cm, y,
+            f"{h.heat_no}  | Alloc to lot: {float(lh.qty or 0):.1f} kg  | Heat Out: {float(h.actual_output or 0):.1f} kg  | QA: {h.qa_status or '-'}")
         y -= 12
         if y < 3 * cm:
             c.showPage(); draw_header(c, f"Traceability Report – Lot {lot.lot_no}"); y = height - 4 * cm
-
 
     y -= 6
     c.setFont("Helvetica-Bold", 11); c.drawString(2 * cm, y, "GRN Consumption (FIFO)"); y -= 14
@@ -3991,12 +1904,254 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
         h = lh.heat
         for cons in h.rm_consumptions:
             g = cons.grn
-            c.drawString(2.2 * cm, y, f"Heat {h.heat_no} | {cons.rm_type} | GRN #{cons.grn_id} | {g.supplier if g else ''} | {cons.qty:.1f} kg")
+            c.drawString(2.2 * cm, y, f"Heat {h.heat_no} | {cons.rm_type} | GRN #{cons.grn_id} | {g.supplier if g else ''} | {float(cons.qty or 0):.1f} kg")
             y -= 12
             if y < 3 * cm:
                 c.showPage(); draw_header(c, f"Traceability Report – Lot {lot.lot_no}"); y = height - 4 * cm
 
+    # Optional: attach QA annexure
+    try:
+        draw_lot_qa_annexure(c, lot)
+    except Exception:
+        pass
+
     c.showPage(); c.save()
     buf.seek(0)
-    return StreamingResponse(buf, media_type="application/pdf",
-                             headers={"Content-Disposition": f'inline; filename="trace_{lot.lot_no}.pdf"'})
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="trace_{lot.lot_no}.pdf"'}
+    )
+
+# ==== PART B3 END ====
+
+# ===========================
+# B4 — Branding + PDFs (drop-in)
+# ===========================
+
+# --- KRN static logo loader ---
+def _krn_logo_path() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
+    # try ./static then ../static
+    c1 = os.path.join(here, "static", "KRN_Logo.png")
+    c2 = os.path.join(here, "..", "static", "KRN_Logo.png")
+    return c1 if os.path.exists(c1) else c2
+
+# --- Always-on watermark on every page ---
+def add_watermark(c: canvas.Canvas, text: str = "KRN Confidential"):
+    width, height = A4
+    c.saveState()
+    c.setFont("Helvetica-Bold", 60)
+    c.setFillGray(0.85)     # light
+    c.translate(width/2, height/2)
+    c.rotate(45)
+    c.drawCentredString(0, 0, text)
+    c.restoreState()
+
+# --- Branded header & footer ---
+def draw_header(c: canvas.Canvas, title: str):
+    width, height = A4
+    # watermark is ALWAYS on every page
+    add_watermark(c)
+
+    # header strip
+    c.setLineWidth(1)
+    c.setStrokeColorRGB(0.96, 0.62, 0.04)  # KRN orange-ish rule
+    c.line(1.5*cm, height-3.35*cm, width-1.5*cm, height-3.35*cm)
+
+    # logo
+    lp = _krn_logo_path()
+    if os.path.exists(lp):
+        # preserve aspect & mask
+        c.drawImage(lp, 1.5*cm, height-3.0*cm, width=4.0*cm, height=2.4*cm,
+                    preserveAspectRatio=True, mask='auto')
+
+    # title
+    c.setFont("Helvetica-Bold", 18)
+    c.setFillGray(0.1)
+    c.drawString(7.0*cm, height-2.2*cm, "KRN Alloys Pvt. Ltd – Plant 1")
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(7.0*cm, height-2.8*cm, title)
+
+def draw_footer(c: canvas.Canvas):
+    width, _ = A4
+    c.setFont("Helvetica", 9)
+    c.setFillGray(0.3)
+    c.drawString(1.5*cm, 1.2*cm, "Generated by KRN MRP/QA Suite")
+    c.drawRightString(width-1.5*cm, 1.2*cm, dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
+    # bottom rule
+    c.setStrokeColorRGB(0.9, 0.9, 0.9)
+    c.line(1.5*cm, 1.5*cm, width-1.5*cm, 1.5*cm)
+
+# Utility: start a new branded page (header+footer+watermark)
+def _start_page(c: canvas.Canvas, title: str):
+    draw_header(c, title)
+    draw_footer(c)
+    # content should begin below header area:
+    _, height = A4
+    return height - 4.0*cm  # suggested top Y for content
+
+# -------- QA Annexure (stage-agnostic) ----------
+def draw_lot_qa_annexure(c: canvas.Canvas, lot: Lot, db: Session, start_y: float | None = None):
+    """
+    Adds QA annexure sections for the given ATOM lot:
+      - Chemistry (LotChem if present)
+      - Physical (LotPhys if present)
+      - PSD (LotPSD if present)
+      - If Screening QA exists (ScreenQA), also prints O and Compressibility
+      - If Anneal QA exists (AnnealQA), prints Oxygen
+    Automatically paginates with branded header/footer/watermark.
+    """
+    width, height = A4
+    y = start_y or _start_page(c, f"QA Certificate – {lot.lot_no}")
+
+    def ensure_room(lines: int, title: str | None = None):
+        nonlocal y
+        if y - 12*lines < 2.2*cm:
+            c.showPage()
+            y = _start_page(c, f"QA Certificate – {lot.lot_no}")
+            if title:
+                c.setFont("Helvetica-Bold", 12); c.drawString(2*cm, y, title); y -= 16
+
+    # Title
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(2*cm, y, f"QA Certificate – Lot {lot.lot_no}"); y -= 20
+
+    # Chemistry
+    c.setFont("Helvetica-Bold", 12); c.drawString(2*cm, y, "Chemistry (Atomization):"); y -= 16
+    c.setFont("Helvetica", 10)
+    chem = getattr(lot, "chemistry", None)
+    if chem:
+        rows = [("C", chem.c),("Si", chem.si),("S", chem.s),("P", chem.p),
+                ("Cu", chem.cu),("Ni", chem.ni),("Mn", chem.mn),("Fe", chem.fe)]
+        for k, v in rows:
+            ensure_room(1)
+            c.drawString(2.5*cm, y, f"{k}: {v or ''}"); y -= 12
+    else:
+        ensure_room(1)
+        c.drawString(2.5*cm, y, "No chemistry data"); y -= 14
+
+    # Physical
+    c.setFont("Helvetica-Bold", 12); c.drawString(2*cm, y, "Physical (Atomization):"); y -= 16
+    c.setFont("Helvetica", 10)
+    phys = getattr(lot, "phys", None)
+    if phys:
+        for k, v in (("AD (g/cc)", phys.ad),("Flow (s/50g)", phys.flow)):
+            ensure_room(1)
+            c.drawString(2.5*cm, y, f"{k}: {v or ''}"); y -= 12
+    else:
+        ensure_room(1)
+        c.drawString(2.5*cm, y, "No physical data"); y -= 14
+
+    # PSD
+    c.setFont("Helvetica-Bold", 12); c.drawString(2*cm, y, "Particle Size Distribution (Atomization):"); y -= 16
+    c.setFont("Helvetica", 10)
+    psd = getattr(lot, "psd", None)
+    if psd:
+        rows = [("+212", psd.p212),("+180", psd.p180),("-180+150", psd.n180p150),
+                ("-150+75", psd.n150p75),("-75+45", psd.n75p45),("-45", psd.n45)]
+        for k, v in rows:
+            ensure_room(1)
+            c.drawString(2.5*cm, y, f"{k}: {v or ''}"); y -= 12
+    else:
+        ensure_room(1)
+        c.drawString(2.5*cm, y, "No PSD data"); y -= 14
+
+    # Annealing QA (Oxygen)
+    aqa = db.query(AnnealQA).filter(AnnealQA.lot_id == lot.id).first()
+    c.setFont("Helvetica-Bold", 12); c.drawString(2*cm, y, "Annealing QA (Oxygen):"); y -= 16
+    c.setFont("Helvetica", 10)
+    ensure_room(1)
+    c.drawString(2.5*cm, y, f"Oxygen: {(aqa.oxygen if aqa else '')}"); y -= 14
+
+    # Screening QA (Chem+Compressibility)
+    sqa = db.query(ScreenQA).filter(ScreenQA.lot_id == lot.id).first()
+    c.setFont("Helvetica-Bold", 12); c.drawString(2*cm, y, "Screening QA (Final):"); y -= 16
+    c.setFont("Helvetica", 10)
+    if sqa:
+        rows = [("C", sqa.c),("Si", sqa.si),("S", sqa.s),("P", sqa.p),
+                ("Cu", sqa.cu),("Ni", sqa.ni),("Mn", sqa.mn),("Fe", sqa.fe),
+                ("O", sqa.o),("Compressibility (g/cc)", sqa.compressibility)]
+        for k, v in rows:
+            ensure_room(1)
+            c.drawString(2.5*cm, y, f"{k}: {v or ''}"); y -= 12
+    else:
+        ensure_room(1)
+        c.drawString(2.5*cm, y, "No screening QA data"); y -= 14
+
+# -------- Lot PDF (Traceability) — REPLACE existing versions ----------
+@app.get("/lot/{lot_id}/pdf")
+def lot_pdf_view(lot_id: int, request: Request, db: Session = Depends(get_db)):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+
+    role = current_role(request)
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+
+    # Page 1: Summary
+    y = _start_page(c, "Traceability Report – Lot Summary")
+    c.setFont("Helvetica", 11)
+    c.drawString(2*cm, y, f"Lot: {lot.lot_no}    Grade: {lot.grade or '-'}"); y -= 14
+    c.drawString(2*cm, y, f"Lot Weight: {float(lot.weight or 0):.1f} kg"); y -= 14
+    if role == "admin":
+        c.drawString(2*cm, y, f"Unit Cost: ₹{float(lot.unit_cost or 0):.2f}   Total Cost: ₹{float(lot.total_cost or 0):.2f}")
+        y -= 14
+    c.drawString(2*cm, y, f"Lot QA: {lot.qa_status or '-'}"); y -= 18
+
+    # Heats & allocations
+    c.setFont("Helvetica-Bold", 11); c.drawString(2*cm, y, "Heats used in this Lot"); y -= 14
+    c.setFont("Helvetica", 10)
+
+    def need_new_page(lines=1):
+        nonlocal y
+        if y - 12*lines < 2.4*cm:
+            c.showPage()
+            y = _start_page(c, "Traceability Report – Lot Summary")
+            c.setFont("Helvetica-Bold", 11); c.drawString(2*cm, y, "Heats used in this Lot"); y -= 14
+            c.setFont("Helvetica", 10)
+
+    for lh in getattr(lot, "heats", []):
+        hobj = db.get(Heat, lh.heat_id)
+        if not hobj:
+            continue
+        need_new_page()
+        c.drawString(2.2*cm, y,
+            f"{hobj.heat_no} | Alloc: {float(lh.qty or 0):.1f} kg | Heat Out: {float(hobj.actual_output or 0):.1f} kg | QA: {hobj.qa_status or ''}"
+        ); y -= 12
+        # GRN FIFO children
+        for cons in getattr(hobj, "rm_consumptions", []):
+            need_new_page()
+            g = cons.grn
+            supplier = (g.supplier if g else "")
+            c.drawString(2.8*cm, y, f"– {cons.rm_type} | GRN #{cons.grn_id} | {supplier} | {float(cons.qty or 0):.1f} kg"); y -= 12
+
+    # Annexure page(s)
+    c.showPage()
+    _start_page(c, "Traceability Report – QA Annexure")
+    draw_lot_qa_annexure(c, lot, db)
+
+    c.showPage(); c.save()
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="lot_{lot.lot_no}.pdf"'}
+    )
+
+# Backward-compatible alias (REPLACE if you also have /pdf/lot/{id})
+@app.get("/pdf/lot/{lot_id}")
+def pdf_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
+    return lot_pdf_view(lot_id, request, db)
+
+# ----- Patch for rap_dispatch_pdf loop bug (call this where your function lives) -----
+# In your existing `rap_dispatch_pdf(alloc_id)` (Part 6), replace:
+#     for item in dispatch.items:
+# with:
+#     items = db.query(RAPDispatchItem).filter(RAPDispatchItem.dispatch_id == disp.id).all()
+#     for item in items:
+#         draw_lot_qa_annexure(c, item.lot, db)
+#
+# (And feel free to add `_start_page(c, "Dispatch Note")` at the top + use draw_footer() on each page
+# if you want dispatch PDFs branded the same way.)
