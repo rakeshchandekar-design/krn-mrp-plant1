@@ -64,7 +64,7 @@ app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_hex(16)))
 
 # --- Paths: repo has /static and /templates at the REPO ROOT ---
-BASE_DIR = Path(_file_).resolve().parent          # .../krn_mrp_app
+BASE_DIR = Path(__file__).resolve().parent          # .../krn_mrp_app
 PROJECT_ROOT = BASE_DIR.parent                      # repo root
 TEMPLATES_DIR = PROJECT_ROOT / "templates"
 STATIC_DIR    = PROJECT_ROOT / "static"
@@ -2050,7 +2050,7 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
 
 # --- KRN static logo loader ---
 def _krn_logo_path() -> str:
-    here = os.path.dirname(os.path.abspath(___file___))
+    here = os.path.dirname(os.path.abspath(__file__))
     # try ./static then ../static
     c1 = os.path.join(here, "static", "KRN_Logo.png")
     c2 = os.path.join(here, "..", "static", "KRN_Logo.png")
