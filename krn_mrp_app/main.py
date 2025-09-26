@@ -22,6 +22,7 @@ from sqlalchemy import (
     ForeignKey, func, text
 )
 from sqlalchemy.orm import sessionmaker, relationship, Session, declarative_base, joinedload
+from sqlalchemy import inspect
 
 # ============================================================
 # CONFIGURATION & CONSTANTS
@@ -161,7 +162,7 @@ def _alert_redirect(msg: str, url: str = "/"):
     return HTMLResponse(html)
 
 # ============================================================
-# DATABASE MODELS (keep your structures intact)
+# DATABASE MODELS (keep names & tablenames stable)
 # ============================================================
 
 class GRN(Base):
@@ -170,7 +171,7 @@ class GRN(Base):
     grn_no = Column(String, unique=True, index=True)
     date = Column(DateTime, default=dt.datetime.utcnow)
     supplier = Column(String)
-    item = Column(String)
+    item = Column(String)                 # <- used by UI & PDFs
     qty = Column(Float, default=0)
     unit_cost = Column(Float, default=0)
 
@@ -184,6 +185,9 @@ class Heat(Base):
     total_inputs = Column(Float, default=0)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
 
+    # FIFO raw-material consumptions (used in trace / PDFs)
+    rm_consumptions = relationship("RMConsumption", back_populates="heat", cascade="all,delete-orphan")
+
 class Lot(Base):
     __tablename__ = "lot"
     id = Column(Integer, primary_key=True)
@@ -191,10 +195,45 @@ class Lot(Base):
     heat_id = Column(Integer, ForeignKey("heat.id"))
     grade = Column(String)
     qty = Column(Float, default=0)
-    status = Column(String, default="Pending")  # Pending/Hold/Approved/Reject
+    status = Column(String, default="Pending")  # legacy status
+    qa_status = Column(String, default="PENDING")
+    qa_remarks = Column(String, default="")
     unit_cost = Column(Float, default=0)
+    total_cost = Column(Float, default=0)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
-    heat = relationship("Heat", backref="Lot")
+    date = Column(DateTime, default=dt.datetime.utcnow)
+
+    heat = relationship("Heat", backref="lots")
+    # allocations from heats (for traceability pages/PDF)
+    heats = relationship("LotHeat", back_populates="lot", cascade="all,delete-orphan")
+
+    @property
+    def weight(self): return float(self.qty or 0.0)
+    @weight.setter
+    def weight(self, v): self.qty = float(v or 0.0)
+
+# Association: Lot ↔ Heat with qty
+class LotHeat(Base):
+    __tablename__ = "lot_heat"
+    id = Column(Integer, primary_key=True)
+    lot_id = Column(Integer, ForeignKey("lot.id"))
+    heat_id = Column(Integer, ForeignKey("heat.id"))
+    qty = Column(Float, default=0)
+
+    lot = relationship("Lot", back_populates="heats")
+    heat = relationship("Heat")
+
+# Raw-material FIFO consumption rows at Heat level
+class RMConsumption(Base):
+    __tablename__ = "rm_consumption"
+    id = Column(Integer, primary_key=True)
+    heat_id = Column(Integer, ForeignKey("heat.id"))
+    rm_type = Column(String)          # e.g. SS Scrap / Ferro / Etc
+    grn_id = Column(Integer, ForeignKey("grn.id"))
+    qty = Column(Float, default=0)
+
+    heat = relationship("Heat", back_populates="rm_consumptions")
+    grn  = relationship("GRN")
 
 class RAPLot(Base):
     __tablename__ = "raplot"
@@ -202,9 +241,55 @@ class RAPLot(Base):
     lot_id = Column(Integer, ForeignKey("lot.id"))
     grade = Column(String)
     qty = Column(Float, default=0)
-    status = Column(String, default="Approved")  # Approved, Hold, Reject
+    available_qty = Column(Float, default=0)
+    status = Column(String, default="Approved")
     unit_cost = Column(Float, default=0)
+    total_cost = Column(Float, default=0)
+
     lot = relationship("Lot", backref="rap_entry")
+
+# RAP allocations (positive/negative movements)
+class RAPAlloc(Base):
+    __tablename__ = "rap_alloc"
+    id = Column(Integer, primary_key=True)
+    rap_lot_id = Column(Integer, ForeignKey("raplot.id"))
+    date = Column(DateTime, default=dt.date.today)
+    kind = Column(String)            # e.g. "DISPATCH", "ANNEAL", "ADJUST"
+    qty = Column(Float, default=0.0)
+    remarks = Column(String, default="")
+    dest = Column(String, default="")  # customer or next-process
+
+    rap_lot = relationship("RAPLot")
+
+class RAPTransfer(Base):
+    __tablename__ = "rap_transfer"
+    id = Column(Integer, primary_key=True)
+    date = Column(DateTime, default=dt.date.today)
+    lot_id = Column(Integer, ForeignKey("lot.id"))
+    qty = Column(Float, default=0)
+    remarks = Column(String, default="")
+
+    lot = relationship("Lot")
+
+class RAPDispatch(Base):
+    __tablename__ = "rap_dispatch"
+    id = Column(Integer, primary_key=True)
+    date = Column(DateTime, default=dt.date.today)
+    customer = Column(String, default="")
+    grade = Column(String, default="")
+    total_qty = Column(Float, default=0.0)
+    total_cost = Column(Float, default=0.0)
+
+class RAPDispatchItem(Base):
+    __tablename__ = "rap_dispatch_item"
+    id = Column(Integer, primary_key=True)
+    dispatch_id = Column(Integer, ForeignKey("rap_dispatch.id"))
+    lot_id = Column(Integer, ForeignKey("lot.id"))
+    qty = Column(Float, default=0.0)
+    cost = Column(Float, default=0.0)
+
+    dispatch = relationship("RAPDispatch", backref="items")
+    lot = relationship("Lot")
 
 # --------------------------
 # Annealing stage
@@ -217,28 +302,49 @@ class AnnealLot(Base):
     rap_lot_id = Column(Integer, ForeignKey("raplot.id"))
     grade = Column(String)
     qty = Column(Float, default=0)
+    available_qty = Column(Float, default=0)
     ammonia_kg = Column(Float, default=0)
     status = Column(String, default="Pending")
+    qa_status = Column(String, default="PENDING")
     unit_cost = Column(Float, default=0)
+    total_cost = Column(Float, default=0)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
-    rap_lot = relationship("RAPLot", backref="anneal_Lot")
+    date = Column(DateTime, default=dt.datetime.utcnow)
 
+    rap_lot = relationship("RAPLot", backref="anneal_lots")
+    items = relationship("AnnealLotItem", backref="anneal_lot", cascade="all,delete-orphan")
+
+    @property
+    def weight(self): return float(self.qty or 0.0)
+    @weight.setter
+    def weight(self, v): self.qty = float(v or 0.0)
+
+class AnnealLotItem(Base):
+    __tablename__ = "anneal_lot_item"
+    id = Column(Integer, primary_key=True)
+    anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
+    rap_lot_id = Column(Integer, ForeignKey("raplot.id"))
+    qty = Column(Float, default=0.0)
+
+    rap_lot = relationship("RAPLot")
+
+# QA for anneal is stored against Atomization Lot in your flows
 class AnnealQA(Base):
     __tablename__ = "anneal_qa"
     id = Column(Integer, primary_key=True)
-    anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
-    oxygen = Column(Float, nullable=True)
-    decision = Column(String, default="Pending")
-    remarks = Column(String)
-    lot = relationship("AnnealLot", backref="qa_result")
+    lot_id = Column(Integer, ForeignKey("lot.id"))
+    oxygen = Column(String)                 # keep as str to accept any format
+    decision = Column(String, default="PENDING")
+    remarks = Column(String, default="")
+    lot = relationship("Lot", backref="anneal_qa_row")
 
 class AnnealDowntime(Base):
     __tablename__ = "anneal_downtime"
     id = Column(Integer, primary_key=True)
-    date = Column(DateTime, default=dt.datetime.utcnow)
+    date = Column(DateTime, default=dt.date.today)
     minutes = Column(Integer, default=0)
     kind = Column(String)  # Production/Maintenance/Power/Other
-    remarks = Column(String)
+    remarks = Column(String, default="")
 
 # --------------------------
 # Screening stage
@@ -251,33 +357,82 @@ class ScreenLot(Base):
     anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
     grade = Column(String)
     qty = Column(Float, default=0)
+    available_qty = Column(Float, default=0)
     oversize_40 = Column(Float, default=0)
     oversize_80 = Column(Float, default=0)
     status = Column(String, default="Pending")
+    qa_status = Column(String, default="PENDING")
     unit_cost = Column(Float, default=0)
+    total_cost = Column(Float, default=0)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
-    anneal_lot = relationship("AnnealLot", backref="screen_Lot")
+    date = Column(DateTime, default=dt.datetime.utcnow)
 
+    anneal_lot = relationship("AnnealLot", backref="screen_lots")
+    items = relationship("GSLotItem", backref="gs_lot", cascade="all,delete-orphan")
+
+    @property
+    def weight(self): return float(self.qty or 0.0)
+    @weight.setter
+    def weight(self, v): self.qty = float(v or 0.0)
+
+# alias so routes using GSLot still work
+GSLot = ScreenLot
+
+class GSLotItem(Base):
+    __tablename__ = "gs_lot_item"
+    id = Column(Integer, primary_key=True)
+    gs_lot_id = Column(Integer, ForeignKey("screen_lot.id"))
+    anneal_lot_id = Column(Integer, ForeignKey("anneal_lot.id"))
+    qty = Column(Float, default=0.0)
+
+    anneal_lot = relationship("AnnealLot")
+
+# QA for screening stored against Atomization Lot in your flows
 class ScreenQA(Base):
     __tablename__ = "screen_qa"
     id = Column(Integer, primary_key=True)
-    screen_lot_id = Column(Integer, ForeignKey("screen_lot.id"))
-    c = Column(Float, nullable=True)
-    s = Column(Float, nullable=True)
-    p = Column(Float, nullable=True)
-    si = Column(Float, nullable=True)
-    compressibility = Column(Float, nullable=True)
-    decision = Column(String, default="Pending")
-    remarks = Column(String)
-    lot = relationship("ScreenLot", backref="qa_result")
+    lot_id = Column(Integer, ForeignKey("lot.id"))   # NOTE: against Lot (not screen_lot)
+    c = Column(String); si = Column(String); s = Column(String); p = Column(String)
+    cu = Column(String); ni = Column(String); mn = Column(String); fe = Column(String)
+    o = Column(String)
+    compressibility = Column(String)
+    decision = Column(String, default="PENDING")
+    remarks = Column(String, default="")
+    lot = relationship("Lot", backref="screen_qa_row")
 
 class ScreenDowntime(Base):
     __tablename__ = "screen_downtime"
     id = Column(Integer, primary_key=True)
-    date = Column(DateTime, default=dt.datetime.utcnow)
+    date = Column(DateTime, default=dt.date.today)
     minutes = Column(Integer, default=0)
     kind = Column(String)
-    remarks = Column(String)
+    remarks = Column(String, default="")
+
+# alias so routes using GSDowntime still work
+GSDowntime = ScreenDowntime
+
+# Optional: chemistry/physical/psd blobs referenced by PDFs
+class LotChem(Base):
+    __tablename__ = "lot_chem"
+    id = Column(Integer, primary_key=True)
+    lot_id = Column(Integer, ForeignKey("lot.id"))
+    c = Column(String); si = Column(String); s = Column(String); p = Column(String)
+    cu = Column(String); ni = Column(String); mn = Column(String); fe = Column(String); o = Column(String)
+    lot = relationship("Lot", backref="chemistry")
+
+class LotPhys(Base):
+    __tablename__ = "lot_phys"
+    id = Column(Integer, primary_key=True)
+    lot_id = Column(Integer, ForeignKey("lot.id"))
+    compressibility = Column(String)
+    lot = relationship("Lot", backref="phys")
+
+class LotPSD(Base):
+    __tablename__ = "lot_psd"
+    id = Column(Integer, primary_key=True)
+    lot_id = Column(Integer, ForeignKey("lot.id"))
+    d10 = Column(String); d50 = Column(String); d90 = Column(String)
+    lot = relationship("Lot", backref="psd")
 
 # ============================================================
 # LIGHTWEIGHT MIGRATIONS (idempotent, prevents 500s)
@@ -298,35 +453,45 @@ def apply_simple_migrations():
         "ALTER TABLE heat ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
         "ALTER TABLE heat ADD COLUMN IF NOT EXISTS power_kwh DOUBLE PRECISION",
         "ALTER TABLE heat ADD COLUMN IF NOT EXISTS total_inputs DOUBLE PRECISION",
-        "ALTER TABLE heat ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
+        "ALTER TABLE heat ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
 
         # LOT
         "ALTER TABLE lot ADD COLUMN IF NOT EXISTS grade VARCHAR",
         "ALTER TABLE lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'Pending'",
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
+        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS status VARCHAR",
+        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS qa_status VARCHAR DEFAULT 'PENDING'",
+        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS qa_remarks VARCHAR",
+        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
+        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
+        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
+        "ALTER TABLE lot ADD COLUMN IF NOT EXISTS date TIMESTAMP",
 
         # RAPLot
         "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS grade VARCHAR",
         "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
-        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'Approved'",
-        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS available_qty DOUBLE PRECISION",
+        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS status VARCHAR",
+        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
+        "ALTER TABLE raplot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
 
         # Anneal
         "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS lot_no VARCHAR",
         "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS grade VARCHAR",
         "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
+        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS available_qty DOUBLE PRECISION",
         "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS ammonia_kg DOUBLE PRECISION",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'Pending'",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
+        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS status VARCHAR",
+        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS qa_status VARCHAR DEFAULT 'PENDING'",
+        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
+        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
+        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
+        "ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS date TIMESTAMP",
 
-        "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS oxygen DOUBLE PRECISION",
-        "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS decision VARCHAR DEFAULT 'Pending'",
+        "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS oxygen VARCHAR",
+        "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS decision VARCHAR DEFAULT 'PENDING'",
         "ALTER TABLE anneal_qa ADD COLUMN IF NOT EXISTS remarks VARCHAR",
 
-        "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS date TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
+        "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS date TIMESTAMP",
         "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS minutes INTEGER",
         "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS kind VARCHAR",
         "ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS remarks VARCHAR",
@@ -335,91 +500,43 @@ def apply_simple_migrations():
         "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS lot_no VARCHAR",
         "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS grade VARCHAR",
         "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION",
+        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS available_qty DOUBLE PRECISION",
         "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS oversize_40 DOUBLE PRECISION",
         "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS oversize_80 DOUBLE PRECISION",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'Pending'",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
+        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS status VARCHAR",
+        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS qa_status VARCHAR DEFAULT 'PENDING'",
+        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
+        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS total_cost DOUBLE PRECISION",
+        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
+        "ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS date TIMESTAMP",
 
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS c DOUBLE PRECISION",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS s DOUBLE PRECISION",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS p DOUBLE PRECISION",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS si DOUBLE PRECISION",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS compressibility DOUBLE PRECISION",
-        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS decision VARCHAR DEFAULT 'Pending'",
+        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS c VARCHAR",
+        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS s VARCHAR",
+        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS p VARCHAR",
+        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS si VARCHAR",
+        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS compressibility VARCHAR",
+        "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS decision VARCHAR DEFAULT 'PENDING'",
         "ALTER TABLE screen_qa ADD COLUMN IF NOT EXISTS remarks VARCHAR",
 
-        "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS date TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
+        "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS date TIMESTAMP",
         "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS minutes INTEGER",
         "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS kind VARCHAR",
         "ALTER TABLE screen_downtime ADD COLUMN IF NOT EXISTS remarks VARCHAR",
     ]
 
     with engine.begin() as conn:
-        dialect = engine.dialect.name
+        if engine.dialect.name == "sqlite":
+            adj = []
+            for s in stmts:
+                s = s.replace("DOUBLE PRECISION", "FLOAT")
+                adj.append(s)
+            stmts = adj
         for sql in stmts:
-            if dialect == "sqlite":
-                sql = sql.replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP")
-                sql = sql.replace(" DEFAULT NOW()", " DEFAULT CURRENT_TIMESTAMP")
             conn.execute(text(sql))
 
 # ============================================================
-# STARTUP & BASIC ROUTES
+# DB DIAG & STARTUP
 # ============================================================
-
-# ============================================================
-# DB MINI-MIGRATIONS & DIAG
-# ============================================================
-from sqlalchemy import inspect
-
-def apply_simple_migrations():
-    """
-    Idempotent, lightweight column-adds to keep old DBs compatible.
-    Safe on both Postgres and SQLite (uses IF NOT EXISTS).
-    """
-    with engine.begin() as conn:
-        # ---- GRN ----
-        conn.exec_driver_sql("ALTER TABLE grn ADD COLUMN IF NOT EXISTS item VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE grn ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION")
-
-        # ---- HEAT ----
-        conn.exec_driver_sql("ALTER TABLE heat ADD COLUMN IF NOT EXISTS grade VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE heat ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE heat ADD COLUMN IF NOT EXISTS power_kwh DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE heat ADD COLUMN IF NOT EXISTS total_inputs DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE heat ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
-
-        # ---- LOT ----
-        conn.exec_driver_sql("ALTER TABLE lot ADD COLUMN IF NOT EXISTS grade VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE lot ADD COLUMN IF NOT EXISTS status VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
-
-        # ---- RAPLot ----
-        conn.exec_driver_sql("ALTER TABLE raplot ADD COLUMN IF NOT EXISTS grade VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE raplot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE raplot ADD COLUMN IF NOT EXISTS status VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE raplot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION")
-
-        # ---- AnnealLot ----
-        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS lot_no VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS grade VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS ammonia_kg DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS status VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE anneal_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
-
-        # ---- ScreenLot ----
-        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS lot_no VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS grade VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS qty DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS oversize_40 DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS oversize_80 DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS status VARCHAR")
-        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION")
-        conn.exec_driver_sql("ALTER TABLE screen_lot ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
 
 @app.get("/db/upgrade")
 def db_upgrade():
@@ -430,7 +547,12 @@ def db_upgrade():
 def db_columns():
     insp = inspect(engine)
     out = {}
-    for tbl in ["grn", "heat", "lot", "raplot", "anneal_lot", "screen_lot"]:
+    for tbl in [
+        "grn","heat","lot","raplot","rap_alloc","rap_transfer","rap_dispatch","rap_dispatch_item",
+        "anneal_lot","anneal_lot_item","anneal_qa","anneal_downtime",
+        "screen_lot","gs_lot_item","screen_qa","screen_downtime",
+        "lot_heat","rm_consumption","lot_chem","lot_phys","lot_psd"
+    ]:
         try:
             out[tbl] = [c["name"] for c in insp.get_columns(tbl)]
         except Exception as e:
@@ -453,11 +575,7 @@ def healthz():
 
 @app.get("/sanity")
 def sanity(db: Session = Depends(get_db)):
-    """
-    Verifies DB connectivity + presence of key columns.
-    Returns counts (may be 0 on fresh DB).
-    """
-    # simple selects to ensure tables exist and columns are usable
+    # light read checks to ensure columns are present
     db.execute(text("SELECT id, heat_no, grade FROM heat LIMIT 1"))
     db.execute(text("SELECT id, grn_no, item, unit_cost FROM grn LIMIT 1"))
     db.execute(text("SELECT id, lot_no, status, unit_cost FROM lot LIMIT 1"))
@@ -473,6 +591,10 @@ def sanity(db: Session = Depends(get_db)):
     }
     return {"ok": True, "counts": counts}
 
+# ============================================================
+# BASIC ROUTES (home + auth)
+# ============================================================
+
 @app.get("/setup")
 def setup():
     Base.metadata.create_all(bind=engine)
@@ -485,8 +607,6 @@ def home(request: Request):
         "index.html",
         {"request": request, "user": current_username(request), "role": current_role(request)}
     )
-
-# ---- Login/Logout ----
 
 @app.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
