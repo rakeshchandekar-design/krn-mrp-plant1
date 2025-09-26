@@ -836,7 +836,6 @@ def _has(model, colname):
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
     # Import models (adjust import path to your project layout)
-    from models import Heat, Lot  # noqa: adjust if your models live elsewhere
 
     today = dt.date.today()
     yest = today - dt.timedelta(days=1)
