@@ -12,7 +12,7 @@
     a.btn-link{display:inline-block;margin:4px 0 12px 0}
 
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
-    @media (max-width: 900px){ .grid{ grid-template-columns:1fr } }
+    @media (max-width: 1024px){ .grid{ grid-template-columns:1fr } }
 
     .card{border:1px solid var(--border);border-radius:10px;padding:12px;background:#fff}
     .card h2{margin:0 0 8px 0;font-size:18px}
@@ -23,11 +23,10 @@
     th,td{border:1px solid var(--border);padding:8px;text-align:left}
     th{background:#f3f4f6}
     .right{text-align:right}
-    .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
-    .badge-success{background:#16a34a}
-    .badge-info{background:#0ea5e9}
-    .chip{display:inline-block;background:#111827;color:#fff;border-radius:999px;padding:2px 8px;font-size:12px}
     .pill{display:inline-block;border:1px solid var(--border);background:#f9fafb;padding:3px 8px;border-radius:999px}
+
+    .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media (max-width: 700px){ .two{grid-template-columns:1fr} }
   </style>
 </head>
 <body>
@@ -39,131 +38,249 @@
   <h1>Dashboard</h1>
   <p><a class="btn-link" href="/">Home</a> <span class="pill">Yesterday: {{ yesterday }}</span> <span class="pill">Today: {{ today }}</span></p>
 
-  <!-- Row: RM/GRN (left) + Melting (right) -->
+  <!-- Row 1: RM + Melting -->
   <div class="grid">
-
     <div class="card">
-      <h2>RM / GRN</h2>
-      <table style="width:auto">
-        <thead><tr><th>Type</th><th class="right">Stock (kg)</th><th class="right">Value (₹)</th></tr></thead>
-        <tbody>
-          {% for r in grn_live %}
-          <tr>
-            <td>{{ r.rm_type }}</td>
-            <td class="right">{{ '%.1f' % (r.qty or 0) }}</td>
-            <td class="right">{{ '%.2f' % (r.val or 0) }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-        <tfoot>
-          <tr>
-            <th>Total</th>
-            <th class="right">{{ '%.1f' % (grn_live_tot_qty or 0) }}</th>
-            <th class="right">{{ '%.2f' % (grn_live_tot_val or 0) }}</th>
-          </tr>
-        </tfoot>
-      </table>
-      <div class="muted" style="margin-top:6px">
-        Yesterday Inward: <strong>{{ '%.1f' % (grn_yday_inward or 0) }}</strong> kg &nbsp; | &nbsp;
-        Month Inward: <strong>{{ '%.1f' % (grn_mtd_inward or 0) }}</strong> kg
+      <div class="two">
+        <div>
+          <h2>RM Stock Available</h2>
+          <table style="width:auto">
+            <thead><tr><th>Type</th><th class="right">Stock (kg)</th><th class="right">Value (₹)</th></tr></thead>
+            <tbody>
+              {% for r in grn_live %}
+              <tr><td>{{ r.rm_type }}</td><td class="right">{{ '%.1f' % (r.qty or 0) }}</td><td class="right">{{ '%.2f' % (r.val or 0) }}</td></tr>
+              {% endfor %}
+            </tbody>
+            <tfoot><tr><th>Total</th><th class="right">{{ '%.1f' % (grn_live_tot_qty or 0) }}</th><th class="right">{{ '%.2f' % (grn_live_tot_val or 0) }}</th></tr></tfoot>
+          </table>
+          <div class="muted" style="margin-top:6px">Month Inward: <strong>{{ '%.1f' % (grn_mtd_inward or 0) }}</strong> kg</div>
+        </div>
+        <div>
+          <h2>Yesterday’s Inward</h2>
+          <table style="width:auto">
+            <thead><tr><th>Type</th><th class="right">Qty (kg)</th></tr></thead>
+            <tbody>
+              {% for r in grn_yday_by_type %}
+              <tr><td>{{ r.rm_type }}</td><td class="right">{{ '%.1f' % (r.qty or 0) }}</td></tr>
+              {% endfor %}
+            </tbody>
+            <tfoot><tr><th>Total</th><th class="right">{{ '%.1f' % (grn_yday_total or 0) }}</th></tr></tfoot>
+          </table>
+
+          <h3 style="margin-top:10px">Heats with Available Stock</h3>
+          <table style="width:auto">
+            <thead><tr><th>Grade</th><th class="right">Qty (kg)</th><th class="right">Count</th></tr></thead>
+            <tbody>
+              <tr><td>KRIP</td><td class="right">{{ '%.1f' % (avail_by_grade['KRIP']['qty'] or 0) }}</td><td class="right">{{ avail_by_grade['KRIP']['count'] or 0 }}</td></tr>
+              <tr><td>KRFS</td><td class="right">{{ '%.1f' % (avail_by_grade['KRFS']['qty'] or 0) }}</td><td class="right">{{ avail_by_grade['KRFS']['count'] or 0 }}</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
     <div class="card">
-      <h2>Melting</h2>
-      <h3>Yesterday</h3>
-      <table style="width:auto">
-        <thead><tr><th>Metric</th><th class="right">Value</th><th class="right">Target</th></tr></thead>
-        <tbody>
-          <tr><td>Production</td><td class="right">{{ '%.0f' % (melt_yday.actual_kg or 0) }} kg</td><td class="right">{{ '%.0f' % (day_target_kg|default(0)) }}</td></tr>
-          <tr><td>kWh/ton</td><td class="right">{{ '%.1f' % (melt_yday.kwhpt or 0) }}</td><td class="right">{{ '%.0f' % (power_target or 0) }}</td></tr>
-          <tr><td>Yield</td><td class="right">{{ '%.1f' % (melt_yday.yield_pct or 0) }}%</td><td class="right">—</td></tr>
-          <tr><td>Prod. Efficiency</td><td class="right">{{ '%.1f' % (melt_yday.eff_pct or 0) }}%</td><td class="right">100%</td></tr>
-        </tbody>
-      </table>
-
-      <h3 style="margin-top:10px">This Month</h3>
-      <table style="width:auto">
-        <thead><tr><th>Metric</th><th class="right">Value</th></tr></thead>
-        <tbody>
-          <tr><td>Total Melting</td><td class="right">{{ '%.0f' % (melt_mtd.actual_kg or 0) }} kg</td></tr>
-          <tr><td>Avg kWh/ton</td><td class="right">{{ '%.1f' % (melt_mtd.kwhpt or 0) }}</td></tr>
-          <tr><td>Avg Yield</td><td class="right">{{ '%.1f' % (melt_mtd.yield_pct or 0) }}%</td></tr>
-          <tr><td>Avg Production Eff.</td><td class="right">{{ '%.1f' % (melt_mtd.eff_pct or 0) }}%</td></tr>
-        </tbody>
-      </table>
-      <div class="muted" style="margin-top:6px">kWh/ton target = {{ '%.0f' % (power_target or 0) }}</div>
+      <div class="two">
+        <div>
+          <h2>Melting — Yesterday</h2>
+          <table style="width:auto">
+            <thead><tr><th>Metric</th><th class="right">Value</th><th class="right">Target</th></tr></thead>
+            <tbody>
+              <tr><td>Production</td><td class="right">{{ '%.0f' % (melt_yday.actual_kg or 0) }} kg</td><td class="right">{{ '%.0f' % (melt_yday.target or 0) }}</td></tr>
+              <tr><td>kWh/ton</td><td class="right">{{ '%.1f' % (melt_yday.kwhpt or 0) }}</td><td class="right">{{ '%.0f' % (power_target or 0) }}</td></tr>
+              <tr><td>Yield</td><td class="right">{{ '%.1f' % (melt_yday.yield_pct or 0) }}%</td><td class="right">—</td></tr>
+              <tr><td>Prod. Efficiency</td><td class="right">{{ '%.1f' % (melt_yday.eff_pct or 0) }}%</td><td class="right">100%</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h2>Melting — This Month</h2>
+          <table style="width:auto">
+            <thead><tr><th>Metric</th><th class="right">Value</th></tr></thead>
+            <tbody>
+              <tr><td>Total Melting</td><td class="right">{{ '%.0f' % (melt_mtd.actual_kg or 0) }} kg</td></tr>
+              <tr><td>Avg kWh/ton</td><td class="right">{{ '%.1f' % (melt_mtd.kwhpt or 0) }}</td></tr>
+              <tr><td>Avg Yield</td><td class="right">{{ '%.1f' % (melt_mtd.yield_pct or 0) }}%</td></tr>
+              <tr><td>Avg Production Eff.</td><td class="right">{{ '%.1f' % (melt_mtd.eff_pct or 0) }}%</td></tr>
+            </tbody>
+          </table>
+          <div class="muted" style="margin-top:6px">kWh/ton target = {{ '%.0f' % (power_target or 0) }}</div>
+        </div>
+      </div>
     </div>
-
   </div>
 
-  <!-- Row: Atomization (left) + RAP (right) -->
+  <!-- Row 2: Atomization + RAP -->
   <div class="grid">
-
     <div class="card">
-      <h2>Atomization</h2>
-      <h3>Yesterday</h3>
-      <table style="width:auto">
-        <thead><tr><th>Metric</th><th class="right">Value</th></tr></thead>
-        <tbody>
-          <tr><td>Production</td><td class="right">{{ '%.0f' % (atom_yday_prod or 0) }} kg</td></tr>
-          <tr><td>Production Eff.</td><td class="right">{{ '%.1f' % (atom_yday_eff or 0) }}%</td></tr>
-        </tbody>
-      </table>
+      <div class="two">
+        <div>
+          <h2>Atomization — Yesterday</h2>
+          <table style="width:auto">
+            <thead><tr><th>Metric</th><th class="right">Value</th><th class="right">Target</th></tr></thead>
+            <tbody>
+              <tr><td>Production</td><td class="right">{{ '%.0f' % (atom_yday_prod or 0) }} kg</td><td class="right">{{ '%.0f' % (atom_tgt_yday or 0) }}</td></tr>
+              <tr><td>Production Eff.</td><td class="right">{{ '%.1f' % (atom_yday_eff or 0) }}%</td><td class="right">100%</td></tr>
+            </tbody>
+          </table>
 
-      <h3 style="margin-top:10px">This Month</h3>
-      <table style="width:auto">
-        <thead><tr><th>Metric</th><th class="right">Value</th></tr></thead>
-        <tbody>
-          <tr><td>Total Production</td><td class="right">{{ '%.0f' % (atom_mtd_prod or 0) }} kg</td></tr>
-          <tr><td>Avg Production Eff.</td><td class="right">{{ '%.1f' % (atom_mtd_eff or 0) }}%</td></tr>
-          <tr><td>+20 / Dryer Oversize</td><td class="right">{{ '%.1f' % (oversize_mtd or 0) }} kg</td></tr>
-        </tbody>
-      </table>
-      <div class="muted" style="margin-top:6px">Targets auto-adjust using Atomization downtime.</div>
+          <h3 style="margin-top:10px">This Month</h3>
+          <table style="width:auto">
+            <thead><tr><th>Metric</th><th class="right">Value</th></tr></thead>
+            <tbody>
+              <tr><td>Total Production</td><td class="right">{{ '%.0f' % (atom_mtd_prod or 0) }} kg</td></tr>
+              <tr><td>Avg Production Eff.</td><td class="right">{{ '%.1f' % (atom_mtd_eff or 0) }}%</td></tr>
+            </tbody>
+          </table>
+          <div class="muted" style="margin-top:6px">Targets auto-adjust using Atomization downtime.</div>
+        </div>
+
+        <div>
+          <h2>Lots Not Approved (Qty & Cost)</h2>
+          <table style="width:auto">
+            <thead><tr><th>Status</th><th class="right">Qty (kg)</th><th class="right">Cost (₹)</th></tr></thead>
+            <tbody>
+              <tr><td>Pending</td><td class="right">{{ '%.1f' % (pend_qty or 0) }}</td><td class="right">{{ '%.2f' % (pend_cost or 0) }}</td></tr>
+              <tr><td>Hold</td><td class="right">{{ '%.1f' % (hold_qty or 0) }}</td><td class="right">{{ '%.2f' % (hold_cost or 0) }}</td></tr>
+              <tr><td>Rejected</td><td class="right">{{ '%.1f' % (rej_qty or 0) }}</td><td class="right">{{ '%.2f' % (rej_cost or 0) }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <div class="card">
-      <h2>RAP</h2>
-      <table style="width:auto">
-        <thead><tr><th>Grade</th><th class="right">Available (kg)</th></tr></thead>
-        <tbody>
-          <tr><td>KRIP</td><td class="right">{{ '%.1f' % (rap_krip_avail or 0) }}</td></tr>
-          <tr><td>KRFS</td><td class="right">{{ '%.1f' % (rap_krfs_avail or 0) }}</td></tr>
-        </tbody>
-        <tfoot>
-          <tr><th>Total</th><th class="right">{{ '%.1f' % ((rap_krip_avail or 0)+(rap_krfs_avail or 0)) }}</th></tr>
-        </tfoot>
-      </table>
-      <div class="muted" style="margin-top:6px">RAP available = Approved lot weight − allocations (Dispatch / Plant-2).</div>
-    </div>
+      <div class="two">
+        <div>
+          <h2>RAP — Available</h2>
+          <table style="width:auto">
+            <thead><tr><th>Grade</th><th class="right">Qty (kg)</th><th class="right">Value (₹)</th></tr></thead>
+            <tbody>
+              <tr><td>KRIP</td><td class="right">{{ '%.1f' % (rap_grade_qty.get('KRIP',0)) }}</td><td class="right">{{ '%.2f' % (rap_grade_cost.get('KRIP',0)) }}</td></tr>
+              <tr><td>KRFS</td><td class="right">{{ '%.1f' % (rap_grade_qty.get('KRFS',0)) }}</td><td class="right">{{ '%.2f' % (rap_grade_cost.get('KRFS',0)) }}</td></tr>
+            </tbody>
+            <tfoot>
+              <tr>
+                <th>Total</th>
+                <th class="right">{{ '%.1f' % ((rap_grade_qty.get('KRIP',0)+rap_grade_qty.get('KRFS',0))) }}</th>
+                <th class="right">{{ '%.2f' % ((rap_grade_cost.get('KRIP',0)+rap_grade_cost.get('KRFS',0))) }}</th>
+              </tr>
+            </tfoot>
+          </table>
+          <div class="muted" style="margin-top:6px">RAP available = Approved lot weight − allocations.</div>
+        </div>
 
+        <div>
+          <h2>Dispatch & Plant-2</h2>
+          <table style="width:auto">
+            <thead><tr><th>Type</th><th class="right">Yesterday (kg)</th><th class="right">This Month (kg)</th></tr></thead>
+            <tbody>
+              <tr><td>Dispatch</td><td class="right">{{ '%.1f' % (rap_y.get('DISPATCH',0)) }}</td><td class="right">{{ '%.1f' % (rap_m.get('DISPATCH',0)) }}</td></tr>
+              <tr><td>Plant 2</td><td class="right">{{ '%.1f' % (rap_y.get('PLANT2',0)) }}</td><td class="right">{{ '%.1f' % (rap_m.get('PLANT2',0)) }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <!-- Row: QA + Downtime -->
+  <!-- Row 3: QA + Downtime -->
   <div class="grid">
     <div class="card">
-      <h2>QA Queue</h2>
-      <div style="font-size:32px;font-weight:800">{{ qa_pending_count or 0 }}</div>
-      <div class="muted">Pending items (Heats + Lots)</div>
-      <p style="margin-top:8px">
-        <a href="/qa-dashboard">Open QA Dashboard</a>
-      </p>
+      <h2>QA</h2>
+      <div class="two">
+        <div>
+          <h3>Pending — Heat (count)</h3>
+          <table style="width:auto">
+            <thead><tr><th>Grade</th><th class="right">Count</th></tr></thead>
+            <tbody>
+              <tr><td>KRIP</td><td class="right">{{ heat_pending_by_grade.get('KRIP',0) }}</td></tr>
+              <tr><td>KRFS</td><td class="right">{{ heat_pending_by_grade.get('KRFS',0) }}</td></tr>
+            </tbody>
+          </table>
+
+          <h3 style="margin-top:10px">Pending — Lot (count)</h3>
+          <table style="width:auto">
+            <thead><tr><th>Grade</th><th class="right">Count</th></tr></thead>
+            <tbody>
+              <tr><td>KRIP</td><td class="right">{{ lot_pending_by_grade.get('KRIP',0) }}</td></tr>
+              <tr><td>KRFS</td><td class="right">{{ lot_pending_by_grade.get('KRFS',0) }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div>
+          <h3>Approved Qty — This Month (lots)</h3>
+          <table style="width:auto">
+            <thead><tr><th>Grade</th><th class="right">Qty (kg)</th></tr></thead>
+            <tbody>
+              <tr><td>KRIP</td><td class="right">{{ '%.1f' % (approved_qty_by_grade.get('KRIP',0)) }}</td></tr>
+              <tr><td>KRFS</td><td class="right">{{ '%.1f' % (approved_qty_by_grade.get('KRFS',0)) }}</td></tr>
+            </tbody>
+          </table>
+
+          <h3 style="margin-top:10px">HOLD / REJECT — This Month</h3>
+          <table style="width:auto">
+            <thead><tr><th>Status</th><th class="right">Count</th></tr></thead>
+            <tbody>
+              <tr><td>HOLD</td><td class="right">{{ hold_mtd or 0 }}</td></tr>
+              <tr><td>REJECT</td><td class="right">{{ rej_mtd or 0 }}</td></tr>
+            </tbody>
+          </table>
+
+          <p style="margin-top:8px"><a href="/qa-dashboard">Open QA Dashboard</a></p>
+        </div>
+      </div>
     </div>
 
     <div class="card">
-      <h2>Downtime (Month-to-date)</h2>
-      <table style="width:auto">
-        <thead><tr><th>Area</th><th class="right">Minutes</th></tr></thead>
-        <tbody>
-          <tr><td>Melting</td><td class="right">{{ melt_dt_mtd }}</td></tr>
-          <tr><td>Atomization</td><td class="right">{{ atom_dt_mtd }}</td></tr>
-        </tbody>
-      </table>
-      <p style="margin-top:8px">
-        <a href="/melting/downtime">Melting downtime</a> |
-        <a href="/atomization/downtime">Atomization downtime</a>
-      </p>
+      <h2>Downtime</h2>
+      <div class="two">
+        <div>
+          <h3>Yesterday</h3>
+          <table style="width:auto">
+            <thead><tr><th>Area</th><th class="right">Minutes</th></tr></thead>
+            <tbody>
+              <tr><td>Melting</td><td class="right">{{ melt_dt_y }}</td></tr>
+              <tr><td>Atomization</td><td class="right">{{ atom_dt_y }}</td></tr>
+            </tbody>
+          </table>
+          <h3 style="margin-top:10px">Breakup</h3>
+          <table style="width:auto">
+            <thead><tr><th>Kind</th><th class="right">Melt</th><th class="right">Atom</th></tr></thead>
+            <tbody>
+              <tr><td>Production</td><td class="right">{{ melt_by_y['PRODUCTION'] }}</td><td class="right">{{ atom_by_y['PRODUCTION'] }}</td></tr>
+              <tr><td>Maintenance</td><td class="right">{{ melt_by_y['MAINTENANCE'] }}</td><td class="right">{{ atom_by_y['MAINTENANCE'] }}</td></tr>
+              <tr><td>Power</td><td class="right">{{ melt_by_y['POWER'] }}</td><td class="right">{{ atom_by_y['POWER'] }}</td></tr>
+              <tr><td>Other</td><td class="right">{{ melt_by_y['OTHER'] }}</td><td class="right">{{ atom_by_y['OTHER'] }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h3>This Month (to date)</h3>
+          <table style="width:auto">
+            <thead><tr><th>Area</th><th class="right">Minutes</th></tr></thead>
+            <tbody>
+              <tr><td>Melting</td><td class="right">{{ melt_dt_m }}</td></tr>
+              <tr><td>Atomization</td><td class="right">{{ atom_dt_m }}</td></tr>
+            </tbody>
+          </table>
+          <h3 style="margin-top:10px">Breakup</h3>
+          <table style="width:auto">
+            <thead><tr><th>Kind</th><th class="right">Melt</th><th class="right">Atom</th></tr></thead>
+            <tbody>
+              <tr><td>Production</td><td class="right">{{ melt_by_m['PRODUCTION'] }}</td><td class="right">{{ atom_by_m['PRODUCTION'] }}</td></tr>
+              <tr><td>Maintenance</td><td class="right">{{ melt_by_m['MAINTENANCE'] }}</td><td class="right">{{ atom_by_m['MAINTENANCE'] }}</td></tr>
+              <tr><td>Power</td><td class="right">{{ melt_by_m['POWER'] }}</td><td class="right">{{ atom_by_m['POWER'] }}</td></tr>
+              <tr><td>Other</td><td class="right">{{ melt_by_m['OTHER'] }}</td><td class="right">{{ atom_by_m['OTHER'] }}</td></tr>
+            </tbody>
+          </table>
+          <p style="margin-top:8px">
+            <a href="/melting/downtime">Melting downtime</a> |
+            <a href="/atomization/downtime">Atomization downtime</a>
+          </p>
+        </div>
+      </div>
     </div>
   </div>
 </body>
