@@ -1,202 +1,170 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8" />
-  <title>KRN – Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8">
+  <title>Dashboard</title>
   <style>
-    :root{
-      --krn-blue:#0e2a47;
-      --krn-blue-600:#173a63;
-      --krn-orange:#f59e0b;
-      --ink:#111827;
-      --muted:#6b7280;
-      --line:#e5e7eb;
-      --bg:#f8fafc;
-      --tile:#fff;
-    }
-    *{box-sizing:border-box}
-    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
-    a{color:inherit;text-decoration:none}
+    :root{--border:#e5e7eb;--muted:#6b7280;--bg:#f9fafb}
+    body{font-family:system-ui,Arial,sans-serif;margin:20px}
+    .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .brand .name{font-weight:700;font-size:26px;line-height:48px;margin:0}
+    .brand img{height:48px}
+    a.btn-link{display:inline-block;margin:4px 0 12px 0}
 
-    .wrap{max-width:1200px;margin:0 auto;padding:20px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
+    @media (max-width: 900px){ .grid{ grid-template-columns:1fr } }
 
-    /* Header */
-    .head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:4px solid var(--krn-orange);background:#fff}
-    .brand{display:flex;align-items:center;gap:12px}
-    .brand img{height:44px}
-    .brand .t1{font-weight:800;font-size:28px;letter-spacing:.2px;color:var(--krn-blue)}
-    .brand .t2{margin-top:2px;font-size:14px;color:#738295}
-    .actions{display:flex;gap:8px}
-    .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
-    .btn.primary{background:var(--krn-blue);color:#fff;border-color:var(--krn-blue)}
-    .btn.ghost{background:#fff}
-    .btn:disabled{opacity:.45;cursor:not-allowed}
-
-    /* Section heading */
-    h2{margin:18px 0 10px 0;font-size:22px;color:var(--krn-blue)}
-
-    /* Cards */
-    .grid{display:grid;grid-template-columns:repeat(3,minmax(260px,1fr));gap:14px}
-    .grid-2{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:14px}
-    .grid-1{display:grid;grid-template-columns:1fr;gap:14px}
-    @media (max-width:1024px){.grid{grid-template-columns:repeat(2,minmax(260px,1fr))} .grid-2{grid-template-columns:1fr}}
-    @media (max-width:640px){.grid{grid-template-columns:1fr}}
-
-    .card{background:var(--tile);border:1px solid var(--line);border-radius:14px;padding:14px}
-    .card h3{margin:0 0 8px 0;font-size:16px}
+    .card{border:1px solid var(--border);border-radius:10px;padding:12px;background:#fff}
+    .card h2{margin:0 0 8px 0;font-size:18px}
+    .card h3{margin:0 0 6px 0;font-size:14px}
     .muted{color:var(--muted);font-size:12px}
-    .kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-    .kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px}
-    .kpi .lab{font-size:12px;color:var(--muted)}
-    .kpi .val{font-size:22px;font-weight:800}
-    .split{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    @media (max-width:760px){.split{grid-template-columns:1fr}}
 
     table{border-collapse:collapse;width:100%}
-    th,td{border:1px solid var(--line);padding:8px;text-align:left}
+    th,td{border:1px solid var(--border);padding:8px;text-align:left}
     th{background:#f3f4f6}
     .right{text-align:right}
-
-    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#374151;border:1px solid #e5e7eb;font-size:12px}
-    .chip{display:inline-block;background:var(--krn-blue);color:#fff;border-radius:999px;padding:2px 8px;font-size:12px}
-    .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
-    .link{color:var(--krn-blue-600);text-decoration:underline}
-
-    .cta{display:flex;gap:8px;flex-wrap:wrap}
-    .cta .btn{border-color:var(--krn-blue-600)}
-    .cta .btn.primary{background:var(--krn-blue-600)}
+    .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
+    .badge-success{background:#16a34a}
+    .badge-info{background:#0ea5e9}
+    .chip{display:inline-block;background:#111827;color:#fff;border-radius:999px;padding:2px 8px;font-size:12px}
+    .pill{display:inline-block;border:1px solid var(--border);background:#f9fafb;padding:3px 8px;border-radius:999px}
   </style>
 </head>
 <body>
-  <!-- Top bar -->
-  <header class="head">
-    <div class="brand">
-      <img src="/static/KRN_Logo.png" alt="KRN">
-      <div>
-        <div class="t1">KRN Alloys Pvt. Ltd – Plant 1</div>
-        <div class="t2">Operations Dashboard</div>
+  <div class="brand">
+    <div class="name">KRN Alloys Pvt. Ltd — Plant 1</div>
+    <img src="/static/KRN_Logo.png" alt="KRN">
+  </div>
+
+  <h1>Dashboard</h1>
+  <p><a class="btn-link" href="/">Home</a> <span class="pill">Yesterday: {{ yesterday }}</span> <span class="pill">Today: {{ today }}</span></p>
+
+  <!-- Row: RM/GRN (left) + Melting (right) -->
+  <div class="grid">
+
+    <div class="card">
+      <h2>RM / GRN</h2>
+      <table style="width:auto">
+        <thead><tr><th>Type</th><th class="right">Stock (kg)</th><th class="right">Value (₹)</th></tr></thead>
+        <tbody>
+          {% for r in grn_live %}
+          <tr>
+            <td>{{ r.rm_type }}</td>
+            <td class="right">{{ '%.1f' % (r.qty or 0) }}</td>
+            <td class="right">{{ '%.2f' % (r.val or 0) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th>Total</th>
+            <th class="right">{{ '%.1f' % (grn_live_tot_qty or 0) }}</th>
+            <th class="right">{{ '%.2f' % (grn_live_tot_val or 0) }}</th>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="muted" style="margin-top:6px">
+        Yesterday Inward: <strong>{{ '%.1f' % (grn_yday_inward or 0) }}</strong> kg &nbsp; | &nbsp;
+        Month Inward: <strong>{{ '%.1f' % (grn_mtd_inward or 0) }}</strong> kg
       </div>
     </div>
-    <div class="actions">
-      <a class="btn" href="/">Home</a>
-      {% if role and role != 'guest' %}
-        <a class="btn ghost" href="/logout">Logout</a>
-      {% else %}
-        <a class="btn primary" href="/login">Login</a>
-      {% endif %}
+
+    <div class="card">
+      <h2>Melting</h2>
+      <h3>Yesterday</h3>
+      <table style="width:auto">
+        <thead><tr><th>Metric</th><th class="right">Value</th><th class="right">Target</th></tr></thead>
+        <tbody>
+          <tr><td>Production</td><td class="right">{{ '%.0f' % (melt_yday.actual_kg or 0) }} kg</td><td class="right">{{ '%.0f' % (day_target_kg|default(0)) }}</td></tr>
+          <tr><td>kWh/ton</td><td class="right">{{ '%.1f' % (melt_yday.kwhpt or 0) }}</td><td class="right">{{ '%.0f' % (power_target or 0) }}</td></tr>
+          <tr><td>Yield</td><td class="right">{{ '%.1f' % (melt_yday.yield_pct or 0) }}%</td><td class="right">—</td></tr>
+          <tr><td>Prod. Efficiency</td><td class="right">{{ '%.1f' % (melt_yday.eff_pct or 0) }}%</td><td class="right">100%</td></tr>
+        </tbody>
+      </table>
+
+      <h3 style="margin-top:10px">This Month</h3>
+      <table style="width:auto">
+        <thead><tr><th>Metric</th><th class="right">Value</th></tr></thead>
+        <tbody>
+          <tr><td>Total Melting</td><td class="right">{{ '%.0f' % (melt_mtd.actual_kg or 0) }} kg</td></tr>
+          <tr><td>Avg kWh/ton</td><td class="right">{{ '%.1f' % (melt_mtd.kwhpt or 0) }}</td></tr>
+          <tr><td>Avg Yield</td><td class="right">{{ '%.1f' % (melt_mtd.yield_pct or 0) }}%</td></tr>
+          <tr><td>Avg Production Eff.</td><td class="right">{{ '%.1f' % (melt_mtd.eff_pct or 0) }}%</td></tr>
+        </tbody>
+      </table>
+      <div class="muted" style="margin-top:6px">kWh/ton target = {{ '%.0f' % (power_target or 0) }}</div>
     </div>
-  </header>
 
-  <main class="wrap">
-    <!-- top summary strip -->
-    <section class="grid">
-      <div class="card">
-        <h3>RM / GRN</h3>
-        <div class="kpi-row">
-          <div class="kpi"><div class="lab">Stock (kg)</div><div class="val">{{ '%.1f' % (rm_total_kg or 0) }}</div></div>
-          <div class="kpi"><div class="lab">Stock Value (₹)</div><div class="val">{{ '%.2f' % (rm_total_val or 0) }}</div></div>
-          <div class="kpi"><div class="lab">Today Inward (kg)</div><div class="val">{{ '%.1f' % (rm_today_in_kg or 0) }}</div></div>
-        </div>
-        <div class="muted" style="margin-top:6px">Yesterday inward: {{ '%.1f' % (rm_yest_kg or 0) }} kg.</div>
-        <div class="toolbar cta">
-          <a class="btn" href="/grn">Open GRN</a>
-        </div>
-      </div>
+  </div>
 
-      <div class="card">
-        <h3>Melting</h3>
-        <div class="kpi-row">
-          <div class="kpi"><div class="lab">Yesterday Output (kg)</div><div class="val">{{ '%.1f' % (melt_yest_prod or 0) }}</div></div>
-          <div class="kpi"><div class="lab">Yesterday kWh/ton</div><div class="val">{{ '%.1f' % (melt_yest_kwhpt or 0) }}</div></div>
-          <div class="kpi"><div class="lab">MTD Output (kg)</div><div class="val">{{ '%.1f' % (melt_mtd_total or 0) }}</div></div>
-        </div>
-        <div class="muted" style="margin-top:6px">
-          Target kWh/ton: {{ '%.0f' % (melt_target_kwhpt or 0) }} | MTD kWh/ton: {{ '%.1f' % (melt_mtd_kwhpt or 0) }}
-        </div>
-        <div class="toolbar cta">
-          <a class="btn" href="/melting">Open Melting</a>
-        </div>
-      </div>
+  <!-- Row: Atomization (left) + RAP (right) -->
+  <div class="grid">
 
-      <div class="card">
-        <h3>Atomization</h3>
-        <div class="kpi-row">
-          <div class="kpi"><div class="lab">Yesterday Produced (kg)</div><div class="val">{{ '%.1f' % (atom_yest_prod or 0) }}</div></div>
-          <div class="kpi"><div class="lab">Yesterday Eff. %</div><div class="val">{{ '%.1f' % (atom_yest_eff or 0) }}</div></div>
-          <div class="kpi"><div class="lab">MTD Produced (kg)</div><div class="val">{{ '%.1f' % (atom_mtd_produced or 0) }}</div></div>
-        </div>
-        <div class="muted" style="margin-top:6px">MTD +20 / Dryer Oversize: {{ '%.1f' % (atom_mtd_oversize or 0) }} kg.</div>
-        <div class="toolbar cta">
-          <a class="btn" href="/atomization">Open Atomization</a>
-        </div>
-      </div>
-    </section>
+    <div class="card">
+      <h2>Atomization</h2>
+      <h3>Yesterday</h3>
+      <table style="width:auto">
+        <thead><tr><th>Metric</th><th class="right">Value</th></tr></thead>
+        <tbody>
+          <tr><td>Production</td><td class="right">{{ '%.0f' % (atom_yday_prod or 0) }} kg</td></tr>
+          <tr><td>Production Eff.</td><td class="right">{{ '%.1f' % (atom_yday_eff or 0) }}%</td></tr>
+        </tbody>
+      </table>
 
-    <!-- RAP + QA -->
-    <section class="grid-2">
-      <div class="card">
-        <h3>RAP Availability</h3>
-        <table style="width:auto">
-          <thead>
-            <tr><th>Grade</th><th class="right">Available (kg)</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>KRIP</td><td class="right">{{ '%.1f' % (rap_krip_qty or 0) }}</td></tr>
-            <tr><td>KRFS</td><td class="right">{{ '%.1f' % (rap_krfs_qty or 0) }}</td></tr>
-          </tbody>
-          <tfoot>
-            <tr><th>Total Value (₹)</th><th class="right">{{ '%.2f' % (rap_total_val or 0) }}</th></tr>
-          </tfoot>
-        </table>
-        <div class="muted" style="margin-top:6px">
-          MTD Dispatch: {{ '%.1f' % (rap_mtd_dispatch or 0) }} kg | MTD Plant-2: {{ '%.1f' % (rap_mtd_transfer or 0) }} kg
-        </div>
-        <div class="toolbar cta">
-          <a class="btn" href="/rap">Open RAP</a>
-        </div>
-      </div>
+      <h3 style="margin-top:10px">This Month</h3>
+      <table style="width:auto">
+        <thead><tr><th>Metric</th><th class="right">Value</th></tr></thead>
+        <tbody>
+          <tr><td>Total Production</td><td class="right">{{ '%.0f' % (atom_mtd_prod or 0) }} kg</td></tr>
+          <tr><td>Avg Production Eff.</td><td class="right">{{ '%.1f' % (atom_mtd_eff or 0) }}%</td></tr>
+          <tr><td>+20 / Dryer Oversize</td><td class="right">{{ '%.1f' % (oversize_mtd or 0) }} kg</td></tr>
+        </tbody>
+      </table>
+      <div class="muted" style="margin-top:6px">Targets auto-adjust using Atomization downtime.</div>
+    </div>
 
-      <div class="card">
-        <h3>QA Summary (MTD)</h3>
-        <table style="width:auto">
-          <tbody>
-            <tr><th>Approved (kg)</th><td class="right">{{ '%.1f' % (qa_approved_mtd or 0) }}</td></tr>
-            <tr><th>Hold (kg)</th><td class="right">{{ '%.1f' % (qa_hold_mtd or 0) }}</td></tr>
-            <tr><th>Rejected (kg)</th><td class="right">{{ '%.1f' % (qa_rejected_mtd or 0) }}</td></tr>
-            <tr><th>Pending Items</th><td class="right">{{ qa_pending_count or 0 }}</td></tr>
-          </tbody>
-        </table>
-        <div class="toolbar cta" style="margin-top:6px">
-          <a class="btn" href="/qa-dashboard">Open QA</a>
-        </div>
-      </div>
-    </section>
+    <div class="card">
+      <h2>RAP</h2>
+      <table style="width:auto">
+        <thead><tr><th>Grade</th><th class="right">Available (kg)</th></tr></thead>
+        <tbody>
+          <tr><td>KRIP</td><td class="right">{{ '%.1f' % (rap_krip_avail or 0) }}</td></tr>
+          <tr><td>KRFS</td><td class="right">{{ '%.1f' % (rap_krfs_avail or 0) }}</td></tr>
+        </tbody>
+        <tfoot>
+          <tr><th>Total</th><th class="right">{{ '%.1f' % ((rap_krip_avail or 0)+(rap_krfs_avail or 0)) }}</th></tr>
+        </tfoot>
+      </table>
+      <div class="muted" style="margin-top:6px">RAP available = Approved lot weight − allocations (Dispatch / Plant-2).</div>
+    </div>
 
-    <!-- Downtime -->
-    <section class="grid-1">
-      <div class="card">
-        <h3>Downtime</h3>
-        <div class="split">
-          <table style="width:auto">
-            <tbody>
-              <tr><th>Today (minutes)</th><td class="right">{{ dt_today_min or 0 }}</td></tr>
-              <tr><th>MTD (minutes)</th><td class="right">{{ dt_mtd_min or 0 }}</td></tr>
-              <tr><th>Most Common Reason (MTD)</th><td>{{ dt_most_common or '—' }}</td></tr>
-            </tbody>
-          </table>
-          <div>
-            <div class="muted">Estimated lost capacity this month:</div>
-            <div class="chip" style="margin-top:6px">{{ '%.1f' % (dt_est_loss_kg or 0) }} kg</div>
-            <div class="toolbar cta" style="margin-top:10px">
-              <a class="btn" href="/melting/downtime">Melting Downtime</a>
-              <a class="btn" href="/atomization/downtime">Atomization Downtime</a>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
+  </div>
 
-  </main>
+  <!-- Row: QA + Downtime -->
+  <div class="grid">
+    <div class="card">
+      <h2>QA Queue</h2>
+      <div style="font-size:32px;font-weight:800">{{ qa_pending_count or 0 }}</div>
+      <div class="muted">Pending items (Heats + Lots)</div>
+      <p style="margin-top:8px">
+        <a href="/qa-dashboard">Open QA Dashboard</a>
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>Downtime (Month-to-date)</h2>
+      <table style="width:auto">
+        <thead><tr><th>Area</th><th class="right">Minutes</th></tr></thead>
+        <tbody>
+          <tr><td>Melting</td><td class="right">{{ melt_dt_mtd }}</td></tr>
+          <tr><td>Atomization</td><td class="right">{{ atom_dt_mtd }}</td></tr>
+        </tbody>
+      </table>
+      <p style="margin-top:8px">
+        <a href="/melting/downtime">Melting downtime</a> |
+        <a href="/atomization/downtime">Atomization downtime</a>
+      </p>
+    </div>
+  </div>
 </body>
 </html>
