@@ -5,6 +5,8 @@ import io
 import secrets
 import datetime as dt
 from typing import Optional, List, Dict
+from pathlib import Path
+from urllib.parse import quote  # used by a few later helpers
 
 # FastAPI
 from fastapi import FastAPI, Request, Depends, Form, status
@@ -60,12 +62,16 @@ app = FastAPI()
 # Sessions (used for login/roles)
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_hex(16)))
 
+# --- Paths: your repo has /static and /templates at the REPO ROOT ---
+# main.py lives in krn_mrp_app/, so step up one level.
+BASE_DIR = Path(_file_).resolve().parent          # .../krn_mrp_app
+PROJECT_ROOT = BASE_DIR.parent                      # repo root
+TEMPLATES_DIR = PROJECT_ROOT / "templates"
+STATIC_DIR    = PROJECT_ROOT / "static"
+
 # Static & templates
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
 
 # ============================================================
@@ -283,7 +289,12 @@ def _startup_create():
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True}
+    # quick check: confirm static/templates folders are visible
+    return {
+        "ok": True,
+        "static_exists": STATIC_DIR.exists(),
+        "templates_exists": TEMPLATES_DIR.exists(),
+    }
 
 @app.get("/setup")
 def setup():
@@ -320,7 +331,7 @@ def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/", status_code=303)
 
-# ==== PART A END ====
+# ==== PART A END ====
 
 # ==== PART B1 START ====
 
