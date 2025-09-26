@@ -146,6 +146,167 @@ def grade_map_for_anneal(grade: str) -> str:
     if g.startswith("KRFS"): return g.replace("KRFS", "KFS", 1)
     return grade
 
+# ==== Availability helpers ====
+
+def heat_available(db, heat: Heat) -> float:
+    """Total qty available for a given Heat across its Lots."""
+    lots = db.query(Lot).filter(Lot.heat_id == heat.id).all()
+    return sum(l.qty for l in lots if getattr(l, "qa_status", None) == "APPROVED")
+
+def lot_available(db, lot: Lot) -> float:
+    """Qty available for a given Lot (after RAP)."""
+    return getattr(lot, "available_qty", lot.qty or 0.0)
+
+def rap_available(db, rap: RAPLot) -> float:
+    """Available qty for RAPLot."""
+    return getattr(rap, "available_qty", rap.qty or 0.0)
+
+def anneal_available(db, anneal: AnnealLot) -> float:
+    """Available qty for AnnealLot."""
+    return getattr(anneal, "available_qty", anneal.qty or 0.0)
+
+def screen_available(db, screen: ScreenLot) -> float:
+    """Available qty for ScreenLot."""
+    return getattr(screen, "available_qty", screen.qty or 0.0)
+
+# ==== Costing helpers (safe & idempotent) ====
+
+def _f(x) -> float:
+    try:
+        return float(x or 0.0)
+    except Exception:
+        return 0.0
+
+def _perkg(total_cost: float, qty: float) -> float:
+    q = _f(qty)
+    return (total_cost / q) if q > 0 else 0.0
+
+def money(x: float) -> float:
+    # round to 2 decimals for display/storage convenience
+    return round(_f(x), 2)
+
+# ---------------- Heat ----------------
+def heat_total_rm_cost(db: Session, heat: Heat) -> float:
+    """Sum of FIFO raw-material costs attached to this heat."""
+    rows = db.query(RMConsumption).filter(RMConsumption.heat_id == heat.id).all()
+    total = 0.0
+    for r in rows:
+        unit = _f(getattr(getattr(r, "grn", None), "unit_cost", 0.0))
+        total += unit * _f(r.qty)
+    return money(total)
+
+def heat_cost(db: Session, heat: Heat) -> tuple[float, float]:
+    """(unit_cost, total_cost) for a Heat."""
+    # Prefer cached values if they exist and look valid
+    cached_total = _f(getattr(heat, "total_inputs", 0.0))  # sometimes used as money sum
+    if cached_total > 0:
+        unit = _perkg(cached_total, getattr(heat, "qty", 0.0))
+        return money(unit), money(cached_total)
+
+    total = heat_total_rm_cost(db, heat)
+    unit = _perkg(total, getattr(heat, "qty", 0.0))
+    return money(unit), money(total)
+
+# ---------------- Lot (Atomization Lot) ----------------
+def lot_cost(db: Session, lot: Lot) -> tuple[float, float]:
+    """
+    (unit_cost, total_cost) for an atomization lot.
+    Default = inherit heat unit cost * lot.qty; fall back to cached fields.
+    """
+    # Use cached if present
+    cached_total = _f(getattr(lot, "total_cost", 0.0))
+    cached_unit  = _f(getattr(lot, "unit_cost", 0.0))
+    if cached_total > 0 and cached_unit > 0:
+        return money(cached_unit), money(cached_total)
+
+    # Otherwise derive from source heat
+    unit_h, _ = (0.0, 0.0)
+    if getattr(lot, "heat", None):
+        unit_h, _ = heat_cost(db, lot.heat)
+
+    unit = cached_unit or unit_h
+    total = unit * _f(lot.qty)
+    return money(unit), money(total)
+
+# ---------------- RAP ----------------
+def rap_cost(db: Session, rap: RAPLot) -> tuple[float, float]:
+    """
+    RAP inherits Lot cost per kg.
+    """
+    cached_total = _f(getattr(rap, "total_cost", 0.0))
+    cached_unit  = _f(getattr(rap, "unit_cost", 0.0))
+    if cached_total > 0 and cached_unit > 0:
+        return money(cached_unit), money(cached_total)
+
+    unit_lot, _ = (0.0, 0.0)
+    if getattr(rap, "lot", None):
+        unit_lot, _ = lot_cost(db, rap.lot)
+
+    unit = cached_unit or unit_lot
+    total = unit * _f(rap.qty)
+    return money(unit), money(total)
+
+# ---------------- Anneal ----------------
+def anneal_cost(db: Session, anneal: AnnealLot) -> tuple[float, float]:
+    """
+    Anneal cost = (RAP unit cost) + ANNEAL_COST per kg.
+    """
+    cached_total = _f(getattr(anneal, "total_cost", 0.0))
+    cached_unit  = _f(getattr(anneal, "unit_cost", 0.0))
+    if cached_total > 0 and cached_unit > 0:
+        return money(cached_unit), money(cached_total)
+
+    unit_rap = 0.0
+    if getattr(anneal, "rap_lot", None):
+        unit_rap, _ = rap_cost(db, anneal.rap_lot)
+
+    unit = (cached_unit or unit_rap) + _f(ANNEAL_COST)
+    total = unit * _f(anneal.qty)
+    return money(unit), money(total)
+
+# ---------------- Screening (GS) ----------------
+def screen_cost(db: Session, gs: ScreenLot) -> tuple[float, float]:
+    """
+    Screen cost = (Anneal unit cost) + SCREEN_COST per kg.
+    """
+    cached_total = _f(getattr(gs, "total_cost", 0.0))
+    cached_unit  = _f(getattr(gs, "unit_cost", 0.0))
+    if cached_total > 0 and cached_unit > 0:
+        return money(cached_unit), money(cached_total)
+
+    unit_anneal = 0.0
+    if getattr(gs, "anneal_lot", None):
+        unit_anneal, _ = anneal_cost(db, gs.anneal_lot)
+
+    unit = (cached_unit or unit_anneal) + _f(SCREEN_COST)
+    total = unit * _f(gs.qty)
+    return money(unit), money(total)
+
+# ---- convenience setters (optional; call when saving rows) ----
+def ensure_cached_costs(db: Session, obj):
+    """
+    If the object has unit_cost/total_cost attributes, compute & store them.
+    Safe to call on Heat/Lot/RAPLot/AnnealLot/ScreenLot.
+    """
+    if isinstance(obj, Heat):
+        unit, total = heat_cost(db, obj)
+    elif isinstance(obj, Lot):
+        unit, total = lot_cost(db, obj)
+    elif isinstance(obj, RAPLot):
+        unit, total = rap_cost(db, obj)
+    elif isinstance(obj, AnnealLot):
+        unit, total = anneal_cost(db, obj)
+    elif isinstance(obj, ScreenLot):
+        unit, total = screen_cost(db, obj)
+    else:
+        return  # unsupported type; no crash
+
+    # write back if fields exist
+    if hasattr(obj, "unit_cost"):
+        obj.unit_cost = unit
+    if hasattr(obj, "total_cost"):
+        obj.total_cost = total
+
 def require_roles(*allowed_roles):
     """FastAPI dependency to restrict access by role."""
     def _guard(request: Request):
