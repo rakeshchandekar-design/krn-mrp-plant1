@@ -170,6 +170,18 @@ def screen_available(db, screen) -> float:
     """Available qty for ScreenLot."""
     return getattr(screen, "available_qty", screen.qty or 0.0)
 
+def _grade_availability(db: Session):
+    """
+    Returns dict like {'KIP-100': 1250.0, 'KFS-200': 800.0} from RAP stock.
+    Falls back to 0 if table is empty.
+    """
+    rows = (
+        db.query(RAPLot.grade, func.coalesce(func.sum(RAPLot.available_qty), 0.0))
+        .group_by(RAPLot.grade)
+        .all()
+    )
+    return {g or "NA": float(q or 0.0) for g, q in rows}
+
 
 
 def require_roles(*allowed_roles):
@@ -781,6 +793,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "melt_yield": round(melt_yield, 1),
         "atom_yest": atom_yest, "atom_month": atom_month,
         "rap_stock": rap_stock,
+        "power_target": 0,  # or a real target if you have one
+        "avail_by_grade": _grade_availability(db),
         "read_only": _is_read_only(request)
     })
 
@@ -971,6 +985,7 @@ def atom_page(
             "Heat": Heat,
             "Lot": Lot,
             "heat_grades": grades,
+            "heat_grade": (request.query_params.get("heat_grade") or "").strip(),
             "available_map": available_map,
             "today_iso": today.isoformat(),
             "start": s,
@@ -1240,7 +1255,7 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
     )
 
     rap_rows: List[RAPLot] = []
-    for lot in Lot:
+    for lot in lots:
         rap_rows.append(ensure_rap_lot(db, lot))
     db.commit()
 
