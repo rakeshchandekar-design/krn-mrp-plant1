@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Annealing Lots</h2>
+<table class="table">
+  <tr>
+    <th>Date</th><th>Lot</th><th>Grade</th>
+    <th>Weight (kg)</th><th>Ammonia (kg)</th>
+    <th>RAP Cost/kg (₹)</th><th>Anneal Cost/kg (₹)</th>
+    <th>QA</th><th>Action</th>
+  </tr>
+  {% for x in lots %}
+  <tr>
+    <td>{{ x.date }}</td>
+    <td>{{ x.lot_no }}</td>
+    <td>{{ x.grade }}</td>
+    <td>{{ '%.0f'|format(x.weight_kg) }}</td>
+    <td>{{ '%.2f'|format(x.ammonia_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.rap_cost_per_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.cost_per_kg or 0) }}</td>
+    <td>{{ x.qa_status }}</td>
+    <td><a class="btn btn-small" href="/anneal/qa/{{ x.id }}">QA</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
