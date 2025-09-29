@@ -1,5 +1,3 @@
-# annealing/__init__.py
-# Keeps the blueprint import clean for main.py
-from .routes import anneal_bp
-
-__all__ = ["anneal_bp"]
+# krn_mrp_app/annealing/__init__.py
+from .routes import router
+__all__ = ["router"]
