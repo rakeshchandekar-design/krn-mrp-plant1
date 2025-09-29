@@ -300,6 +300,67 @@ def migrate_schema(engine):
                 )
             """))
 
+        # --- Annealing tables ---
+if str(engine.url).startswith("sqlite"):
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS anneal_lots(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lot_no TEXT UNIQUE NOT NULL,
+            date DATE NOT NULL,
+            src_alloc_json TEXT NOT NULL,
+            grade TEXT NOT NULL,
+            weight_kg REAL NOT NULL,
+            rap_cost_per_kg REAL NOT NULL DEFAULT 0,  -- weighted RAP cost
+            cost_per_kg REAL NOT NULL DEFAULT 0,      -- anneal cost = RAP + 10
+            ammonia_kg REAL NOT NULL DEFAULT 0,
+            qa_status TEXT NOT NULL DEFAULT 'PENDING',
+            c_pct REAL, si_pct REAL, mn_pct REAL, s_pct REAL, p_pct REAL,
+            o_pct REAL, compressibility REAL,
+            remarks TEXT,
+            created_by TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS anneal_downtime(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date DATE NOT NULL,
+            minutes INTEGER NOT NULL,
+            area TEXT NOT NULL,
+            reason TEXT NOT NULL
+        )
+    """))
+else:
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS anneal_lots(
+            id SERIAL PRIMARY KEY,
+            lot_no TEXT UNIQUE NOT NULL,
+            date DATE NOT NULL,
+            src_alloc_json TEXT NOT NULL,
+            grade TEXT NOT NULL,
+            weight_kg DOUBLE PRECISION NOT NULL,
+            rap_cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+            cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+            ammonia_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+            qa_status TEXT NOT NULL DEFAULT 'PENDING',
+            c_pct DOUBLE PRECISION, si_pct DOUBLE PRECISION, mn_pct DOUBLE PRECISION,
+            s_pct DOUBLE PRECISION, p_pct DOUBLE PRECISION,
+            o_pct DOUBLE PRECISION, compressibility DOUBLE PRECISION,
+            remarks TEXT, created_by TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS anneal_downtime(
+            id SERIAL PRIMARY KEY,
+            date DATE NOT NULL,
+            minutes INT NOT NULL,
+            area TEXT NOT NULL,
+            reason TEXT NOT NULL
+        )
+    """))
+
+
 
 # -------------------------------------------------
 # Constants
