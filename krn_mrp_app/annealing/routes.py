@@ -6,7 +6,7 @@ from sqlalchemy import text
 from datetime import date
 import json, io, csv
 
-from krn_mrp_app.main import engine, role_allowed  # uses your existing helpers
+from krn_mrp_app.deps import engine, require_roles
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")  # we will place annealing HTML in global /templates
@@ -167,7 +167,21 @@ async def anneal_lots(request: Request, dep: None = Depends(require_roles("admin
             SELECT id, date, lot_no, grade, weight_kg, ammonia_kg, rap_cost_per_kg, cost_per_kg, qa_status
             FROM anneal_lots ORDER BY date DESC, lot_no DESC
         """)).mappings().all()
-    return templates.TemplateResponse("annealing_lot_list.html", {"request": request, "lots": rows})
+
+    # ---- compute totals ----
+    total_weight = sum(r["weight_kg"] or 0 for r in rows)
+    weighted_cost = (
+        sum((r["cost_per_kg"] or 0) * (r["weight_kg"] or 0) for r in rows) / total_weight
+        if total_weight > 0 else 0
+    )
+
+    return templates.TemplateResponse("annealing_lot_list.html", {
+        "request": request,
+        "lots": rows,
+        "total_weight": total_weight,
+        "weighted_cost": weighted_cost,
+    })
+
 
 @router.get("/qa/{lot_id}", response_class=HTMLResponse)
 async def anneal_qa_get(lot_id: int, request: Request, dep: None = Depends(require_roles("qa","admin"))):
