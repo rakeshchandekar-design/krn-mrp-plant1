@@ -1,14 +1,15 @@
 fastapi==0.115.0
 uvicorn==0.30.6
+
 jinja2==3.1.4
 aiofiles==23.2.1
 python-multipart==0.0.9
 itsdangerous==2.1.2
 
 SQLAlchemy==2.0.34
-databases==0.9.0
+# databases==0.9.0   # ← keep only if you actually use the 'databases' async package
 
-# Use psycopg v3 (works on Python 3.12/3.13). This replaces psycopg2-binary.
+# PostgreSQL driver (psycopg v3, works on Python 3.12/3.13)
 psycopg[binary]==3.2.3
 
 pydantic==2.8.2
