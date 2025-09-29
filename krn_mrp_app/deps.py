@@ -31,13 +31,15 @@ def get_current_user(request: Request):
     return request.session.get("user")
 
 def require_roles(*roles: List[str]) -> Callable:
-    """
-    Usage:
-        @router.get("/path")
-        async def handler(dep: None = Depends(require_roles("admin","anneal"))): ...
-    """
     def wrapper(user=Depends(get_current_user)):
-        if not user or user.get("role") not in roles:
+        # accept both dict {"username","role"} and legacy "role" string
+        role = None
+        if isinstance(user, dict):
+            role = user.get("role")
+        elif isinstance(user, str):
+            role = user  # legacy sessions stored just the role string
+
+        if not role or role not in roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Forbidden",
