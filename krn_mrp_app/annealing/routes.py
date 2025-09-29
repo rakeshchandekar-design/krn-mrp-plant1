@@ -43,7 +43,7 @@ def fetch_approved_rap_balance():
 # ------------------ ROUTES ------------------
 
 @router.get("/", response_class=HTMLResponse)
-async def anneal_home(request: Request, dep: None = Depends(require_roles("admin","qa","anneal","view"))):
+async def anneal_home(request: Request, dep: None = Depends(require_roles("admin","anneal","view"))):
     with engine.begin() as conn:
         lots_today = conn.execute(text("SELECT COUNT(*) FROM anneal_lots WHERE date=:d"), {"d": date.today()}).scalar() or 0
         nh3_today  = conn.execute(text("SELECT COALESCE(SUM(ammonia_kg),0) FROM anneal_lots WHERE date=:d"), {"d": date.today()}).scalar() or 0.0
@@ -139,7 +139,7 @@ async def anneal_create_post(
     return RedirectResponse(url="/anneal/lots", status_code=303)
 
 @router.get("/lots", response_class=HTMLResponse)
-async def anneal_lots(request: Request, dep: None = Depends(require_roles("admin","qa","anneal","view"))):
+async def anneal_lots(request: Request, dep: None = Depends(require_roles("admin","anneal","view"))):
     with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT id, date, lot_no, grade, weight_kg, ammonia_kg, rap_cost_per_kg, cost_per_kg, qa_status
@@ -209,7 +209,7 @@ async def anneal_downtime_post(
     return RedirectResponse(url="/anneal/downtime", status_code=303)
 
 @router.get("/downtime.csv")
-async def anneal_downtime_csv(dep: None = Depends(require_roles("anneal","admin"))):
+async def anneal_downtime_csv(dep: None = Depends(require_roles("anneal","admin","view"))):
     with engine.begin() as conn:
         rows = conn.execute(text("SELECT date, minutes, area, reason FROM anneal_downtime ORDER BY date DESC")).all()
     out = io.StringIO(); w = csv.writer(out)
