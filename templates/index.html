@@ -85,13 +85,16 @@
 
     .deny{color:#ef4444;font-size:18px;user-select:none}
     .pill{display:inline-block;padding:2px 8px;border:1px solid #fee2e2;border-radius:999px;color:#991b1b;background:#fef2f2;font-size:12px}
+    
+    footer{ text-align:center; font-size:0.75rem; color:#666; margin-top:20px; }
   </style>
 </head>
 <body>
   <!-- Top bar -->
   <header class="head">
     <div class="brand">
-      <img src="/static/KRN_Logo.png" alt="KRN">
+      {# ✅ polished: dynamic static reference #}
+      <img src="{{ url_for('static', path='KRN_Logo.png') }}" alt="KRN">
       <div>
         <div class="t1">KRN Alloys Pvt. Ltd – Plant 1</div>
         <div class="t2">Manufacturing Resource &amp; Quality Control Suite</div>
@@ -123,20 +126,19 @@
 
     <section class="grid">
       <!-- Dashboard -->
-{% set allow = role in ['admin','view'] %}
-<div class="card">
-  <h3>Dashboard</h3>
-  <div class="sub">Admin, View</div>
-  <div class="foot">
-    {% if allow %}
-      <!-- now links to the route -->
-      <a class="open" href="/dashboard">Open</a>
-    {% else %}
-      <button class="open" disabled>Open</button>
-      <span class="deny">✗</span>
-    {% endif %}
-  </div>
-</div>
+      {% set allow = role in ['admin','view'] %}
+      <div class="card">
+        <h3>Dashboard</h3>
+        <div class="sub">Admin, View</div>
+        <div class="foot">
+          {% if allow %}
+            <a class="open" href="/dashboard">Open</a>
+          {% else %}
+            <button class="open" disabled>Open</button>
+            <span class="deny">✗</span>
+          {% endif %}
+        </div>
+      </div>
 
       <!-- GRN -->
       {% set allow = role in ['admin','store','view'] %}
@@ -197,11 +199,11 @@
       <!-- ANNEALING -->
       {% set allow = role in ['admin','anneal','view'] %}
       <div class="card">
-        <h3>Annealing</h3>             <!-- ✅ was RAP -->
-        <div class="sub">Admin, Anneal</div>   <!-- ✅ clearer -->
+        <h3>Annealing</h3>
+        <div class="sub">Admin, Anneal</div>
         <div class="foot">
           {% if allow %}
-            <a class="open" href="/anneal">Open</a>   <!-- ✅ keep /anneal -->
+            <a class="open" href="/anneal">Open</a>
           {% else %}
             <button class="open" disabled>Open</button><span class="deny">✗</span>
           {% endif %}
@@ -227,5 +229,9 @@
       <p class="small" style="margin-top:16px">Tip: sign in with your department. Contact Admin in case of any issue - rakesh@krnalloys.co.in.</p>
     {% endif %}
   </main>
+
+  <footer>
+    Developed by Metcom Solutions exclusively for KRN Alloys Pvt Ltd
+  </footer>
 </body>
 </html>
