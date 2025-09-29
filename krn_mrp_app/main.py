@@ -859,11 +859,21 @@ def login_form(request: Request):
 
 @app.post("/login")
 async def login_post(request: Request, username: str = Form(...), password: str = Form(...)):
-    u = (USER_DB.get((username or "").strip().lower()) or {})
+    uname = (username or "").strip().lower()
+    u = USER_DB.get(uname) or {}
+
     if not u or u.get("password") != (password or ""):
         return RedirectResponse("/login?err=Invalid+credentials", status_code=303)
-    request.session["user"] = username.strip().lower()
-    request.session["role"] = u.get("role", "guest")
+
+    role = u.get("role", "guest")
+
+    # New unified session format (dict for Annealing)
+    request.session["user"] = {"username": uname, "role": role}
+
+    # Legacy keys so older code continues working
+    request.session["username"] = uname
+    request.session["role"] = role
+
     return RedirectResponse("/", status_code=303)
 
 @app.get("/logout")
