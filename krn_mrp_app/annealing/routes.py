@@ -52,6 +52,8 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
         "target": TARGET_KG_PER_DAY,
         "lots_today": lots_today,
         "nh3_today": nh3_today
+        "cost_per_kg": cost_per_kg,
+        "user": request.session.get("user"),
     })
 
 @router.get("/create", response_class=HTMLResponse)
