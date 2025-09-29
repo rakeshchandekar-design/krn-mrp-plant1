@@ -3,6 +3,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash
 from datetime import date, timedelta
 from sqlalchemy import text
 import json, io, csv
+from krn_mrp_app.routers import require_roles
 
 from app import db
 from .models import AnnealLot, AnnealDowntime
@@ -33,6 +34,7 @@ def fetch_approved_rap_balance():
 
 
 @anneal_bp.route("/")
+@require_roles("admin","qa","anneal","view")
 def home():
     # very small KPI to start
     today = date.today()
@@ -48,6 +50,7 @@ def home():
                            target=TARGET_KG_PER_DAY)
 
 @anneal_bp.route("/create", methods=["GET","POST"])
+@require_roles("anneal","admin")
 def create():
     if request.method == "POST":
         # collect allocations
@@ -130,6 +133,7 @@ def create():
     return render_template("annealing_create.html", rap_rows=rap)
 
 @anneal_bp.route("/lots")
+@require_roles("admin","qa","anneal","view")
 def lots():
     rows = db.session.execute(text("""
       SELECT id, date, lot_no, grade, weight_kg, ammonia_kg, rap_cost_per_kg, cost_per_kg, qa_status
@@ -138,6 +142,7 @@ def lots():
     return render_template("annealing_lot_list.html", lots=rows)
 
 @anneal_bp.route("/qa/<int:lot_id>", methods=["GET","POST"])
+@require_roles("qa","admin")
 def qa(lot_id):
     lot = AnnealLot.query.get_or_404(lot_id)
     if request.method == "POST":
@@ -165,6 +170,7 @@ def qa(lot_id):
     return render_template("annealing_qa_form.html", lot=lot)
 
 @anneal_bp.route("/downtime", methods=["GET","POST"])
+@require_roles("anneal","admin")
 def downtime():
     if request.method == "POST":
         rec = AnnealDowntime(
