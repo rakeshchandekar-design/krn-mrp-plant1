@@ -1,23 +1,46 @@
 # krn_mrp_app/deps.py
-from sqlalchemy import create_engine
-from fastapi import Depends, HTTPException, Request, status
+import os
 from typing import Callable, List
+from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import create_engine
 
-# ⚙️ Adjust DATABASE_URL to match your actual connection
-DATABASE_URL = "postgresql+psycopg2://..."  
-engine = create_engine(DATABASE_URL, future=True)
+def _normalize_db_url(url: str) -> str:
+    """
+    Normalize DB URL for SQLAlchemy:
+    - Convert 'postgres://' → 'postgresql://'
+    - Ensure psycopg v3 driver: 'postgresql+psycopg://'
+    """
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    if url.startswith("postgresql://") and "+psycopg" not in url:
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
 
-# ---- Role helper for FastAPI routes ----
+DATABASE_URL = _normalize_db_url(os.getenv("DATABASE_URL", "sqlite:///./krn_mrp.db"))
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    pool_pre_ping=True,
+    future=True,
+)
+
+# ---------- Role helper (FastAPI dependency style) ----------
 def get_current_user(request: Request):
+    """Return the user dict stored in session by your login flow, or None."""
     return request.session.get("user")
 
 def require_roles(*roles: List[str]) -> Callable:
-    """FastAPI dependency to enforce allowed roles."""
+    """
+    Usage:
+        @router.get("/path")
+        async def handler(dep: None = Depends(require_roles("admin","anneal"))): ...
+    """
     def wrapper(user=Depends(get_current_user)):
         if not user or user.get("role") not in roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Forbidden"
+                detail="Forbidden",
             )
         return user
     return wrapper
