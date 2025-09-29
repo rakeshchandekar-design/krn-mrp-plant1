@@ -300,7 +300,7 @@ def migrate_schema(engine):
                 )
             """))
 
-        # --- Annealing tables ---
+# --- Annealing tables ---
 if str(engine.url).startswith("sqlite"):
     conn.execute(text("""
         CREATE TABLE IF NOT EXISTS anneal_lots(
@@ -310,8 +310,8 @@ if str(engine.url).startswith("sqlite"):
             src_alloc_json TEXT NOT NULL,
             grade TEXT NOT NULL,
             weight_kg REAL NOT NULL,
-            rap_cost_per_kg REAL NOT NULL DEFAULT 0,  -- weighted RAP cost
-            cost_per_kg REAL NOT NULL DEFAULT 0,      -- anneal cost = RAP + 10
+            rap_cost_per_kg REAL NOT NULL DEFAULT 0,
+            cost_per_kg REAL NOT NULL DEFAULT 0,
             ammonia_kg REAL NOT NULL DEFAULT 0,
             qa_status TEXT NOT NULL DEFAULT 'PENDING',
             c_pct REAL, si_pct REAL, mn_pct REAL, s_pct REAL, p_pct REAL,
@@ -359,7 +359,6 @@ else:
             reason TEXT NOT NULL
         )
     """))
-
 
 
 # -------------------------------------------------
@@ -590,6 +589,8 @@ app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_hex(16)))
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+from krn_mrp_app.annealing import router as anneal_router
+app.include_router(anneal_router, prefix="/anneal", tags=["Annealing"])
 
 # expose python builtins to Jinja
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
@@ -639,8 +640,8 @@ USER_DB = {
     "melting": {"password": "melting", "role": "melting"},
     "atom":    {"password": "atom",    "role": "atom"},
     "rap":     {"password": "rap",     "role": "rap"},
+    "anneal": {"password": "anneal", "role": "anneal"},
     "qa":      {"password": "qa",      "role": "qa"},
-    # optional read-only viewer role (future)
     "krn":    {"password": "krn",    "role": "view"},
 }
 
