@@ -21,5 +21,14 @@
     <td><a class="btn btn-small" href="/anneal/qa/{{ x.id }}">QA</a></td>
   </tr>
   {% endfor %}
+  <!-- 👇 totals row -->
+  <tr class="table-info">
+    <th colspan="3">TOTAL</th>
+    <th>{{ '%.2f'|format(total_weight) }}</th>
+    <th></th>
+    <th></th>
+    <th>{{ '%.2f'|format(weighted_cost) }}</th>
+    <th></th>
+  </tr>
 </table>
 {% endblock %}
