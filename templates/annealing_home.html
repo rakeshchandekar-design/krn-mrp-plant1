@@ -1,23 +1,23 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>
-  Annealing
-</h1>
+<h1>Annealing</h1>
 
-<div class="card">
-  <table class="table small">
-    <tr><th>Target (kg / 24h)</th><td>{{ target }}</td></tr>
-    <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
-    <tr><th>Efficiency Today (%)</th><td>{{ '%.1f'|format(eff_today or 0) }}</td></tr>
-    <tr><th>Ammonia Today (kg)</th><td>{{ '%.2f'|format(nh3_today or 0) }}</td></tr>
-    {% if request.state.role == "admin" %}
-      <tr><th>Avg Cost / kg (today)</th><td>{{ '%.2f'|format(avg_cost_today or 0) }}</td></tr>
-      <tr><th>Weighted Cost / kg (today)</th><td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td></tr>
-    {% endif %}
-  </table>
-</div>
+<!-- Row 1: KPIs (left) | Production last 5 days (right) -->
+<div class="grid-2">
+  <div class="card">
+    <h3>KPIs (Today)</h3>
+    <table class="table small">
+      <tr><th>Target (kg / 24h)</th><td>{{ target }}</td></tr>
+      <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
+      <tr><th>Efficiency Today (%)</th><td>{{ '%.1f'|format(eff_today or 0) }}</td></tr>
+      <tr><th>Ammonia Today (kg)</th><td>{{ '%.2f'|format(nh3_today or 0) }}</td></tr>
+      {% if request.state.role == "admin" %}
+        <tr><th>Avg Cost / kg (today)</th><td>{{ '%.2f'|format(avg_cost_today or 0) }}</td></tr>
+        <tr><th>Weighted Cost / kg (today)</th><td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td></tr>
+      {% endif %}
+    </table>
+  </div>
 
-<div class="grid-2" style="margin-top:12px">
   <div class="card">
     <h3>Production — Last 5 Days</h3>
     <table class="table small">
@@ -27,7 +27,10 @@
       {% endfor %}
     </table>
   </div>
+</div>
 
+<!-- Row 2: Live stock (left) | Ammonia usage summary (right) -->
+<div class="grid-2" style="margin-top:12px">
   <div class="card">
     <h3>Live Stock — Lots Available</h3>
     <table class="table small">
@@ -37,15 +40,15 @@
       {% endfor %}
     </table>
   </div>
-</div>
 
-<div class="card" style="margin-top:12px">
-  <h3>Ammonia Gas Usage</h3>
-  <table class="table small">
-    <tr><th>Yesterday (kg)</th><td>{{ '%.2f'|format(nh3_yday or 0) }}</td></tr>
-    <tr><th>Month to Date (kg)</th><td>{{ '%.2f'|format(nh3_mtd or 0) }}</td></tr>
-  </table>
-  <div class="toolbar"><a class="btn" href="/anneal/downtime">Downtime Log</a></div>
+  <div class="card">
+    <h3>Ammonia Gas Usage</h3>
+    <table class="table small">
+      <tr><th>Yesterday (kg)</th><td>{{ '%.2f'|format(nh3_yday or 0) }}</td></tr>
+      <tr><th>Month to Date (kg)</th><td>{{ '%.2f'|format(nh3_mtd or 0) }}</td></tr>
+    </table>
+    <div class="toolbar"><a class="btn" href="/anneal/downtime">Downtime Log</a></div>
+  </div>
 </div>
 
 <div class="toolbar" style="margin-top:10px">
