@@ -617,6 +617,8 @@ app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_hex(16)))
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+# ✅ Register Annealing router here
 from krn_mrp_app.annealing import router as anneal_router
 app.include_router(anneal_router, prefix="/anneal", tags=["Annealing"])
 
