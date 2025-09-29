@@ -22,17 +22,16 @@ def fetch_approved_rap_balance():
           rl.id  AS rap_row_id,
           l.id   AS lot_id,
           CASE WHEN l.lot_no IS NULL OR l.lot_no = ''
-               THEN 'LOT-' || CAST(l.id AS TEXT)
+               THEN 'LOT-' || l.id
                ELSE l.lot_no
-          END    AS lot_no,
-          l.grade AS grade,                         -- KRIP / KRFS
-          COALESCE(l.cost_per_kg, l.unit_cost, 0)  AS cost_per_kg,
-          rl.available_qty AS available_kg
+          END                 AS lot_no,
+          COALESCE(l.grade,'')                         AS grade,        -- KRIP / KRFS
+          COALESCE(l.cost_per_kg, l.unit_cost, 0)      AS cost_per_kg,  -- fallback if one column missing
+          rl.available_qty                              AS available_kg
         FROM rap_lot rl
         JOIN lot l ON l.id = rl.lot_id
         WHERE rl.available_qty > 0
-          AND COALESCE(l.qa_status,'') = 'APPROVED'
-        ORDER BY l.date ASC, rl.id ASC
+        ORDER BY COALESCE(l.date, CURRENT_DATE) ASC, rl.id ASC
     """)
     with engine.begin() as conn:
         return conn.execute(sql).mappings().all()
@@ -152,10 +151,12 @@ async def anneal_create_post(
     placeholders = ",".join([f":p{i}" for i in range(len(lots_tuple))]) or "NULL"
     params = {f"p{i}": lots_tuple[i] for i in range(len(lots_tuple))}
     q = text(f"""
-        SELECT l.lot_no, l.grade, l.cost_per_kg
-        FROM rap_lot rl
-        JOIN lot l ON l.id = rl.lot_id
-        WHERE l.lot_no IN ({placeholders})
+    SELECT l.lot_no,
+           COALESCE(l.grade,'') AS grade,
+           COALESCE(l.cost_per_kg, l.unit_cost, 0) AS cost_per_kg
+    FROM rap_lot rl
+    JOIN lot l ON l.id = rl.lot_id
+    WHERE l.lot_no IN ({placeholders})
     """)
     with engine.begin() as conn:
         rows = conn.execute(q, params).mappings().all()
