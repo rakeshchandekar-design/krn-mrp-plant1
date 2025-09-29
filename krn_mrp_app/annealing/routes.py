@@ -1,4 +1,5 @@
 # krn_mrp_app/annealing/routes.py
+from krn_mrp_app.deps import engine, require_roles
 from fastapi import APIRouter, Request, Depends, HTTPException, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.templating import Jinja2Templates
@@ -6,20 +7,12 @@ from sqlalchemy import text
 from datetime import date
 import json, io, csv
 
-from krn_mrp_app.deps import engine, require_roles
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")  # we will place annealing HTML in global /templates
 
 TARGET_KG_PER_DAY = 6000.0
 ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
-
-# ---- role dependency (FastAPI) ----
-def require_roles(*roles):
-    def _dep(request: Request):
-        if not role_allowed(request, set(roles)):
-            raise HTTPException(status_code=403, detail="Forbidden")
-    return _dep
 
 # ---- helper: fetch approved RAP with balance (JOIN rap_lot -> lot) ----
 def fetch_approved_rap_balance():
