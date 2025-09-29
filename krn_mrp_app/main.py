@@ -618,6 +618,8 @@ app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", sec
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
+from krn_mrp_app.deps import engine  # if main.py needs engine for migrate_schema
+from krn_mrp_app.annealing.routes import router as anneal_router
 # ✅ Register Annealing router here
 from krn_mrp_app.annealing import router as anneal_router
 app.include_router(anneal_router, prefix="/anneal", tags=["Annealing"])
