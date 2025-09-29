@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html>
 <head>
@@ -25,70 +26,34 @@
       max-width: 340px;
       text-align: center;
     }
-    .brand {
-      margin-bottom: 16px;
-    }
-    .brand img {
-      height: 50px;
-      margin-bottom: 8px;
-    }
-    .brand .name {
-      font-weight: 700;
-      font-size: 18px;
-      color: #0b5ed7;
-    }
-    h1 {
-      margin: 0 0 16px;
-      font-size: 20px;
-      font-weight: 600;
-    }
-    label {
-      display: block;
-      font-size: 13px;
-      color: #374151;
-      text-align: left;
-      margin-bottom: 4px;
-    }
+    .brand { margin-bottom: 16px; }
+    .brand img { height: 50px; margin-bottom: 8px; }
+    .brand .name { font-weight: 700; font-size: 18px; color: #0b5ed7; }
+    h1 { margin: 0 0 16px; font-size: 20px; font-weight: 600; }
+    label { display: block; font-size: 13px; color: #374151; text-align: left; margin-bottom: 4px; }
     input {
-      width: 100%;
-      padding: 10px 12px;
-      margin-bottom: 14px;
-      border: 1px solid #d1d5db;
-      border-radius: 6px;
-      font-size: 14px;
-      outline: none;
+      width: 100%; padding: 10px 12px; margin-bottom: 14px;
+      border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; outline: none;
     }
-    input:focus {
-      border-color: #2563eb;
-      box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
-    }
+    input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.15); }
     .btn {
-      width: 100%;
-      padding: 10px 14px;
-      background: #0b5ed7;
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      font-size: 15px;
-      cursor: pointer;
-      font-weight: 600;
+      width: 100%; padding: 10px 14px; background: #0b5ed7; color: #fff;
+      border: none; border-radius: 6px; font-size: 15px; cursor: pointer; font-weight: 600;
     }
     .btn:hover { background: #2563eb; }
-    .muted {
-      margin-top: 10px;
-      font-size: 12px;
-      color: #6b7280;
+    .muted { margin-top: 10px; font-size: 12px; color: #6b7280; }
+    .alert {
+      margin-bottom: 12px; padding: 8px 10px; font-size: 13px;
+      color: #b91c1c; background: #fee2e2; border: 1px solid #fecaca; border-radius: 6px;
+      text-align: left;
     }
-    footer {
-      margin-top: 18px;
-      font-size: 12px;
-      color: #9ca3af;
-      text-align: center;
+    .signed-in {
+      margin-bottom: 12px; padding: 8px 10px; font-size: 13px;
+      color: #065f46; background: #d1fae5; border: 1px solid #a7f3d0; border-radius: 6px;
+      text-align: left;
     }
-    footer a {
-      color: #0b5ed7;
-      text-decoration: none;
-    }
+    footer { margin-top: 18px; font-size: 12px; color: #9ca3af; text-align: center; }
+    footer a { color: #0b5ed7; text-decoration: none; }
     footer a:hover { text-decoration: underline; }
   </style>
 </head>
@@ -99,11 +64,25 @@
       <div class="name">KRN Alloys Pvt. Ltd</div>
     </div>
 
+    <!-- already signed in note -->
+    {% if request.session.get('user') %}
+      <div class="signed-in">
+        Already signed in as <strong>{{ request.session['user']['username'] }}</strong>
+        ({{ request.session['user']['role'] }}) —
+        <a href="/logout">Logout</a>
+      </div>
+    {% endif %}
+
+    <!-- error message (if any) -->
+    {% if error %}
+      <div class="alert">{{ error }}</div>
+    {% endif %}
+
     <h1>Login</h1>
 
     <form method="post" action="/login">
       <label>Username (department)</label>
-      <input type="text" name="username" placeholder="e.g. admin, store, melting, atom, rap, qa" required>
+      <input type="text" name="username" placeholder="e.g. admin, store, melting, atom, rap, qa, anneal, krn" required>
 
       <label>Password</label>
       <input type="password" name="password" required>
@@ -114,7 +93,7 @@
   </div>
 
   <footer>
-    KRN MRP v1.0 &middot; <a href="/">Back to Home</a>
+    KRN MRP v1.0 · <a href="/">Back to Home</a> · <a href="/logout">Logout</a>
   </footer>
 </body>
 </html>
