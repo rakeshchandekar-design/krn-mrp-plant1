@@ -197,11 +197,11 @@
       <!-- ANNEALING -->
       {% set allow = role in ['admin','anneal','view'] %}
       <div class="card">
-        <h3>RAP</h3>
-        <div class="sub">Admin, Annealing</div>
+        <h3>Annealing</h3>             <!-- ✅ was RAP -->
+        <div class="sub">Admin, Anneal</div>   <!-- ✅ clearer -->
         <div class="foot">
           {% if allow %}
-            <a class="open" href="/anneal">Open</a>
+            <a class="open" href="/anneal">Open</a>   <!-- ✅ keep /anneal -->
           {% else %}
             <button class="open" disabled>Open</button><span class="deny">✗</span>
           {% endif %}
