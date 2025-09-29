@@ -1,4 +1,5 @@
 # krn_mrp_app/annealing/routes.py
+from datetime import date, timedelta
 from krn_mrp_app.deps import engine, require_roles
 from fastapi import APIRouter, Request, Depends, HTTPException, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -18,16 +19,19 @@ ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
 def fetch_approved_rap_balance():
     sql = text("""
         SELECT
-          rl.id            AS rap_row_id,
-          l.id             AS lot_id,
-          COALESCE(l.lot_no, 'LOT-' || l.id) AS lot_no,
-          l.grade          AS grade,          -- KRIP / KRFS
-          l.cost_per_kg    AS cost_per_kg,    -- change this name if your cost column differs
+          rl.id  AS rap_row_id,
+          l.id   AS lot_id,
+          CASE WHEN l.lot_no IS NULL OR l.lot_no = ''
+               THEN 'LOT-' || CAST(l.id AS TEXT)
+               ELSE l.lot_no
+          END    AS lot_no,
+          l.grade AS grade,                         -- KRIP / KRFS
+          COALESCE(l.cost_per_kg, l.unit_cost, 0)  AS cost_per_kg,
           rl.available_qty AS available_kg
         FROM rap_lot rl
         JOIN lot l ON l.id = rl.lot_id
         WHERE rl.available_qty > 0
-          AND (l.status = 'APPROVED' OR l.qa_status = 'APPROVED')
+          AND COALESCE(l.qa_status,'') = 'APPROVED'
         ORDER BY l.date ASC, rl.id ASC
     """)
     with engine.begin() as conn:
@@ -37,25 +41,68 @@ def fetch_approved_rap_balance():
 
 @router.get("/", response_class=HTMLResponse)
 async def anneal_home(request: Request, dep: None = Depends(require_roles("admin","anneal","view"))):
+    today = date.today()
+    first_of_month = today.replace(day=1)
+    yday = today - timedelta(days=1)
+
     with engine.begin() as conn:
+        # headline KPIs
         lots_today = conn.execute(
-            text("SELECT COUNT(*) FROM anneal_lots WHERE date=:d"),
-            {"d": date.today()}
+            text("SELECT COUNT(*) FROM anneal_lots WHERE date=:d"), {"d": today}
         ).scalar() or 0
+
         nh3_today = conn.execute(
-            text("SELECT COALESCE(SUM(ammonia_kg),0) FROM anneal_lots WHERE date=:d"),
-            {"d": date.today()}
+            text("SELECT COALESCE(SUM(ammonia_kg),0) FROM anneal_lots WHERE date=:d"), {"d": today}
         ).scalar() or 0.0
+
+        produced_today = conn.execute(
+            text("SELECT COALESCE(SUM(weight_kg),0) FROM anneal_lots WHERE date=:d"), {"d": today}
+        ).scalar() or 0.0
+        eff_today = (produced_today / TARGET_KG_PER_DAY * 100.0) if TARGET_KG_PER_DAY else 0.0
+
         avg_cost_today = conn.execute(
-            text("SELECT COALESCE(AVG(cost_per_kg),0) FROM anneal_lots WHERE date=:d"),
-            {"d": date.today()}
+            text("SELECT COALESCE(AVG(cost_per_kg),0) FROM anneal_lots WHERE date=:d"), {"d": today}
         ).scalar() or 0.0
+
         weighted_cost_today = conn.execute(
             text("""
-                SELECT COALESCE(SUM(cost_per_kg * weight_kg) / NULLIF(SUM(weight_kg),0),0)
+                SELECT COALESCE(SUM(cost_per_kg * weight_kg)/NULLIF(SUM(weight_kg),0),0)
                 FROM anneal_lots WHERE date=:d
             """),
-            {"d": date.today()}
+            {"d": today}
+        ).scalar() or 0.0
+
+        # last 5 days production (most recent first)
+        last5 = conn.execute(
+            text("""
+                SELECT date, COALESCE(SUM(weight_kg),0) AS qty
+                FROM anneal_lots
+                WHERE date >= :d5
+                GROUP BY date
+                ORDER BY date DESC
+            """),
+            {"d5": today - timedelta(days=4)}
+        ).mappings().all()
+
+        # live stock by grade (simple: sum of lot weights)
+        live_stock = conn.execute(
+            text("""
+                SELECT grade, COALESCE(SUM(weight_kg),0) AS qty
+                FROM anneal_lots
+                GROUP BY grade
+                ORDER BY grade
+            """)
+        ).mappings().all()
+
+        # ammonia gas – yesterday and month-to-date
+        nh3_yday = conn.execute(
+            text("SELECT COALESCE(SUM(ammonia_kg),0) FROM anneal_lots WHERE date=:d"),
+            {"d": yday}
+        ).scalar() or 0.0
+
+        nh3_mtd = conn.execute(
+            text("SELECT COALESCE(SUM(ammonia_kg),0) FROM anneal_lots WHERE date >= :d"),
+            {"d": first_of_month}
         ).scalar() or 0.0
 
     return templates.TemplateResponse("annealing_home.html", {
@@ -65,7 +112,12 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
         "nh3_today": nh3_today,
         "avg_cost_today": avg_cost_today,
         "weighted_cost_today": weighted_cost_today,
-        "user": request.session.get("user"),
+        "produced_today": produced_today,
+        "eff_today": eff_today,
+        "last5": last5,
+        "live_stock": live_stock,
+        "nh3_yday": nh3_yday,
+        "nh3_mtd": nh3_mtd,
     })
 
 
