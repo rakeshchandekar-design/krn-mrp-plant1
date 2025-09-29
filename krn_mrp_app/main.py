@@ -240,7 +240,7 @@ def migrate_schema(engine):
                 )
             """))
 
-                # RAP Dispatch + Transfer tables
+        # RAP Dispatch + Transfer tables
         if str(engine.url).startswith("sqlite"):
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS rap_dispatch(
@@ -300,65 +300,93 @@ def migrate_schema(engine):
                 )
             """))
 
-# --- Annealing tables ---
-if str(engine.url).startswith("sqlite"):
-    conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS anneal_lots(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            lot_no TEXT UNIQUE NOT NULL,
-            date DATE NOT NULL,
-            src_alloc_json TEXT NOT NULL,
-            grade TEXT NOT NULL,
-            weight_kg REAL NOT NULL,
-            rap_cost_per_kg REAL NOT NULL DEFAULT 0,
-            cost_per_kg REAL NOT NULL DEFAULT 0,
-            ammonia_kg REAL NOT NULL DEFAULT 0,
-            qa_status TEXT NOT NULL DEFAULT 'PENDING',
-            c_pct REAL, si_pct REAL, mn_pct REAL, s_pct REAL, p_pct REAL,
-            o_pct REAL, compressibility REAL,
-            remarks TEXT,
-            created_by TEXT,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """))
-    conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS anneal_downtime(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date DATE NOT NULL,
-            minutes INTEGER NOT NULL,
-            area TEXT NOT NULL,
-            reason TEXT NOT NULL
-        )
-    """))
-else:
-    conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS anneal_lots(
-            id SERIAL PRIMARY KEY,
-            lot_no TEXT UNIQUE NOT NULL,
-            date DATE NOT NULL,
-            src_alloc_json TEXT NOT NULL,
-            grade TEXT NOT NULL,
-            weight_kg DOUBLE PRECISION NOT NULL,
-            rap_cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
-            cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
-            ammonia_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
-            qa_status TEXT NOT NULL DEFAULT 'PENDING',
-            c_pct DOUBLE PRECISION, si_pct DOUBLE PRECISION, mn_pct DOUBLE PRECISION,
-            s_pct DOUBLE PRECISION, p_pct DOUBLE PRECISION,
-            o_pct DOUBLE PRECISION, compressibility DOUBLE PRECISION,
-            remarks TEXT, created_by TEXT,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """))
-    conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS anneal_downtime(
-            id SERIAL PRIMARY KEY,
-            date DATE NOT NULL,
-            minutes INT NOT NULL,
-            area TEXT NOT NULL,
-            reason TEXT NOT NULL
-        )
-    """))
+                # --- Annealing tables ---
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_lots(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lot_no TEXT UNIQUE NOT NULL,
+                    date DATE NOT NULL,
+                    src_alloc_json TEXT NOT NULL,
+                    grade TEXT NOT NULL,
+                    weight_kg REAL NOT NULL,
+                    rap_cost_per_kg REAL NOT NULL DEFAULT 0,
+                    cost_per_kg REAL NOT NULL DEFAULT 0,
+                    ammonia_kg REAL NOT NULL DEFAULT 0,
+                    qa_status TEXT NOT NULL DEFAULT 'PENDING',
+                    c_pct REAL, si_pct REAL, mn_pct REAL, s_pct REAL, p_pct REAL,
+                    o_pct REAL, compressibility REAL,
+                    remarks TEXT,
+                    created_by TEXT,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_downtime(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL,
+                    minutes INTEGER NOT NULL,
+                    area TEXT NOT NULL,
+                    reason TEXT NOT NULL
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_lots(
+                    id SERIAL PRIMARY KEY,
+                    lot_no TEXT UNIQUE NOT NULL,
+                    date DATE NOT NULL,
+                    src_alloc_json TEXT NOT NULL,
+                    grade TEXT NOT NULL,
+                    weight_kg DOUBLE PRECISION NOT NULL,
+                    rap_cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    ammonia_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    qa_status TEXT NOT NULL DEFAULT 'PENDING',
+                    c_pct DOUBLE PRECISION, si_pct DOUBLE PRECISION, mn_pct DOUBLE PRECISION,
+                    s_pct DOUBLE PRECISION, p_pct DOUBLE PRECISION,
+                    o_pct DOUBLE PRECISION, compressibility DOUBLE PRECISION,
+                    remarks TEXT, created_by TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_downtime(
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    minutes INT NOT NULL,
+                    area TEXT NOT NULL,
+                    reason TEXT NOT NULL
+                )
+            """))
+
+        # --- Safety: ensure anneal_lots has expected columns ---
+        for coldef in [
+            "rap_cost_per_kg REAL DEFAULT 0",
+            "cost_per_kg REAL DEFAULT 0",
+            "ammonia_kg REAL DEFAULT 0",
+            "o_pct REAL",
+            "compressibility REAL"
+        ]:
+            col = coldef.split()[0]
+            if not _table_has_column(conn, "anneal_lots", col):
+                if str(engine.url).startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE anneal_lots ADD COLUMN {coldef}"))
+                else:
+                    sql = coldef.replace("REAL", "DOUBLE PRECISION")
+                    conn.execute(text(f"ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
+
+        # --- Safety: ensure anneal_downtime has expected columns ---
+        for coldef in [
+            "area TEXT",
+            "reason TEXT"
+        ]:
+            col = coldef.split()[0]
+            if not _table_has_column(conn, "anneal_downtime", col):
+                if str(engine.url).startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE anneal_downtime ADD COLUMN {coldef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS {col} {coldef.split(' ',1)[1]}"))
 
 
 # -------------------------------------------------
