@@ -20,8 +20,9 @@ class AnnealLot(db.Model):
     # Produced
     grade = db.Column(db.String(16), nullable=False)     # KIP or KFS
     weight_kg = db.Column(db.Float, nullable=False)
+    rap_cost_per_kg = db.Column(db.Float, nullable=False, default=0)  # weighted RAP cost
     cost_per_kg = db.Column(db.Float, nullable=False, default=0)
-    ammonia_kg = db.Column(db.Float, nullable=False, default=0)  # recorded per lot
+    ammonia_kg = db.Column(db.Float, nullable=False, default=0)  # recorded per lot 
 
     # QA fields
     qa_status = db.Column(db.String(16), nullable=False, default="PENDING")  # PENDING/APPROVED/HOLD/REJECTED
