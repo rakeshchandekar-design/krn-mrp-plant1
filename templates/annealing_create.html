@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Create Annealing Lot (Allocate from Approved RAP)</h2>
+
+<form method="post">
+  <label>Ammonia used (kg)</label>
+  <input type="number" step="0.01" name="ammonia_kg" value="0" required>
+
+  <table class="table">
+    <tr>
+      <th>RAP Lot</th><th>RAP Grade</th><th>Available (kg)</th>
+      <th>RAP Cost/kg (₹)</th><th>Allocate (kg)</th>
+    </tr>
+    {% for r in rap_rows %}
+    <tr>
+      <td>{{ r.lot_no }}</td>
+      <td>{{ r.grade }}</td>
+      <td>{{ '%.1f'|format(r.available_kg) }}</td>
+      <td>{{ '%.2f'|format(r.cost_per_kg or 0) }}</td>
+      <td><input type="number" step="0.01" min="0" max="{{ r.available_kg }}" name="alloc_{{ r.lot_no }}"></td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <p class="muted">Cost rule: <strong>Anneal Cost/kg = Weighted RAP Cost/kg + ₹10</strong>. KRIP → KIP, KRFS → KFS.</p>
+  <button class="btn btn-primary" type="submit">Create Lot</button>
+</form>
+{% endblock %}
