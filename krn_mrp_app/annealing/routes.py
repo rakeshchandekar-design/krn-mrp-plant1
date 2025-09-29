@@ -18,21 +18,18 @@ ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
 # ---- helper: fetch approved RAP with balance (JOIN rap_lot -> lot) ----
 def fetch_approved_rap_balance():
     sql = text("""
-        SELECT
-          rl.id  AS rap_row_id,
-          l.id   AS lot_id,
-          CASE WHEN l.lot_no IS NULL OR l.lot_no = ''
-               THEN 'LOT-' || l.id
-               ELSE l.lot_no
-          END                 AS lot_no,
-          COALESCE(l.grade,'')                         AS grade,        -- KRIP / KRFS
-          COALESCE(l.cost_per_kg, l.unit_cost, 0)      AS cost_per_kg,  -- fallback if one column missing
-          rl.available_qty                              AS available_kg
-        FROM rap_lot rl
-        JOIN lot l ON l.id = rl.lot_id
-        WHERE rl.available_qty > 0
-        ORDER BY rl.id ASC
-    """)
+    SELECT
+        rl.id AS rap_row_id,
+        l.id AS lot_id,
+        CASE WHEN l.lot_no IS NULL OR l.lot_no = '' THEN 'LOT-' || l.id ELSE l.lot_no END AS lot_no,
+        COALESCE(l.grade,'') AS grade,
+        0.0 AS cost_per_kg,   -- TEMP fallback, since these cols don’t exist
+        rl.available_qty AS available_kg
+    FROM rap_lot rl
+    JOIN lot l ON l.id = rl.lot_id
+    WHERE rl.available_qty > 0
+    ORDER BY rl.id ASC
+ """)
     with engine.begin() as conn:
         return conn.execute(sql).mappings().all()
 
