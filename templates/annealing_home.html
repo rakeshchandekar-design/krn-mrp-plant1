@@ -10,6 +10,10 @@
     <tr><th>Target (kg)</th><td>{{ target }}</td></tr>
     <tr><th>Lots Today</th><td>{{ lots_today }}</td></tr>
     <tr><th>Ammonia Today (kg)</th><td>{{ '%.2f'|format(nh3_today) }}</td></tr>
+  # 👇 costing only visible if logged-in role is admin #
+    {% if user and user.role == "admin" %}
+      <tr><th>Cost / kg (Anneal)</th><td>{{ '%.2f'|format(cost_per_kg) }}</td></tr>
+    {% endif %}
   </table>
 </div>
 
