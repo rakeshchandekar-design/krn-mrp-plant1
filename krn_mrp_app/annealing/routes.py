@@ -12,15 +12,25 @@ anneal_bp = Blueprint("anneal", __name__, url_prefix="/anneal", template_folder=
 TARGET_KG_PER_DAY = 6000
 ANNEAL_ADD_COST = 10.0  # ₹/kg to add over weighted RAP cost
 
+from sqlalchemy import text
+
 def fetch_approved_rap_balance():
-    # Adjust these column names if your RAP table differs.
     sql = text("""
-      SELECT lot_no, grade, available_kg, cost_per_kg
-      FROM rap_lots
-      WHERE qa_status='APPROVED' AND available_kg > 0
-      ORDER BY date ASC, lot_no ASC
+        SELECT
+          rl.id            AS rap_row_id,
+          l.id             AS lot_id,
+          COALESCE(l.lot_no, CONCAT('LOT-', l.id)) AS lot_no,
+          l.grade          AS grade,          -- KRIP/KRFS
+          l.cost_per_kg    AS cost_per_kg,    -- change if your cost column name differs
+          rl.available_qty AS available_kg
+        FROM rap_lot rl
+        JOIN lot l ON l.id = rl.lot_id
+        WHERE rl.available_qty > 0
+          AND (l.status = 'APPROVED' OR l.qa_status = 'APPROVED')
+        ORDER BY l.date ASC, rl.id ASC
     """)
     return db.session.execute(sql).mappings().all()
+
 
 @anneal_bp.route("/")
 def home():
