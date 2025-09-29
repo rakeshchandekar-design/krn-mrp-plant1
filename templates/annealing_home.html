@@ -1,18 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>
-  <img src="{{ url_for('static', path='krn_logo.png') }}" height="44" style="vertical-align:middle">
+  <img src="{{ url_for('static', path='KRN_Logo.png') }}" height="44" style="vertical-align:middle">
   &nbsp;Annealing
 </h1>
 
 <div class="card">
   <table class="table small">
-    <tr><th>Target (kg)</th><td>{{ target }}</td></tr>
+    <tr><th>Target (kg / 24h)</th><td>{{ target }}</td></tr>
     <tr><th>Lots Today</th><td>{{ lots_today }}</td></tr>
-    <tr><th>Ammonia Today (kg)</th><td>{{ '%.2f'|format(nh3_today) }}</td></tr>
-  # 👇 costing only visible if logged-in role is admin #
-    {% if user and user.role == "admin" %}
-      <tr><th>Cost / kg (Anneal)</th><td>{{ '%.2f'|format(cost_per_kg) }}</td></tr>
+    <tr><th>Ammonia Today (kg)</th><td>{{ '%.2f'|format(nh3_today or 0) }}</td></tr>
+
+    {# costing is shown only to admin; variables come from routes.py #}
+    {% if request.state.role == "admin" %}
+      <tr>
+        <th>Avg Cost / kg (today)</th>
+        <td>{{ '%.2f'|format(avg_cost_today or 0) }}</td>
+      </tr>
+      <tr>
+        <th>Weighted Cost / kg (today)</th>
+        <td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td>
+      </tr>
     {% endif %}
   </table>
 </div>
