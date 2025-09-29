@@ -31,7 +31,7 @@ def fetch_approved_rap_balance():
         FROM rap_lot rl
         JOIN lot l ON l.id = rl.lot_id
         WHERE rl.available_qty > 0
-        ORDER BY COALESCE(l.date, CURRENT_DATE) ASC, rl.id ASC
+        ORDER BY rl.id ASC
     """)
     with engine.begin() as conn:
         return conn.execute(sql).mappings().all()
