@@ -45,16 +45,36 @@ def fetch_approved_rap_balance():
 @router.get("/", response_class=HTMLResponse)
 async def anneal_home(request: Request, dep: None = Depends(require_roles("admin","anneal","view"))):
     with engine.begin() as conn:
-        lots_today = conn.execute(text("SELECT COUNT(*) FROM anneal_lots WHERE date=:d"), {"d": date.today()}).scalar() or 0
-        nh3_today  = conn.execute(text("SELECT COALESCE(SUM(ammonia_kg),0) FROM anneal_lots WHERE date=:d"), {"d": date.today()}).scalar() or 0.0
+        lots_today = conn.execute(
+            text("SELECT COUNT(*) FROM anneal_lots WHERE date=:d"),
+            {"d": date.today()}
+        ).scalar() or 0
+        nh3_today = conn.execute(
+            text("SELECT COALESCE(SUM(ammonia_kg),0) FROM anneal_lots WHERE date=:d"),
+            {"d": date.today()}
+        ).scalar() or 0.0
+        avg_cost_today = conn.execute(
+            text("SELECT COALESCE(AVG(cost_per_kg),0) FROM anneal_lots WHERE date=:d"),
+            {"d": date.today()}
+        ).scalar() or 0.0
+        weighted_cost_today = conn.execute(
+            text("""
+                SELECT COALESCE(SUM(cost_per_kg * weight_kg) / NULLIF(SUM(weight_kg),0),0)
+                FROM anneal_lots WHERE date=:d
+            """),
+            {"d": date.today()}
+        ).scalar() or 0.0
+
     return templates.TemplateResponse("annealing_home.html", {
         "request": request,
         "target": TARGET_KG_PER_DAY,
         "lots_today": lots_today,
-        "nh3_today": nh3_today
-        "cost_per_kg": cost_per_kg,
+        "nh3_today": nh3_today,
+        "avg_cost_today": avg_cost_today,
+        "weighted_cost_today": weighted_cost_today,
         "user": request.session.get("user"),
     })
+
 
 @router.get("/create", response_class=HTMLResponse)
 async def anneal_create_get(request: Request, dep: None = Depends(require_roles("anneal","admin"))):
