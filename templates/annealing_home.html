@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>
+  <img src="{{ url_for('static', path='krn_logo.png') }}" height="44" style="vertical-align:middle">
+  &nbsp;Annealing
+</h1>
+
+<div class="card">
+  <table class="table small">
+    <tr><th>Target (kg)</th><td>{{ target }}</td></tr>
+    <tr><th>Lots Today</th><td>{{ lots_today }}</td></tr>
+    <tr><th>Ammonia Today (kg)</th><td>{{ '%.2f'|format(nh3_today) }}</td></tr>
+  </table>
+</div>
+
+<div class="toolbar" style="margin-top:10px">
+  <a class="btn btn-primary" href="/anneal/create">Create Lot</a>
+  <a class="btn" href="/anneal/lots">View Lots</a>
+  <a class="btn" href="/anneal/downtime">Downtime Log</a>
+</div>
+{% endblock %}
