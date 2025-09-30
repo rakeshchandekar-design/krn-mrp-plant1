@@ -300,26 +300,61 @@ async def anneal_qa_post(lot_id: int, request: Request, dep: None = Depends(requ
 
     return RedirectResponse(url="/anneal/lots", status_code=303)
 
+from datetime import date, timedelta, datetime  # make sure datetime is imported
+
 @router.get("/downtime", response_class=HTMLResponse)
 async def anneal_downtime_get(request: Request, dep: None = Depends(require_roles("anneal","admin"))):
     with engine.begin() as conn:
         logs = conn.execute(text("SELECT * FROM anneal_downtime ORDER BY date DESC, id DESC")).mappings().all()
-    return templates.TemplateResponse("annealing_downtime.html", {"request": request, "logs": logs})
+
+    today = date.today()
+    three_days_ago = today - timedelta(days=3)
+
+    return templates.TemplateResponse("annealing_downtime.html", {
+        "request": request,
+        "logs": logs,
+        # used by the form to restrict picker
+        "today": today.isoformat(),
+        "min_date": three_days_ago.isoformat(),
+        # optional error banner
+        "err": request.query_params.get("err", "")
+    })
+
 
 @router.post("/downtime")
-async def anneal_downtime_post(
-    request: Request,
-    dep: None = Depends(require_roles("anneal","admin"))
-):
+async def anneal_downtime_post(request: Request, dep: None = Depends(require_roles("anneal","admin"))):
     form = await request.form()
+
+    # --- validate date: no future, only last 3 days allowed ---
+    d_str = (form.get("date") or "").strip()
+    try:
+        d_obj = datetime.strptime(d_str, "%Y-%m-%d").date()
+    except Exception:
+        return RedirectResponse(url="/anneal/downtime?err=Invalid+date", status_code=303)
+
+    today = date.today()
+    if d_obj > today or d_obj < (today - timedelta(days=3)):
+        return RedirectResponse(url="/anneal/downtime?err=Date+must+be+within+last+3+days", status_code=303)
+
+    # minutes + dropdown "type" (stored in existing 'area' column)
+    mins = int(form.get("minutes") or 0)
+    area_or_type = (form.get("area") or "").strip()   # values: Production/Maintenance/Power/Other
+    reason = (form.get("reason") or "").strip()
+
+    if mins <= 0 or not area_or_type:
+        return RedirectResponse(url="/anneal/downtime?err=Minutes+and+Type+are+required", status_code=303)
+
     with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO anneal_downtime (date, minutes, area, reason)
             VALUES (:date, :minutes, :area, :reason)
         """), {
-            "date": form["date"], "minutes": int(form["minutes"]),
-            "area": form["area"], "reason": form["reason"]
+            "date": d_obj,
+            "minutes": mins,
+            "area": area_or_type,
+            "reason": reason
         })
+
     return RedirectResponse(url="/anneal/downtime", status_code=303)
 
 @router.get("/downtime.csv")
