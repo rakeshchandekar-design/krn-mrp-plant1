@@ -152,20 +152,19 @@ async def anneal_create_post(
     # ---- read RAP rows for the selected RAP lot_nos (safe expanding param) ----
     lot_nos = list(allocations.keys())
     q = text("""
-        SELECT l.lot_no,
-               COALESCE(l.grade,'')                    AS grade,
-               COALESCE(l.cost_per_kg, l.unit_cost, 0) AS cost_per_kg
-        FROM rap_lot rl
-        JOIN lot l ON l.id = rl.lot_id
-        WHERE l.lot_no IN :lot_nos
-          AND rl.available_qty > 0
-    """).bindparams(bindparam("lot_nos", expanding=True))
+    SELECT l.lot_no,
+           COALESCE(l.grade,'')                    AS grade,
+           COALESCE(l.cost_per_kg, l.unit_cost, 0) AS cost_per_kg
+    FROM rap_lot rl
+    JOIN lot l ON l.id = rl.lot_id
+    WHERE l.lot_no = ANY(:lot_nos)
+      AND rl.available_qty > 0
+""").bindparams(bindparam("lot_nos", type_=ARRAY(String)))
 
     with engine.begin() as conn:
         rows = conn.execute(q, {"lot_nos": lot_nos}).mappings().all()
-        if not rows:
-            # nothing matched the selected lot_nos
-            return RedirectResponse(url="/anneal/create", status_code=303)
+    if not rows:
+        return RedirectResponse(url="/anneal/create", status_code=303)
 
         # ---- single family rule (KRIP or KRFS only) ----
         fam = {r["grade"] for r in rows}
