@@ -6,7 +6,7 @@
   <a class="btn" href="/anneal/">← Back to Annealing</a>
 </div>
 
-{# ---- show server error banner if ?err=... is passed ---- #}
+{# show error passed as ?err=... #}
 {% if err %}
   <div class="alert alert-danger" style="margin:10px 0">{{ err }}</div>
 {% endif %}
@@ -83,10 +83,10 @@
       const lw = parseFloat(lotWeight.value || '0');
       if (!total || total <= 0) {
         e.preventDefault();
-        alert('Please allocate quantity > 0. Lot Weight must equal the total allocated.');
+        alert('Please allocate quantity > 0 kg.');
         return;
       }
-      // hard check to ensure lot weight matches total (prevents manual tampering)
+      // belt-and-suspenders: ensure the two match (should always be true)
       if (Math.abs(total - lw) > 0.01) {
         e.preventDefault();
         alert(Lot weight mismatch: allocated ${total.toFixed(2)} kg, entered ${lw.toFixed(2)} kg.);
