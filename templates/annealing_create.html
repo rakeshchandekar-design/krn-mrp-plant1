@@ -3,6 +3,9 @@
 <h2>Create Annealing Lot (Allocate from Approved RAP)</h2>
 
 <form method="post">
+  <label>Lot Weight (kg)</label>
+  <input type="number" step="0.01" name="lot_weight" value="0" required>
+
   <label>Ammonia used (kg)</label>
   <input type="number" step="0.01" name="ammonia_kg" value="0" required>
 
@@ -12,7 +15,11 @@
       <th>RAP Cost/kg (₹)</th><th>Allocate (kg)</th>
     </tr>
     {% for r in rap_rows %}
-    <tr>
+    <tr class="
+        {% if r.grade.startswith('KRIP') %} bg-info-subtle
+        {% elif r.grade.startswith('KRFS') %} bg-warning-subtle
+        {% endif %}
+    ">
       <td>{{ r.lot_no }}</td>
       <td>{{ r.grade }}</td>
       <td>{{ '%.1f'|format(r.available_kg) }}</td>
@@ -22,7 +29,15 @@
     {% endfor %}
   </table>
 
-  <p class="muted">Cost rule: <strong>Anneal Cost/kg = Weighted RAP Cost/kg + ₹10</strong>. KRIP → KIP, KRFS → KFS.</p>
+  <p class="muted">
+    Cost rule: <strong>Anneal Cost/kg = Weighted RAP Cost/kg + ₹10</strong>.  
+    KRIP → KIP, KRFS → KFS.
+  </p>
   <button class="btn btn-primary" type="submit">Create Lot</button>
 </form>
+
+<style>
+  .bg-info-subtle { background-color: #e6f4ff; }     /* Light blue */
+  .bg-warning-subtle { background-color: #fff3e0; }  /* Light orange */
+</style>
 {% endblock %}
