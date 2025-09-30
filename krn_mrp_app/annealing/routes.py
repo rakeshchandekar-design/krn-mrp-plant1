@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.templating import Jinja2Templates
 from sqlalchemy import text
 from datetime import date
+from math import isclose
 import json, io, csv
 
 
@@ -125,39 +126,55 @@ async def anneal_create_get(request: Request, dep: None = Depends(require_roles(
 @router.post("/create")
 async def anneal_create_post(
     request: Request,
-    dep: None = Depends(require_roles("anneal", "admin")),
+    dep: None = Depends(require_roles("anneal","admin"))
 ):
     form = await request.form()
 
-    # collect allocations
+    # ---- read inputs ----
+    try:
+        lot_weight = float(form.get("lot_weight") or 0)
+        ammonia_kg = float(form.get("ammonia_kg") or 0)
+    except Exception:
+        return RedirectResponse(url="/anneal/create", status_code=303)
+
+    # collect allocations: keys like alloc_<RAP lot_no>
     allocations: dict[str, float] = {}
     total_alloc = 0.0
     for k, v in form.items():
-        if k.startswith("alloc_") and (v or "").strip():
-            rap_lot_no = k.replace("alloc_", "")
+        if not k.startswith("alloc_"):
+            continue
+        if not (v or "").strip():
+            continue
+        try:
             qty = float(v)
-            if qty > 0:
-                allocations[rap_lot_no] = qty
-                total_alloc += qty
+        except Exception:
+            qty = 0.0
+        if qty > 0:
+            rap_lot_no = k.replace("alloc_", "")
+            allocations[rap_lot_no] = qty
+            total_alloc += qty
 
-    if total_alloc <= 0:
+    # ---- basic guards ----
+    if lot_weight <= 0 or total_alloc <= 0:
         return RedirectResponse(url="/anneal/create", status_code=303)
 
-    ammonia_kg = float(form.get("ammonia_kg") or 0)
+    # Σ allocations must equal intended lot weight (±10g)
+    if not isclose(total_alloc, lot_weight, rel_tol=0.0, abs_tol=0.01):
+        return RedirectResponse(url="/anneal/create", status_code=303)
 
-    # fetch selected RAP lots (grade + cost from lot)
+    # ---- read RAP rows for the selected RAP lot_nos ----
     lots_tuple = tuple(allocations.keys())
-    placeholders = ",".join([f":p{i}" for i in range(len(lots_tuple))])
+    placeholders = ",".join([f":p{i}" for i in range(len(lots_tuple))]) or "NULL"
     params = {f"p{i}": lots_tuple[i] for i in range(len(lots_tuple))}
-
+    # cost_per_kg fallback to unit_cost if your schema uses that
     q = text(f"""
-        SELECT
-            l.lot_no,
-            COALESCE(l.grade, '') AS grade,
-            COALESCE(l.cost_per_kg, l.unit_cost, 0) AS cost_per_kg
+        SELECT l.lot_no,
+               COALESCE(l.grade,'') AS grade,
+               COALESCE(l.cost_per_kg, l.unit_cost, 0) AS cost_per_kg
         FROM rap_lot rl
         JOIN lot l ON l.id = rl.lot_id
         WHERE l.lot_no IN ({placeholders})
+          AND rl.available_qty > 0
     """)
 
     with engine.begin() as conn:
@@ -165,65 +182,58 @@ async def anneal_create_post(
         if not rows:
             return RedirectResponse(url="/anneal/create", status_code=303)
 
-        # must allocate from a single family only
+        # ---- single family rule (KRIP or KRFS) ----
         fam = {r["grade"] for r in rows}
         if len(fam) > 1:
             return RedirectResponse(url="/anneal/create", status_code=303)
 
-        rap_grade = next(iter(fam))
-        out_grade = "KIP" if rap_grade == "KRIP" else "KFS"
+        rap_grade = list(fam)[0] or ""
+        out_grade = "KIP" if rap_grade.startswith("KRIP") else "KFS"
 
-        # weighted RAP cost
+        # ---- weighted RAP cost/kg over the allocations ----
         rap_cost_wsum = 0.0
         for r in rows:
-            rap_cost_wsum += allocations.get(r["lot_no"], 0.0) * float(r["cost_per_kg"] or 0)
-        rap_cost_per_kg = rap_cost_wsum / total_alloc if total_alloc else 0.0
+            rap_cost_wsum += allocations.get(r["lot_no"], 0.0) * float(r["cost_per_kg"] or 0.0)
 
-        # anneal cost rule: RAP + ₹10
+        rap_cost_per_kg = rap_cost_wsum / lot_weight if lot_weight else 0.0
         cost_per_kg = rap_cost_per_kg + ANNEAL_ADD_COST
 
-        # new lot number
+        # ---- make a new anneal lot no ----
         prefix = "ANL-" + date.today().strftime("%Y%m%d") + "-"
         last = conn.execute(
             text("SELECT lot_no FROM anneal_lots WHERE lot_no LIKE :pfx ORDER BY lot_no DESC LIMIT 1"),
-            {"pfx": f"{prefix}%"},
+            {"pfx": f"{prefix}%"}
         ).scalar()
         seq = int(last.split("-")[-1]) + 1 if last else 1
         lot_no = f"{prefix}{seq:03d}"
 
-        # insert anneal lot
-        conn.execute(
-            text("""
-                INSERT INTO anneal_lots
-                  (lot_no, date, src_alloc_json, grade, weight_kg,
-                   rap_cost_per_kg, cost_per_kg, ammonia_kg, qa_status)
-                VALUES
-                  (:lot_no, :date, :src_alloc_json, :grade, :weight_kg,
-                   :rap_cost_per_kg, :cost_per_kg, :ammonia_kg, 'PENDING')
-            """),
-            {
-                "lot_no": lot_no,
-                "date": date.today(),
-                "src_alloc_json": json.dumps(allocations),
-                "grade": out_grade,
-                "weight_kg": total_alloc,
-                "rap_cost_per_kg": rap_cost_per_kg,
-                "cost_per_kg": cost_per_kg,
-                "ammonia_kg": ammonia_kg,
-            },
-        )
+        # ---- insert anneal lot ----
+        conn.execute(text("""
+            INSERT INTO anneal_lots
+              (lot_no, date, src_alloc_json, grade, weight_kg,
+               rap_cost_per_kg, cost_per_kg, ammonia_kg, qa_status)
+            VALUES
+              (:lot_no, :date, :src_alloc_json, :grade, :weight_kg,
+               :rap_cost_per_kg, :cost_per_kg, :ammonia_kg, 'PENDING')
+        """), {
+            "lot_no": lot_no,
+            "date": date.today(),
+            "src_alloc_json": json.dumps(allocations),
+            "grade": out_grade,
+            "weight_kg": lot_weight,
+            "rap_cost_per_kg": rap_cost_per_kg,
+            "cost_per_kg": cost_per_kg,
+            "ammonia_kg": ammonia_kg
+        })
 
-        # deduct from RAP balances
-        for src_lot_no, qty in allocations.items():
-            conn.execute(
-                text("""
-                    UPDATE rap_lot
-                    SET available_qty = available_qty - :q
-                    WHERE lot_id IN (SELECT id FROM lot WHERE lot_no = :lot_no)
-                      AND available_qty >= :q
-                """),
-                {"q": qty, "lot_no": src_lot_no},
-            )
+        # ---- deduct RAP balances ----
+        for rap_lot_no, qty in allocations.items():
+            conn.execute(text("""
+                UPDATE rap_lot
+                   SET available_qty = available_qty - :q
+                 WHERE lot_id IN (SELECT id FROM lot WHERE lot_no = :lot)
+                   AND available_qty >= :q
+            """), {"q": qty, "lot": rap_lot_no})
 
     return RedirectResponse(url="/anneal/lots", status_code=303)
 
