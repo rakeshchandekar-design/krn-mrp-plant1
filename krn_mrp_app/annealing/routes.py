@@ -155,7 +155,7 @@ async def anneal_create_post(
     q = text("""
     SELECT l.lot_no,
            COALESCE(l.grade,'')                    AS grade,
-           COALESCE(l.cost_per_kg, l.unit_cost, 0) AS cost_per_kg
+           COALESCE(l.unit_cost, 0) AS cost_per_kg
     FROM rap_lot rl
     JOIN lot l ON l.id = rl.lot_id
     WHERE l.lot_no IN :lot_nos
