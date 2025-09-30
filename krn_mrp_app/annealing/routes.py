@@ -3,6 +3,7 @@
 from datetime import date, timedelta
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
+from urllib.parse import quote_plus
 from starlette.templating import Jinja2Templates
 from sqlalchemy import text, bindparam
 import json, io, csv
@@ -55,7 +56,16 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
         produced_today = conn.execute(
             text("SELECT COALESCE(SUM(weight_kg),0) FROM anneal_lots WHERE date=:d"), {"d": today}
         ).scalar() or 0.0
-        eff_today = (produced_today / TARGET_KG_PER_DAY * 100.0) if TARGET_KG_PER_DAY else 0.0
+
+        # --- NEW: adjust daily target by today's downtime (minutes) ---
+        down_mins_today = conn.execute(
+            text("SELECT COALESCE(SUM(minutes),0) FROM anneal_downtime WHERE date=:d"), {"d": today}
+        ).scalar() or 0
+        minutes_avail = max(1440 - int(down_mins_today), 0)
+        target_today = TARGET_KG_PER_DAY * (minutes_avail / 1440.0)
+
+        # efficiency uses the adjusted target
+        eff_today = (produced_today / target_today * 100.0) if target_today > 0 else 0.0
 
         avg_cost_today = conn.execute(
             text("SELECT COALESCE(AVG(cost_per_kg),0) FROM anneal_lots WHERE date=:d"), {"d": today}
@@ -104,13 +114,13 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
 
     return templates.TemplateResponse("annealing_home.html", {
         "request": request,
-        "target": TARGET_KG_PER_DAY,
+        "target": target_today,                 # <— adjusted for downtime
         "lots_today": lots_today,
         "nh3_today": nh3_today,
         "avg_cost_today": avg_cost_today,
         "weighted_cost_today": weighted_cost_today,
         "produced_today": produced_today,
-        "eff_today": eff_today,
+        "eff_today": eff_today,                 # <— uses adjusted target
         "last5": last5,
         "live_stock": live_stock,
         "nh3_yday": nh3_yday,
@@ -121,7 +131,12 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
 @router.get("/create", response_class=HTMLResponse)
 async def anneal_create_get(request: Request, dep: None = Depends(require_roles("anneal","admin"))):
     rap_rows = fetch_approved_rap_balance()
-    return templates.TemplateResponse("annealing_create.html", {"request": request, "rap_rows": rap_rows})
+    err = request.query_params.get("err", "")
+    return templates.TemplateResponse(
+        "annealing_create.html",
+        {"request": request, "rap_rows": rap_rows, "err": err}
+    )
+
 
 @router.post("/create")
 async def anneal_create_post(
@@ -146,20 +161,34 @@ async def anneal_create_post(
 
     # ----- basic guards -----
     if total_alloc <= 0:
-        # nothing allocated → go back to form
-        return RedirectResponse(url="/anneal/create", status_code=303)
+        msg = "Allocate quantity > 0 kg."
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+
+    # read optional lot_weight from form if present
+    posted_lw = form.get("lot_weight")
+    if posted_lw:
+        try:
+            lw = float(posted_lw)
+        except ValueError:
+            msg = "Lot weight must be a number."
+            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+
+        # check mismatch vs allocations
+        if abs(lw - total_alloc) > 0.01:  # allow 10 g tolerance
+            msg = f"Lot weight mismatch: allocated {total_alloc:.2f} kg, entered {lw:.2f} kg."
+            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+
+    # authoritative lot_weight = sum of allocations
+    lot_weight = total_alloc
 
     ammonia_kg = float(form.get("ammonia_kg") or 0)
 
-    # No separate lot_weight field in the form → use sum of allocations
-    lot_weight = total_alloc
-
-    # ---- read RAP rows for the selected RAP lot_nos (safe expanding param) ----
+    # ---- read RAP rows for the selected RAP lot_nos ----
     lot_nos = list(allocations.keys())
     q = text("""
         SELECT l.lot_no,
-               COALESCE(l.grade,'')      AS grade,
-               COALESCE(l.unit_cost, 0)  AS cost_per_kg
+               COALESCE(l.grade,'')     AS grade,
+               COALESCE(l.unit_cost, 0) AS cost_per_kg
         FROM rap_lot rl
         JOIN lot l ON l.id = rl.lot_id
         WHERE l.lot_no IN :lot_nos
@@ -169,13 +198,14 @@ async def anneal_create_post(
     with engine.begin() as conn:
         rows = conn.execute(q, {"lot_nos": lot_nos}).mappings().all()
         if not rows:
-            # nothing matched the selected lot_nos
-            return RedirectResponse(url="/anneal/create", status_code=303)
+            msg = "Selected RAP lots not found or no availability."
+            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
 
         # ---- single family rule (KRIP or KRFS only) ----
         fam = {r["grade"] for r in rows}
         if len(fam) > 1:
-            return RedirectResponse(url="/anneal/create", status_code=303)
+            msg = "Only one grade allowed per anneal lot (KRIP or KRFS)."
+            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
 
         rap_grade = next(iter(fam))
         out_grade = "KIP" if rap_grade == "KRIP" else "KFS"
@@ -187,7 +217,7 @@ async def anneal_create_post(
         rap_cost_per_kg = rap_cost_wsum / lot_weight if lot_weight else 0.0
         cost_per_kg = rap_cost_per_kg + ANNEAL_ADD_COST  # rule: RAP + ₹10
 
-        # ---- new anneal lot number for today ----
+        # ---- new anneal lot number ----
         prefix = "ANL-" + date.today().strftime("%Y%m%d") + "-"
         last = conn.execute(
             text("""
@@ -224,7 +254,7 @@ async def anneal_create_post(
             },
         )
 
-        # ---- deduct availability from RAP (per selected lot) ----
+        # ---- deduct from RAP ----
         for rap_lot_no, qty in allocations.items():
             conn.execute(
                 text("""
