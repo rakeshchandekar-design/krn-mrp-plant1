@@ -159,28 +159,15 @@ async def anneal_create_post(
                 allocations[rap_lot_no] = qty
                 total_alloc += qty
 
-    # ----- basic guards -----
+    # ----- basic guard: must allocate something -----
     if total_alloc <= 0:
         msg = "Allocate quantity > 0 kg."
         return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
 
-    # read optional lot_weight from form if present
-    posted_lw = form.get("lot_weight")
-    if posted_lw:
-        try:
-            lw = float(posted_lw)
-        except ValueError:
-            msg = "Lot weight must be a number."
-            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
-
-        # check mismatch vs allocations
-        if abs(lw - total_alloc) > 0.01:  # allow 10 g tolerance
-            msg = f"Lot weight mismatch: allocated {total_alloc:.2f} kg, entered {lw:.2f} kg."
-            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
-
     # authoritative lot_weight = sum of allocations
     lot_weight = total_alloc
 
+    # ammonia value from form
     ammonia_kg = float(form.get("ammonia_kg") or 0)
 
     # ---- read RAP rows for the selected RAP lot_nos ----
