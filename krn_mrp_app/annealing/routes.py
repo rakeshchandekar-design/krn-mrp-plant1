@@ -160,16 +160,35 @@ async def anneal_create_post(
                 total_alloc += qty
 
     # ----- basic guard: must allocate something -----
-    if total_alloc <= 0:
-        msg = "Allocate quantity > 0 kg."
-        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+if total_alloc <= 0:
+    msg = "Allocate quantity > 0 kg."
+    return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
 
-    # authoritative lot_weight = sum of allocations
-    lot_weight = total_alloc
+# ---- Lot Weight must be entered and must equal total allocation (±0.01 kg) ----
+lw_raw = form.get("lot_weight")
+try:
+    lot_weight = float(lw_raw)
+except Exception:
+    return RedirectResponse(url="/anneal/create?err=Lot%20Weight%20must%20be%20a%20number.", status_code=303)
 
-    # ammonia value from form
+if lot_weight <= 0:
+    return RedirectResponse(url="/anneal/create?err=Lot%20Weight%20must%20be%20%3E%200.", status_code=303)
+
+if abs(lot_weight - total_alloc) > 0.01:
+    msg = f"Lot Weight mismatch: allocated {total_alloc:.2f} kg, entered {lot_weight:.2f} kg."
+    return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+
+# ---- Ammonia must be at least 0.025 × lot weight ----
+try:
     ammonia_kg = float(form.get("ammonia_kg") or 0)
+except Exception:
+    ammonia_kg = 0.0
 
+nh3_min = 0.025 * lot_weight
+if ammonia_kg < nh3_min:
+    msg = f"Ammonia must be at least {nh3_min:.3f} kg for lot weight {lot_weight:.2f} kg."
+    return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+   
     # ---- read RAP rows for the selected RAP lot_nos ----
     lot_nos = list(allocations.keys())
     q = text("""
