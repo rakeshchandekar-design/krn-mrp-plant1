@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 {# simplified, consistent admin flag #}
-{% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
+{% set admin = (is_admin is defined and is_admin) or (request.state.role is defined and request.state.role|string == 'admin') %}
 
 <h2>Create Annealing Lot (Allocate from Approved RAP)</h2>
 
