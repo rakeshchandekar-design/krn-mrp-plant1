@@ -18,24 +18,53 @@ templates = Jinja2Templates(directory="templates")  # we will place annealing HT
 TARGET_KG_PER_DAY = 6000.0
 ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
 
-# ---- helper: fetch approved RAP with balance (JOIN rap_lot -> lot) ----
-def fetch_approved_rap_balance():
-    sql = text("""
-    SELECT
-        rl.id AS rap_row_id,
-        l.id AS lot_id,
-        CASE WHEN l.lot_no IS NULL OR l.lot_no = '' THEN 'LOT-' || l.id ELSE l.lot_no END AS lot_no,
-        COALESCE(l.grade,'')     AS grade,
-        COALESCE(l.unit_cost, 0) AS cost_per_kg,
-        rl.available_qty         AS available_kg,   -- alias we use in template
-        rl.available_qty         AS available_qty   -- fallback for drivers that ignore alias
-    FROM rap_lot rl
-    JOIN lot l ON l.id = rl.lot_id
-    WHERE rl.available_qty > 0
-    ORDER BY rl.id ASC
-    """)
+# ---- helper: Plant2 balance for Annealing (what Anneal Create should show) ----
+def fetch_plant2_balance():
+    """
+    Returns rows like:
+      { lot_no, grade, available_kg, cost_per_kg }
+    where available_kg = sum(rap_alloc.qty where kind='PLANT2') - sum(consumed by anneal_lots)
+    """
     with engine.begin() as conn:
-        return conn.execute(sql).mappings().all()
+        # 1) All Plant-2 transfers by RAP lot (what can flow to Annealing)
+        plant2 = conn.execute(text("""
+            SELECT
+                rl.id               AS rap_lot_id,
+                COALESCE(l.lot_no, 'LOT-' || l.id) AS lot_no,
+                COALESCE(l.grade, '')              AS grade,
+                COALESCE(l.unit_cost, 0)           AS cost_per_kg,
+                SUM(a.qty)                         AS plant2_qty
+            FROM rap_alloc a
+            JOIN rap_lot rl ON rl.id = a.rap_lot_id
+            JOIN lot     l  ON l.id  = rl.lot_id
+            WHERE a.kind = 'PLANT2'
+            GROUP BY rl.id, l.lot_no, l.grade, l.unit_cost
+            ORDER BY rl.id
+        """)).mappings().all()
+
+        # 2) How much of each RAP lot_no has already been consumed by Annealing
+        used_by_lotno = {}
+        for row in conn.execute(text("SELECT src_alloc_json FROM anneal_lots")):
+            try:
+                alloc = json.loads(row[0] or "{}")
+                for lot_no, qty in alloc.items():
+                    used_by_lotno[lot_no] = used_by_lotno.get(lot_no, 0.0) + float(qty or 0)
+            except Exception:
+                pass
+
+    # 3) Build final rows: Plant2 qty minus what Anneal has already consumed
+    out = []
+    for p in plant2:
+        used = used_by_lotno.get(p["lot_no"], 0.0)
+        avail = float(p["plant2_qty"] or 0.0) - used
+        if avail > 0.0001:  # only show positive balance
+            out.append({
+                "lot_no":       p["lot_no"],
+                "grade":        p["grade"],
+                "available_kg": avail,
+                "cost_per_kg":  float(p["cost_per_kg"] or 0.0),
+            })
+    return out
 
 # ------------------ ROUTES ------------------
 
@@ -139,7 +168,7 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
 
 @router.get("/create", response_class=HTMLResponse)
 async def anneal_create_get(request: Request, dep: None = Depends(require_roles("anneal","admin"))):
-    rap_rows = fetch_approved_rap_balance()
+    rap_rows = fetch_plant2_balance() 
     err = request.query_params.get("err", "")
 
     # 👉 robust admin check
