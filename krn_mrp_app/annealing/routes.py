@@ -119,7 +119,6 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
         "nh3_today": nh3_today,
         "avg_cost_today": avg_cost_today,
         "weighted_cost_today": weighted_cost_today,
-        "is_admin": getattr(request.state, "is_admin", False),   # 👈 add this line
         "produced_today": produced_today,
         "eff_today": eff_today,                 # <— uses adjusted target
         "last5": last5,
@@ -257,7 +256,6 @@ async def anneal_create_post(
                 "weight_kg": lot_weight,
                 "rap_cost_per_kg": rap_cost_per_kg,
                 "cost_per_kg": cost_per_kg,
-                "is_admin": getattr(request.state, "is_admin", False),   # 👈 add this line
                 "ammonia_kg": ammonia_kg,
             },
         )
@@ -284,31 +282,10 @@ async def anneal_lots(
     to_date: str = None,
     csv: int = 0
 ):
-    """
-    Annealing lot list with date filtering, CSV download,
-    row color-coding handled in template.
-    """
-    query = """
-        SELECT id, date, lot_no, grade, weight_kg, ammonia_kg,
-               rap_cost_per_kg, cost_per_kg, qa_status
-        FROM anneal_lots
-        WHERE 1=1
-    """
-    params = {}
-
-    if from_date:
-        query += " AND date >= :from_date"
-        params["from_date"] = from_date
-    if to_date:
-        query += " AND date <= :to_date"
-        params["to_date"] = to_date
-
-    query += " ORDER BY date DESC, id DESC"
-
+    # ...
     with engine.begin() as conn:
         rows = conn.execute(text(query), params).mappings().all()
 
-    # on-screen total excludes zero weights, CSV includes everything
     visible_rows = [r for r in rows if (r["weight_kg"] or 0) > 0]
     total_weight = sum((r["weight_kg"] or 0) for r in visible_rows)
     weighted_cost = (
@@ -316,30 +293,48 @@ async def anneal_lots(
         if total_weight > 0 else 0.0
     )
 
+    # ✅ decide admin from request.state.role
+    is_admin = getattr(getattr(request, "state", None), "role", "") == "admin"
+
     if csv:
-        # dump CSV with all rows (including zero weight)
         import io, csv as pycsv
         buf = io.StringIO()
         writer = pycsv.writer(buf)
-        writer.writerow(["Date","Lot","Grade","Weight (kg)","Ammonia (kg)","RAP Cost/kg","Anneal Cost/kg","QA"])
-        for r in rows:
-            writer.writerow([
-                r["date"], r["lot_no"], r["grade"],
-                "%.0f" % (r["weight_kg"] or 0),
-                "%.2f" % (r["ammonia_kg"] or 0),
-                "%.2f" % (r["rap_cost_per_kg"] or 0),
-                "%.2f" % (r["cost_per_kg"] or 0),
-                r["qa_status"] or ""
-            ])
-        return Response(buf.getvalue(), media_type="text/csv",
-                        headers={"Content-Disposition":"attachment; filename=anneal_lots.csv"})
+
+        if is_admin:
+            # admin CSV includes costs
+            writer.writerow(["Date","Lot","Grade","Weight (kg)","Ammonia (kg)","RAP Cost/kg","Anneal Cost/kg","QA"])
+            for r in rows:
+                writer.writerow([
+                    r["date"], r["lot_no"], r["grade"],
+                    "%.0f" % (r["weight_kg"] or 0),
+                    "%.2f" % (r["ammonia_kg"] or 0),
+                    "%.2f" % (r["rap_cost_per_kg"] or 0),
+                    "%.2f" % (r["cost_per_kg"] or 0),
+                    r["qa_status"] or ""
+                ])
+        else:
+            # non-admin CSV hides costs
+            writer.writerow(["Date","Lot","Grade","Weight (kg)","Ammonia (kg)","QA"])
+            for r in rows:
+                writer.writerow([
+                    r["date"], r["lot_no"], r["grade"],
+                    "%.0f" % (r["weight_kg"] or 0),
+                    "%.2f" % (r["ammonia_kg"] or 0),
+                    r["qa_status"] or ""
+                ])
+
+        return Response(
+            buf.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition":"attachment; filename=anneal_lots.csv"}
+        )
 
     return templates.TemplateResponse("annealing_lot_list.html", {
         "request": request,
         "lots": visible_rows,
         "total_weight": total_weight,
         "weighted_cost": weighted_cost,
-        "is_admin": getattr(request.state, "is_admin", False),   # 👈 add this line
         "from_date": from_date,
         "to_date": to_date,
         "today": date.today().isoformat()
