@@ -20,29 +20,25 @@ ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
 
 # ---- helper: Plant2 balance for Annealing (what Anneal Create should show) ----
 def fetch_plant2_balance():
-    """
-    Returns rows like:
-      { lot_no, grade, available_kg, cost_per_kg }
-    where available_kg = sum(rap_alloc.qty where kind='PLANT2') - sum(consumed by anneal_lots)
-    """
     with engine.begin() as conn:
-        # 1) All Plant-2 transfers by RAP lot (what can flow to Annealing)
         plant2 = conn.execute(text("""
             SELECT
-                rl.id               AS rap_lot_id,
-                COALESCE(l.lot_no, 'LOT-' || l.id) AS lot_no,
-                COALESCE(l.grade, '')              AS grade,
-                COALESCE(l.unit_cost, 0)           AS cost_per_kg,
-                SUM(a.qty)                         AS plant2_qty
-            FROM rap_alloc a
-            JOIN rap_lot rl ON rl.id = a.rap_lot_id
-            JOIN lot     l  ON l.id  = rl.lot_id
+                rl.id AS rap_lot_id,
+                CASE
+                  WHEN l.lot_no IS NULL OR l.lot_no = '' THEN 'LOT-' || l.id
+                  ELSE l.lot_no
+                END                           AS lot_no,
+                COALESCE(l.grade, '')         AS grade,
+                COALESCE(l.unit_cost, 0)      AS cost_per_kg,
+                SUM(a.qty)::float             AS plant2_qty
+            FROM public.rap_alloc  AS a
+            JOIN public.rap_lot    AS rl ON rl.id = a.rap_lot_id
+            JOIN public.lot        AS l  ON l.id  = rl.lot_id
             WHERE a.kind = 'PLANT2'
-            GROUP BY rl.id, l.lot_no, l.grade, l.unit_cost
+            GROUP BY rl.id, l.id, l.lot_no, l.grade, l.unit_cost   -- <-- add l.id here
             ORDER BY rl.id
         """)).mappings().all()
 
-        # 2) How much of each RAP lot_no has already been consumed by Annealing
         used_by_lotno = {}
         for row in conn.execute(text("SELECT src_alloc_json FROM anneal_lots")):
             try:
@@ -52,12 +48,11 @@ def fetch_plant2_balance():
             except Exception:
                 pass
 
-    # 3) Build final rows: Plant2 qty minus what Anneal has already consumed
     out = []
     for p in plant2:
         used = used_by_lotno.get(p["lot_no"], 0.0)
         avail = float(p["plant2_qty"] or 0.0) - used
-        if avail > 0.0001:  # only show positive balance
+        if avail > 0.0001:
             out.append({
                 "lot_no":       p["lot_no"],
                 "grade":        p["grade"],
