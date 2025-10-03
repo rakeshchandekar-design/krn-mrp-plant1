@@ -8,13 +8,19 @@
   <!-- Date range + actions -->
   <form method="get" action="/anneal/lots" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
     <label>From</label>
-    <input type="date" name="from" value="{{ from_date or '' }}">
+    <!-- ✅ names changed to what the route expects -->
+    <input type="date" name="from_date" value="{{ from_date or '' }}">
     <label>To</label>
-    <input type="date" name="to" value="{{ to_date or '' }}">
+    <input type="date" name="to_date" value="{{ to_date or '' }}">
     <button class="btn" type="submit">Fetch</button>
-    <a class="btn" href="/anneal/lots?from={{ (today|string) if today is defined else '' }}&to={{ (today|string) if today is defined else '' }}">Today</a>
+
+    <!-- Today = both dates set to 'today' and submitted -->
+    <a class="btn" href="/anneal/lots?from_date={{ today }}&to_date={{ today }}">Today</a>
+
     <a class="btn" href="/anneal/lots">Reset</a>
-    <a class="btn" href="/anneal/lots?csv=1{% if from_date %}&from={{ from_date }}{% endif %}{% if to_date %}&to={{ to_date }}{% endif %}">Download CSV</a>
+
+    <!-- ✅ CSV uses from_date / to_date -->
+    <a class="btn" href="/anneal/lots?csv=1{% if from_date %}&from_date={{ from_date }}{% endif %}{% if to_date %}&to_date={{ to_date }}{% endif %}">Download CSV</a>
   </form>
 </div>
 
