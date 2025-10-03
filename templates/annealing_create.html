@@ -27,9 +27,11 @@
       <th>RAP Grade</th>
       <th>Available (kg)</th>
       <th>RAP Cost/kg (₹)</th>   {# <-- always visible #}
+      <th>Total Value (₹)</th>   {# <-- NEW #}
       <th>Allocate (kg)</th>
     </tr>
 
+    {% set tv = namespace(sum=0.0) %}
     {% for r in rap_rows %}
     <tr class="
         {% if r.grade.startswith('KRIP') %} bg-info-subtle
@@ -41,6 +43,11 @@
       <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
       <td>{{ '%.2f'|format(r.cost_per_kg or 0) }}</td>
       <td>
+        {% set row_value = (r.available_kg or 0) * (r.cost_per_kg or 0) %}
+        {{ '%.2f'|format(row_value) }}
+        {% set tv.sum = tv.sum + row_value %}
+      </td>
+      <td>
         <input
           type="number" step="0.01" min="0" max="{{ r.available_kg }}"
           name="alloc_{{ r.lot_no }}"
@@ -50,8 +57,9 @@
     {% endfor %}
 
     <tr class="table-info">
-      <th colspan="4" style="text-align:right">Total allocated (kg)</th>  {# 4 fixed columns before Allocate #}
-      <th><span id="total_alloc">0.00</span></th>
+      <th colspan="4" style="text-align:right">Totals:</th>  {# first four columns #}
+      <th><span id="total_value_sum">{{ '%.2f'|format(tv.sum) }}</span></th>  {# NEW total value #}
+      <th><span id="total_alloc">0.00</span></th>  {# existing total allocated #}
     </tr>
   </table>
 
