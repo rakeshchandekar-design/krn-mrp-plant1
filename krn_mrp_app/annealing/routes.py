@@ -150,7 +150,7 @@ async def anneal_create_get(request: Request, dep: None = Depends(require_roles(
     return templates.TemplateResponse(
         "annealing_create.html",
         {"request": request, "rap_rows": rap_rows, "err": err, "is_admin": is_admin}
-    )
+    )
 
 
 @router.post("/create")
