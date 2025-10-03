@@ -26,8 +26,10 @@
       <th>RAP Lot</th>
       <th>RAP Grade</th>
       <th>Available (kg)</th>
-      <th>RAP Cost/kg (₹)</th>   {# <-- always visible #}
-      <th>Total Value (₹)</th>   {# <-- NEW #}
+      {% if user_role == 'admin' %}
+        <th>RAP Cost/kg (₹)</th>
+        <th>Total Value (₹)</th>
+      {% endif %}
       <th>Allocate (kg)</th>
     </tr>
 
@@ -41,12 +43,14 @@
       <td>{{ r.lot_no }}</td>
       <td>{{ r.grade }}</td>
       <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
-      <td>{{ '%.2f'|format(r.cost_per_kg or 0) }}</td>
-      <td>
-        {% set row_value = (r.available_kg or 0) * (r.cost_per_kg or 0) %}
-        {{ '%.2f'|format(row_value) }}
-        {% set tv.sum = tv.sum + row_value %}
-      </td>
+      {% if user_role == 'admin' %}
+        <td>{{ '%.2f'|format(r.cost_per_kg or 0) }}</td>
+        <td>
+          {% set row_value = (r.available_kg or 0) * (r.cost_per_kg or 0) %}
+          {{ '%.2f'|format(row_value) }}
+          {% set tv.sum = tv.sum + row_value %}
+        </td>
+      {% endif %}
       <td>
         <input
           type="number" step="0.01" min="0" max="{{ r.available_kg }}"
@@ -57,9 +61,11 @@
     {% endfor %}
 
     <tr class="table-info">
-      <th colspan="4" style="text-align:right">Totals:</th>  {# first four columns #}
-      <th><span id="total_value_sum">{{ '%.2f'|format(tv.sum) }}</span></th>  {# NEW total value #}
-      <th><span id="total_alloc">0.00</span></th>  {# existing total allocated #}
+      <th colspan="3" style="text-align:right">Totals:</th>
+      {% if user_role == 'admin' %}
+        <th><span id="total_value_sum">{{ '%.2f'|format(tv.sum) }}</span></th>
+      {% endif %}
+      <th><span id="total_alloc">0.00</span></th>
     </tr>
   </table>
 
