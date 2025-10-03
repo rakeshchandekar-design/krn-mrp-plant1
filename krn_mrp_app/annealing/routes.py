@@ -19,55 +19,63 @@ TARGET_KG_PER_DAY = 6000.0
 ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
 
 # ---- helper: Plant2 balance for Annealing (what Anneal Create should show) ----
+# ---- Plant-2 balance for Annealing (ONLY lots transferred to Plant 2) ----
 def fetch_plant2_balance():
     """
-    Return RAP lots transferred to Plant-2 with their available balance
-    (transfer qty minus anneal usage), grade, and cost_per_kg.
+    Returns rows: {lot_no, grade, cost_per_kg, available_kg}
+
+    available_kg = (sum of rap_alloc.qty where kind='PLANT2')
+                   - (qty already consumed in anneal_lots.src_alloc_json)
+    Cost/kg is taken from lot.unit_cost.
     """
+    # 1) Plant-2 transfers per RAP lot (from rap_alloc)
     with engine.begin() as conn:
-        rows = conn.execute(text("""
+        plant2 = conn.execute(text("""
             SELECT
-                rt.lot_no,
-                l.grade,
-                SUM(rt.qty) AS transferred_qty,
-                l.unit_cost AS cost_per_kg
-            FROM rap_transfer rt
-            JOIN lot l ON l.lot_no = rt.lot_no
-            WHERE rt.kind = 'PLANT2'
-            GROUP BY rt.lot_no, l.grade, l.unit_cost
-            ORDER BY rt.lot_no
+                rl.id                  AS rap_lot_id,
+                CASE
+                  WHEN l.lot_no IS NULL OR l.lot_no = '' THEN 'LOT-' || l.id
+                  ELSE l.lot_no
+                END                     AS lot_no,
+                COALESCE(l.grade,'')    AS grade,
+                COALESCE(l.unit_cost,0) AS cost_per_kg,
+                SUM(a.qty)::float       AS plant2_qty
+            FROM public.rap_alloc  AS a
+            JOIN public.rap_lot    AS rl ON rl.id = a.rap_lot_id
+            JOIN public.lot        AS l  ON l.id  = rl.lot_id
+            WHERE a.kind = 'PLANT2'
+            GROUP BY rl.id, l.id, l.lot_no, l.grade, l.unit_cost
+            ORDER BY rl.id
         """)).mappings().all()
 
-    # subtract usage from anneal_lots allocations
-    used_map: dict[str, float] = {}
-    with engine.begin() as conn:
-        usage_rows = conn.execute(text("""
-            SELECT src_alloc_json
-            FROM anneal_lots
-        """)).all()
-    for (alloc_json,) in usage_rows:
-        if alloc_json:
+        # 2) Usage already recorded by Anneal (from src_alloc_json)
+        used_by_lotno: dict[str, float] = {}
+        for (alloc_json,) in conn.execute(text("SELECT src_alloc_json FROM anneal_lots")).all():
+            if not alloc_json:
+                continue
             try:
                 d = json.loads(alloc_json)
                 for lot_no, qty in d.items():
-                    used_map[lot_no] = used_map.get(lot_no, 0.0) + float(qty or 0)
+                    used_by_lotno[lot_no] = used_by_lotno.get(lot_no, 0.0) + float(qty or 0)
             except Exception:
+                # ignore bad JSON but keep going
                 pass
 
-    result = []
-    for r in rows:
-        lot_no = r["lot_no"]
-        transferred = float(r["transferred_qty"] or 0)
-        used = used_map.get(lot_no, 0.0)
+    # 3) Remaining availability
+    out = []
+    for p in plant2:
+        lot_no = p["lot_no"]
+        transferred = float(p["plant2_qty"] or 0.0)
+        used = float(used_by_lotno.get(lot_no, 0.0))
         avail = transferred - used
-        if avail > 0:
-            result.append({
-                "lot_no": lot_no,
-                "grade": r["grade"],
+        if avail > 0.0001:
+            out.append({
+                "lot_no":       lot_no,
+                "grade":        p["grade"],
                 "available_kg": avail,
-                "cost_per_kg": r["cost_per_kg"],
+                "cost_per_kg":  float(p["cost_per_kg"] or 0.0),
             })
-    return result
+    return out
 
 def plant2_available_rows(conn):
     """
