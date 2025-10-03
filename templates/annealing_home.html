@@ -11,6 +11,12 @@
       <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
       <tr><th>Efficiency Today (%)</th><td>{{ '%.1f'|format(eff_today or 0) }}</td></tr>
       <tr><th>Ammonia Today (kg)</th><td>{{ '%.2f'|format(nh3_today or 0) }}</td></tr>
+      {# Example if you add costs:
+      {% if is_admin %}
+        <tr><th>Avg Cost Today (₹/kg)</th><td>{{ '%.2f'|format(avg_cost_today or 0) }}</td></tr>
+        <tr><th>Weighted Cost Today (₹/kg)</th><td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td></tr>
+      {% endif %}
+      #}
     </table>
   </div>
 
