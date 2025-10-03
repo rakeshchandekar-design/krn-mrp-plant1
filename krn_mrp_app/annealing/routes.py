@@ -215,8 +215,9 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
 @router.get("/create", response_class=HTMLResponse)
 async def anneal_create_get(request: Request, dep: None = Depends(require_roles("anneal","admin"))):
     rap_rows = fetch_plant2_balance()
+    err = request.query_params.get("err", "")
 
-    # Robust admin flag
+    # --- NEW: robust admin flag passed to template ---
     s = getattr(request, "state", None)
     is_admin = False
     if s:
@@ -227,14 +228,13 @@ async def anneal_create_get(request: Request, dep: None = Depends(require_roles(
         elif "admin" in (getattr(s, "roles", []) or []):
             is_admin = True
 
-    err = request.query_params.get("err", "")
     return templates.TemplateResponse(
         "annealing_create.html",
         {
             "request": request,
             "rap_rows": rap_rows,
             "err": err,
-            "is_admin": is_admin,   # <-- pass to template
+            "is_admin": is_admin,   # <— pass this to template
         },
     )
 
