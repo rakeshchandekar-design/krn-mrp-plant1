@@ -3,6 +3,7 @@
 from datetime import date, timedelta
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from urllib.parse import quote_plus
 from starlette.templating import Jinja2Templates
 from sqlalchemy import text, bindparam
@@ -112,6 +113,12 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
             {"d": first_of_month}
         ).scalar() or 0.0
 
+    is_admin = (
+        getattr(request.state, "is_admin", False)
+        or getattr(request.state, "role", "").lower() == "admin"
+        or ("admin" in (getattr(request.state, "roles", []) or []))
+    )
+
     return templates.TemplateResponse("annealing_home.html", {
         "request": request,
         "target": target_today,                 # <— adjusted for downtime
@@ -125,6 +132,7 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
         "live_stock": live_stock,
         "nh3_yday": nh3_yday,
         "nh3_mtd": nh3_mtd,
+        "is_admin": is_admin,
     })
 
 
@@ -132,10 +140,17 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
 async def anneal_create_get(request: Request, dep: None = Depends(require_roles("anneal","admin"))):
     rap_rows = fetch_approved_rap_balance()
     err = request.query_params.get("err", "")
+
+    is_admin = (
+        getattr(request.state, "is_admin", False)
+        or getattr(request.state, "role", "").lower() == "admin"
+        or ("admin" in (getattr(request.state, "roles", []) or []))
+    )
+
     return templates.TemplateResponse(
         "annealing_create.html",
-        {"request": request, "rap_rows": rap_rows, "err": err}
-    )
+        {"request": request, "rap_rows": rap_rows, "err": err, "is_admin": is_admin}
+    )
 
 
 @router.post("/create")
@@ -282,7 +297,22 @@ async def anneal_lots(
     to_date: str = None,
     csv: int = 0
 ):
-    # ...
+    # make sure this variable name is exactly 'query'
+    query = """
+        SELECT id, date, lot_no, grade, weight_kg, ammonia_kg,
+               rap_cost_per_kg, cost_per_kg, qa_status
+        FROM anneal_lots
+        WHERE 1=1
+    """
+    params = {}
+    if from_date:
+        query += " AND date >= :from_date"
+        params["from_date"] = from_date
+    if to_date:
+        query += " AND date <= :to_date"
+        params["to_date"] = to_date
+    query += " ORDER BY date DESC, id DESC"
+
     with engine.begin() as conn:
         rows = conn.execute(text(query), params).mappings().all()
 
@@ -293,37 +323,26 @@ async def anneal_lots(
         if total_weight > 0 else 0.0
     )
 
-    # ✅ decide admin from request.state.role
-    is_admin = getattr(getattr(request, "state", None), "role", "") == "admin"
+    is_admin = (
+        getattr(request.state, "is_admin", False)
+        or getattr(request.state, "role", "").lower() == "admin"
+        or ("admin" in (getattr(request.state, "roles", []) or []))
+    )
 
     if csv:
-        import io, csv as pycsv
         buf = io.StringIO()
-        writer = pycsv.writer(buf)
-
-        if is_admin:
-            # admin CSV includes costs
-            writer.writerow(["Date","Lot","Grade","Weight (kg)","Ammonia (kg)","RAP Cost/kg","Anneal Cost/kg","QA"])
-            for r in rows:
-                writer.writerow([
-                    r["date"], r["lot_no"], r["grade"],
-                    "%.0f" % (r["weight_kg"] or 0),
-                    "%.2f" % (r["ammonia_kg"] or 0),
-                    "%.2f" % (r["rap_cost_per_kg"] or 0),
-                    "%.2f" % (r["cost_per_kg"] or 0),
-                    r["qa_status"] or ""
-                ])
-        else:
-            # non-admin CSV hides costs
-            writer.writerow(["Date","Lot","Grade","Weight (kg)","Ammonia (kg)","QA"])
-            for r in rows:
-                writer.writerow([
-                    r["date"], r["lot_no"], r["grade"],
-                    "%.0f" % (r["weight_kg"] or 0),
-                    "%.2f" % (r["ammonia_kg"] or 0),
-                    r["qa_status"] or ""
-                ])
-
+        writer = csv.writer(buf)
+        # keep CSV as-is (includes cost) – change if you later want admin-only CSV
+        writer.writerow(["Date","Lot","Grade","Weight (kg)","Ammonia (kg)","RAP Cost/kg","Anneal Cost/kg","QA"])
+        for r in rows:
+            writer.writerow([
+                r["date"], r["lot_no"], r["grade"],
+                "%.0f" % (r["weight_kg"] or 0),
+                "%.2f" % (r["ammonia_kg"] or 0),
+                "%.2f" % (r["rap_cost_per_kg"] or 0),
+                "%.2f" % (r["cost_per_kg"] or 0),
+                r["qa_status"] or ""
+            ])
         return Response(
             buf.getvalue(),
             media_type="text/csv",
@@ -337,7 +356,8 @@ async def anneal_lots(
         "weighted_cost": weighted_cost,
         "from_date": from_date,
         "to_date": to_date,
-        "today": date.today().isoformat()
+        "today": date.today().isoformat(),
+        "is_admin": is_admin,   # <-- this is what your templates read
     })
 
 
