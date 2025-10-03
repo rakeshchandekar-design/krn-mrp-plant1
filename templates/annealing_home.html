@@ -1,5 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
+{# robust admin flag #}
+{% set admin =
+  (request.state.is_admin is defined and request.state.is_admin) or
+  (request.state.role is defined and request.state.role|string == 'admin') or
+  (request.state.roles is defined and 'admin' in request.state.roles)
+%}
+
 <h1>Annealing</h1>
 
 <!-- Row 1: KPIs + Production -->
@@ -11,8 +18,8 @@
       <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
       <tr><th>Efficiency Today (%)</th><td>{{ '%.1f'|format(eff_today or 0) }}</td></tr>
       <tr><th>Ammonia Today (kg)</th><td>{{ '%.2f'|format(nh3_today or 0) }}</td></tr>
-      {# Example if you add costs:
-      {% if request.state.role == 'admin' %}
+      {# Example if you add costs later:
+      {% if admin %}
         <tr><th>Avg Cost Today (₹/kg)</th><td>{{ '%.2f'|format(avg_cost_today or 0) }}</td></tr>
         <tr><th>Weighted Cost Today (₹/kg)</th><td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td></tr>
       {% endif %}
