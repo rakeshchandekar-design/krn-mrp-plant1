@@ -61,6 +61,41 @@ def fetch_plant2_balance():
             })
     return out
 
+def plant2_available_rows(conn):
+    """
+    Returns rows: lot_no, grade, cost_per_kg, available_kg
+    where available_kg = sum(rap_alloc.kind='PLANT2') - qty already used in anneal_lots.
+    """
+    sql = text("""
+        WITH plant2 AS (
+            SELECT rl.id AS rap_lot_id,
+                   l.lot_no,
+                   COALESCE(l.grade,'')      AS grade,
+                   COALESCE(l.unit_cost, 0)  AS cost_per_kg,
+                   SUM(CASE WHEN a.kind='PLANT2' THEN a.qty ELSE 0 END) AS plant2_qty
+            FROM rap_alloc a
+            JOIN rap_lot rl ON rl.id = a.rap_lot_id
+            JOIN lot     l  ON l.id  = rl.lot_id
+            GROUP BY rl.id, l.lot_no, l.grade, l.unit_cost
+        ),
+        used AS (
+            SELECT key AS lot_no,
+                   SUM( (src_alloc_json::jsonb ->> key)::numeric ) AS used_qty
+            FROM anneal_lots,
+                 LATERAL jsonb_object_keys(src_alloc_json::jsonb) AS key
+            GROUP BY key
+        )
+        SELECT p.lot_no,
+               p.grade,
+               p.cost_per_kg,
+               COALESCE(p.plant2_qty,0) - COALESCE(u.used_qty,0) AS available_kg
+        FROM plant2 p
+        LEFT JOIN used u ON u.lot_no = p.lot_no
+        WHERE COALESCE(p.plant2_qty,0) - COALESCE(u.used_qty,0) > 0
+        ORDER BY p.lot_no;
+    """)
+    return conn.execute(sql).mappings().all()
+
 # ------------------ ROUTES ------------------
 
 @router.get("/", response_class=HTMLResponse)
@@ -229,57 +264,52 @@ async def anneal_create_post(
     if ammonia_kg < nh3_min:
         msg = f"Ammonia must be at least {nh3_min:.3f} kg for lot weight {lot_weight:.2f} kg."
         return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
-   
-    # ---- read RAP rows for the selected RAP lot_nos ----
-    lot_nos = list(allocations.keys())
-    q = text("""
-        SELECT l.lot_no,
-               COALESCE(l.grade,'')     AS grade,
-               COALESCE(l.unit_cost, 0) AS cost_per_kg
-        FROM rap_lot rl
-        JOIN lot l ON l.id = rl.lot_id
-        WHERE l.lot_no IN :lot_nos
-          AND rl.available_qty > 0
-    """).bindparams(bindparam("lot_nos", expanding=True))
 
+    # ---- availability & cost: use the same Plant-2 balance you show on GET ----
+    #     (so POST validates against exactly what the page displayed)
+    avail_rows = fetch_plant2_balance()       # returns list of mappings: lot_no, grade, cost_per_kg, available_kg
+    avail_map = {r["lot_no"]: r for r in avail_rows}
+
+    # ensure every selected lot exists and has enough Plant-2 balance
+    for lot_no, qty in allocations.items():
+        r = avail_map.get(lot_no)
+        if (r is None) or (qty > float(r.get("available_kg") or 0)):
+            msg = f"Selected RAP lot {lot_no} not found or insufficient Plant-2 balance."
+            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+
+    # ---- single family rule (KRIP or KRFS only) ----
+    fam = {avail_map[lot]["grade"] for lot in allocations.keys()}
+    if len(fam) > 1:
+        msg = "Only one grade allowed per anneal lot (KRIP or KRFS)."
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+
+    rap_grade = next(iter(fam))
+    out_grade = "KIP" if rap_grade == "KRIP" else "KFS"
+
+    # ---- weighted RAP cost (from unit_cost surfaced by helper as cost_per_kg) ----
+    rap_cost_wsum = sum(
+        allocations[lot_no] * float(avail_map[lot_no].get("cost_per_kg") or 0)
+        for lot_no in allocations.keys()
+    )
+    rap_cost_per_kg = rap_cost_wsum / lot_weight if lot_weight else 0.0
+    cost_per_kg = rap_cost_per_kg + ANNEAL_ADD_COST  # rule: RAP + ₹10
+
+    # ---- create ANL lot number and insert ----
     with engine.begin() as conn:
-        rows = conn.execute(q, {"lot_nos": lot_nos}).mappings().all()
-        if not rows:
-            msg = "Selected RAP lots not found or no availability."
-            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
-
-        # ---- single family rule (KRIP or KRFS only) ----
-        fam = {r["grade"] for r in rows}
-        if len(fam) > 1:
-            msg = "Only one grade allowed per anneal lot (KRIP or KRFS)."
-            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
-
-        rap_grade = next(iter(fam))
-        out_grade = "KIP" if rap_grade == "KRIP" else "KFS"
-
-        # ---- weighted RAP cost ----
-        rap_cost_wsum = sum(
-            allocations[r["lot_no"]] * float(r["cost_per_kg"] or 0.0) for r in rows
-        )
-        rap_cost_per_kg = rap_cost_wsum / lot_weight if lot_weight else 0.0
-        cost_per_kg = rap_cost_per_kg + ANNEAL_ADD_COST  # rule: RAP + ₹10
-
-        # ---- new anneal lot number ----
         prefix = "ANL-" + date.today().strftime("%Y%m%d") + "-"
         last = conn.execute(
             text("""
                 SELECT lot_no
-                FROM anneal_lots
-                WHERE lot_no LIKE :pfx
-                ORDER BY lot_no DESC
-                LIMIT 1
+                  FROM anneal_lots
+                 WHERE lot_no LIKE :pfx
+                 ORDER BY lot_no DESC
+                 LIMIT 1
             """),
             {"pfx": f"{prefix}%"},
         ).scalar()
         seq = int(last.split("-")[-1]) + 1 if last else 1
         lot_no = f"{prefix}{seq:03d}"
 
-        # ---- insert new anneal lot ----
         conn.execute(
             text("""
                 INSERT INTO anneal_lots
@@ -301,16 +331,7 @@ async def anneal_create_post(
             },
         )
 
-        # ---- deduct from RAP ----
-        for rap_lot_no, qty in allocations.items():
-            conn.execute(
-                text("""
-                    UPDATE rap_lot
-                       SET available_qty = available_qty - :q
-                     WHERE lot_id IN (SELECT id FROM lot WHERE lot_no = :lot)
-                """),
-                {"q": qty, "lot": rap_lot_no},
-            )
+        # NOTE: no UPDATE to rap tables — Plant-2 availability is derived (PLANT2 allocations minus anneal usage)
 
     return RedirectResponse(url="/anneal/lots", status_code=303)
 
