@@ -1,9 +1,23 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>Annealing Lots</h2>
-<div class="toolbar" style="margin-bottom:10px">
+
+<div class="toolbar" style="margin-bottom:10px; gap:8px; display:flex; flex-wrap:wrap; align-items:center">
   <a class="btn" href="/anneal/">← Back to Annealing</a>
+
+  <!-- Date range + actions -->
+  <form method="get" action="/anneal/lots" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+    <label>From</label>
+    <input type="date" name="from" value="{{ from_date or '' }}">
+    <label>To</label>
+    <input type="date" name="to" value="{{ to_date or '' }}">
+    <button class="btn" type="submit">Fetch</button>
+    <a class="btn" href="/anneal/lots?from={{ (today|string) if today is defined else '' }}&to={{ (today|string) if today is defined else '' }}">Today</a>
+    <a class="btn" href="/anneal/lots">Reset</a>
+    <a class="btn" href="/anneal/lots?csv=1{% if from_date %}&from={{ from_date }}{% endif %}{% if to_date %}&to={{ to_date }}{% endif %}">Download CSV</a>
+  </form>
 </div>
+
 <table class="table">
   <tr>
     <th>Date</th><th>Lot</th><th>Grade</th>
@@ -11,20 +25,35 @@
     <th>RAP Cost/kg (₹)</th><th>Anneal Cost/kg (₹)</th>
     <th>QA</th><th>Action</th>
   </tr>
+
   {% for x in lots %}
-  <tr>
-    <td>{{ x.date }}</td>
-    <td>{{ x.lot_no }}</td>
-    <td>{{ x.grade }}</td>
-    <td>{{ '%.0f'|format(x.weight_kg) }}</td>
-    <td>{{ '%.2f'|format(x.ammonia_kg or 0) }}</td>
-    <td>{{ '%.2f'|format(x.rap_cost_per_kg or 0) }}</td>
-    <td>{{ '%.2f'|format(x.cost_per_kg or 0) }}</td>
-    <td>{{ x.qa_status }}</td>
-    <td><a class="btn btn-small" href="/anneal/qa/{{ x.id }}">QA</a></td>
-  </tr>
+    {# show only non-zero weights on the page #}
+    {% if x.weight_kg and x.weight_kg > 0 %}
+    <tr class="
+        {% if x.grade and x.grade.startswith('KIP') %} bg-info-subtle
+        {% elif x.grade and x.grade.startswith('KFS') %} bg-warning-subtle
+        {% endif %}
+    ">
+      <td>{{ x.date }}</td>
+      <td>{{ x.lot_no }}</td>
+      <td>
+        <span class="pill
+          {% if x.grade and x.grade.startswith('KIP') %} pill-blue
+          {% elif x.grade and x.grade.startswith('KFS') %} pill-orange
+          {% endif %}
+        ">{{ x.grade }}</span>
+      </td>
+      <td>{{ '%.0f'|format(x.weight_kg) }}</td>
+      <td>{{ '%.2f'|format(x.ammonia_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(x.rap_cost_per_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(x.cost_per_kg or 0) }}</td>
+      <td>{{ x.qa_status }}</td>
+      <td><a class="btn btn-small" href="/anneal/qa/{{ x.id }}">QA</a></td>
+    </tr>
+    {% endif %}
   {% endfor %}
-  <!-- 👇 totals row -->
+
+  <!-- Totals row (kept neutral) -->
   <tr class="table-info">
     <th colspan="3">TOTAL</th>
     <th>{{ '%.2f'|format(total_weight) }}</th>
@@ -32,6 +61,27 @@
     <th></th>
     <th>{{ '%.2f'|format(weighted_cost) }}</th>
     <th></th>
+    <th></th>
   </tr>
 </table>
+
+<!-- Optional legend -->
+<div class="muted" style="margin-top:6px">
+  <span class="pill pill-blue">KIP</span> = KRIP output,
+  <span class="pill pill-orange">KFS</span> = KRFS output
+</div>
+
+<style>
+  /* Row backgrounds match Create page */
+  .bg-info-subtle    { background-color: #e6f4ff; }   /* KIP */
+  .bg-warning-subtle { background-color: #fff3e0; }   /* KFS */
+
+  /* Grade “pill” badges */
+  .pill {
+    display:inline-block; padding:2px 8px; border-radius:999px;
+    font-size:12px; line-height:18px; font-weight:600;
+  }
+  .pill-blue   { background:#d7ebff; }
+  .pill-orange { background:#ffe9cf; }
+</style>
 {% endblock %}
