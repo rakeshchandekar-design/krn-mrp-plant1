@@ -5,7 +5,6 @@ from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from urllib.parse import quote_plus
 from starlette.templating import Jinja2Templates
-from starlette.responses import Response
 from sqlalchemy import text, bindparam
 import json, io, csv
 
@@ -120,6 +119,7 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
         "nh3_today": nh3_today,
         "avg_cost_today": avg_cost_today,
         "weighted_cost_today": weighted_cost_today,
+        "is_admin": getattr(request.state, "is_admin", False),   # 👈 add this line
         "produced_today": produced_today,
         "eff_today": eff_today,                 # <— uses adjusted target
         "last5": last5,
@@ -257,6 +257,7 @@ async def anneal_create_post(
                 "weight_kg": lot_weight,
                 "rap_cost_per_kg": rap_cost_per_kg,
                 "cost_per_kg": cost_per_kg,
+                "is_admin": getattr(request.state, "is_admin", False),   # 👈 add this line
                 "ammonia_kg": ammonia_kg,
             },
         )
@@ -338,6 +339,7 @@ async def anneal_lots(
         "lots": visible_rows,
         "total_weight": total_weight,
         "weighted_cost": weighted_cost,
+        "is_admin": getattr(request.state, "is_admin", False),   # 👈 add this line
         "from_date": from_date,
         "to_date": to_date,
         "today": date.today().isoformat()
