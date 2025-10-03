@@ -142,9 +142,10 @@ async def anneal_create_get(request: Request, dep: None = Depends(require_roles(
     rap_rows = fetch_approved_rap_balance()
     err = request.query_params.get("err", "")
 
+    # 👉 robust admin check
     is_admin = (
         getattr(request.state, "is_admin", False)
-        or getattr(request.state, "role", "").lower() == "admin"
+        or (getattr(request.state, "role", None) or "").lower() == "admin"
         or ("admin" in (getattr(request.state, "roles", []) or []))
     )
 
