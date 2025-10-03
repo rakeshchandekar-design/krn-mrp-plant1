@@ -27,12 +27,13 @@ def fetch_approved_rap_balance():
         CASE WHEN l.lot_no IS NULL OR l.lot_no = '' THEN 'LOT-' || l.id ELSE l.lot_no END AS lot_no,
         COALESCE(l.grade,'')     AS grade,
         COALESCE(l.unit_cost, 0) AS cost_per_kg,
-        rl.available_qty         AS available_kg
+        rl.available_qty         AS available_kg,   -- alias we use in template
+        rl.available_qty         AS available_qty   -- fallback for drivers that ignore alias
     FROM rap_lot rl
     JOIN lot l ON l.id = rl.lot_id
     WHERE rl.available_qty > 0
     ORDER BY rl.id ASC
- """)
+    """)
     with engine.begin() as conn:
         return conn.execute(sql).mappings().all()
 
