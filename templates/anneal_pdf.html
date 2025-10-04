@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  @media print { .no-print { display:none } }
+  .right { text-align:right }
+</style>
+
+<h2>Anneal Lot Report — {{ al.lot_no }}</h2>
+<p>Date: {{ al.date }} | Grade: {{ al.grade }} | Weight: {{ '%.0f'|format(al.weight_kg or 0) }} kg | Ammonia: {{ '%.2f'|format(al.ammonia_kg or 0) }} kg</p>
+
+<h3>Cost</h3>
+<table class="table" style="width:auto">
+  <tr><th>Weighted RAP Cost/kg</th><td class="right">₹{{ '%.2f'|format(al.rap_cost_per_kg or 0) }}</td></tr>
+  <tr><th>Anneal Cost/kg</th><td class="right">₹{{ '%.2f'|format(al.cost_per_kg or 0) }}</td></tr>
+  <tr><th>Total Value</th><td class="right">₹{{ '%.2f'|format(total_cost_value or 0) }}</td></tr>
+</table>
+
+<h3>RAP Allocations</h3>
+<table class="table">
+  <tr>
+    <th>RAP Lot</th><th>Grade</th>
+    <th class="right">Qty (kg)</th><th class="right">RAP Cost/kg (₹)</th><th class="right">Value (₹)</th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.lot_no }}</td>
+    <td>{{ r.grade }}</td>
+    <td class="right">{{ '%.2f'|format(r.qty) }}</td>
+    <td class="right">{{ '%.2f'|format(r.cpk) }}</td>
+    <td class="right">{{ '%.2f'|format(r.val) }}</td>
+  </tr>
+  {% endfor %}
+  <tr class="table-info">
+    <th colspan="4" class="right">Allocations Total</th>
+    <th class="right">₹{{ '%.2f'|format(total_value or 0) }}</th>
+  </tr>
+</table>
+
+<h3>QA</h3>
+{% if qa %}
+  <table class="table">
+    {% for k, v in qa.items() %}
+      <tr><th>{{ k }}</th><td>{{ v }}</td></tr>
+    {% endfor %}
+  </table>
+{% else %}
+  <p>No QA record found (current status: {{ al.qa_status or 'PENDING' }}).</p>
+{% endif %}
+
+<p class="no-print"><button onclick="window.print()" class="btn">Print / Save as PDF</button></p>
+{% endblock %}
