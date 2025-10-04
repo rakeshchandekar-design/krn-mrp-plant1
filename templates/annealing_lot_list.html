@@ -1,6 +1,5 @@
 {% extends "base.html" %}
 {% block content %}
-{# single, consistent admin flag (kept; no longer used for columns below) #}
 {% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
 
 <h2>Annealing Lots</h2>
@@ -29,9 +28,10 @@
     <th>Grade</th>
     <th>Weight (kg)</th>
     <th>Ammonia (kg)</th>
-    <th>Anneal Cost/kg (₹)</th>   {# NEW: always visible #}
-    <th>Total Value (₹)</th>      {# NEW: always visible #}
+    <th>Anneal Cost/kg (₹)</th>
+    <th>Total Value (₹)</th>
     <th>QA</th>
+    <th>Docs</th>   {# NEW COLUMN #}
     <th>Action</th>
   </tr>
 
@@ -56,7 +56,6 @@
       <td>{{ '%.0f'|format(x.weight_kg) }}</td>
       <td>{{ '%.2f'|format(x.ammonia_kg or 0) }}</td>
 
-      {# Use fields added by the route; fallbacks just in case #}
       {% set eff_cost = (x.anneal_cost_per_kg is defined and x.anneal_cost_per_kg) or (x.cost_per_kg or 0) %}
       {% set tval = (x.total_value is defined and x.total_value) or (eff_cost * (x.weight_kg or 0)) %}
 
@@ -65,6 +64,14 @@
       {% set totals.value_sum = totals.value_sum + (tval or 0) %}
 
       <td>{{ x.qa_status }}</td>
+      <td>
+        <a href="/anneal/trace/{{ x.id }}">Trace</a>
+        {% if x.qa_status and x.qa_status|lower == 'approved' %}
+          | <a href="/anneal/pdf/{{ x.id }}" target="_blank">PDF</a>
+        {% else %}
+          | {{ x.qa_status }}
+        {% endif %}
+      </td>
       <td><a class="btn btn-small" href="/anneal/qa/{{ x.id }}">QA</a></td>
     </tr>
     {% endif %}
@@ -74,8 +81,9 @@
     <th colspan="3">TOTAL</th>
     <th>{{ '%.2f'|format(total_weight) }}</th>
     <th></th>
-    <th>{{ '%.2f'|format(weighted_cost) }}</th>   {# weighted avg cost/kg from route #}
+    <th>{{ '%.2f'|format(weighted_cost) }}</th>
     <th>{{ '%.2f'|format(totals.value_sum) }}</th>
+    <th></th>
     <th></th>
     <th></th>
   </tr>
