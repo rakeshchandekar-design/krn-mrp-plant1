@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Anneal Trace — {{ al.lot_no }}</h2>
+<p class="muted">Date: {{ al.date }} | Grade: {{ al.grade }} | Weight: {{ '%.0f'|format(al.weight_kg or 0) }} kg | Ammonia: {{ '%.2f'|format(al.ammonia_kg or 0) }} kg</p>
+
+<table class="table">
+  <tr>
+    <th>RAP Lot</th><th>Grade</th><th class="right">Qty (kg)</th>
+    <th class="right">RAP Cost/kg (₹)</th><th class="right">Value (₹)</th><th>Trace</th>
+  </tr>
+  {% for r in items %}
+  <tr>
+    <td>{{ r.lot_no }}</td>
+    <td>{{ r.rap_grade }}</td>
+    <td class="right">{{ '%.2f'|format(r.qty) }}</td>
+    <td class="right">{{ '%.2f'|format(r.rap_cost_per_kg) }}</td>
+    <td class="right">{{ '%.2f'|format(r.qty * r.rap_cost_per_kg) }}</td>
+    <td>
+      {% if r.trace_lot_id %}
+        <a href="/traceability/lot/{{ r.trace_lot_id }}" target="_blank">Trace</a>
+      {% else %}
+        —
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h3>Anneal Cost Summary</h3>
+<ul>
+  <li>Weighted RAP Cost/kg: ₹{{ '%.2f'|format(al.rap_cost_per_kg or 0) }}</li>
+  <li>Anneal Cost/kg: ₹{{ '%.2f'|format(al.cost_per_kg or 0) }}</li>
+  <li>Total Cost Value: ₹{{ '%.2f'|format((al.cost_per_kg or 0) * (al.weight_kg or 0)) }}</li>
+</ul>
+
+{% if qa %}
+<h3>QA (Latest)</h3>
+<pre>{{ qa | tojson(indent=2) }}</pre>
+{% endif %}
+
+<p><a class="btn" href="/anneal/pdf/{{ al.id }}" target="_blank">Open PDF</a></p>
+{% endblock %}
