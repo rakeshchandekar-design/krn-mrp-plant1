@@ -18,7 +18,6 @@ templates = Jinja2Templates(directory="templates")  # we will place annealing HT
 TARGET_KG_PER_DAY = 6000.0
 ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
 
-# ---- helper: Plant2 balance for Annealing (what Anneal Create should show) ----
 # ---- Plant-2 balance for Annealing (ONLY lots transferred to Plant 2) ----
 def fetch_plant2_balance():
     """
@@ -111,6 +110,21 @@ def plant2_available_rows(conn):
         ORDER BY p.lot_no;
     """)
     return conn.execute(sql).mappings().all()
+
+# --- helper: robust admin check ---
+def _is_admin(request: Request) -> bool:
+    s = getattr(request, "state", None)
+    if not s:
+        return False
+    if getattr(s, "is_admin", False):
+        return True
+    role = getattr(s, "role", None)
+    if isinstance(role, str) and role.lower() == "admin":
+        return True
+    roles = getattr(s, "roles", None)
+    if isinstance(roles, (list, set, tuple)) and "admin" in roles:
+        return True
+    return False
 
 # ------------------ ROUTES ------------------
 
@@ -213,20 +227,12 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
 
 
 @router.get("/create", response_class=HTMLResponse)
-async def anneal_create_get(request: Request, dep: None = Depends(require_roles("anneal","admin"))):
+async def anneal_create_get(
+    request: Request,
+    dep: None = Depends(require_roles("anneal","admin"))
+):
     rap_rows = fetch_plant2_balance()
     err = request.query_params.get("err", "")
-
-    # --- NEW: robust admin flag passed to template ---
-    s = getattr(request, "state", None)
-    is_admin = False
-    if s:
-        if getattr(s, "is_admin", False):
-            is_admin = True
-        elif isinstance(getattr(s, "role", None), str) and s.role.lower() == "admin":
-            is_admin = True
-        elif "admin" in (getattr(s, "roles", []) or []):
-            is_admin = True
 
     return templates.TemplateResponse(
         "annealing_create.html",
@@ -234,7 +240,7 @@ async def anneal_create_get(request: Request, dep: None = Depends(require_roles(
             "request": request,
             "rap_rows": rap_rows,
             "err": err,
-            "is_admin": is_admin,   # <— pass this to template
+            "is_admin": _is_admin(request),   # <-- KEY: pass reliable flag
         },
     )
 
