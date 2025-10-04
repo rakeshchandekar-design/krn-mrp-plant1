@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 
-{# Make sure we have a boolean 'is_admin' even if route forgot to send it #}
+{# Ensure is_admin exists even if the route forgets to send it #}
 {% if is_admin is not defined %}
   {% set is_admin =
     (request.state.is_admin is defined and request.state.is_admin) or
@@ -33,27 +33,56 @@
   <table class="table">
     <tr>
       <th>RAP Lot</th>
-    <th>RAP Grade</th>
-    <th>Available (kg)</th>
-    {% if admin %}<th>RAP Cost/kg (₹)</th>{% endif %}
-    {% if admin %}<th>Total Value (₹)</th>{% endif %}
-    <th>Allocate (kg)</th>
-    ...
-    <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
-    {% if admin %}<td>{{ '%.2f'|format(r.cost_per_kg or 0) }}</td>{% endif %}
-    {% if admin %}
-    <td>
-        {% set row_value = (r.available_kg or 0) * (r.cost_per_kg or 0) %}
-        {{ '%.2f'|format(row_value) }}
-        {% set tv.sum = tv.sum + row_value %}
-    </td>
-    {% endif %}
-    ...
-    <tr class="table-info">
-    <th colspan="{{ 3 + (1 if admin else 0) }}" style="text-align:right">Totals:</th>
-    {% if admin %}<th><span id="total_value_sum">{{ '%.2f'|format(tv.sum) }}</span></th>{% endif %}
-    <th><span id="total_alloc">0.00</span></th>
-    </tr>
+      <th>RAP Grade</th>
+      <th>Available (kg)</th>
+      {% if is_admin %}<th>RAP Cost/kg (₹)</th>{% endif %}
+      {% if is_admin %}<th>Total Value (₹)</th>{% endif %}
+      <th>Allocate (kg)</th>
+    </tr>
+
+    {% set tv = namespace(sum=0.0) %}
+
+    {# SAFETY: only iterate if rap_rows is a list #}
+    {% if rap_rows %}
+      {% for r in rap_rows %}
+      <tr class="
+          {% if r.grade and r.grade.startswith('KRIP') %} bg-info-subtle
+          {% elif r.grade and r.grade.startswith('KRFS') %} bg-warning-subtle
+          {% endif %}
+      ">
+        <td>{{ r.lot_no }}</td>
+        <td>{{ r.grade }}</td>
+        <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
+
+        {% if is_admin %}
+          <td>{{ '%.2f'|format(r.cost_per_kg or 0) }}</td>
+          <td>
+            {% set row_value = (r.available_kg or 0) * (r.cost_per_kg or 0) %}
+            {{ '%.2f'|format(row_value) }}
+            {% set tv.sum = tv.sum + row_value %}
+          </td>
+        {% endif %}
+
+        <td>
+          <input
+            type="number" step="0.01" min="0" max="{{ r.available_kg }}"
+            name="alloc_{{ r.lot_no }}"
+            data-grade="{{ r.grade }}">
+        </td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="{{ 4 + (2 if is_admin else 0) }}">No Plant-2 material available.</td></tr>
+    {% endif %}
+
+    <tr class="table-info">
+      {# fixed columns before value/allocate: Lot, Grade, Available (=3)
+         + cost column if admin (=+1)
+      #}
+      <th colspan="{{ 3 + (1 if is_admin else 0) }}" style="text-align:right">Totals:</th>
+      {% if is_admin %}<th><span id="total_value_sum">{{ '%.2f'|format(tv.sum) }}</span></th>{% endif %}
+      <th><span id="total_alloc">0.00</span></th>
+    </tr>
   </table>
 
   <div id="client_err" class="alert alert-danger" style="display:none;margin:10px 0"></div>
@@ -114,15 +143,15 @@
     if (!isFinite(lw) || lw <= 0) {
       msg = 'Enter Lot Weight (> 0).';
     } else if (Math.abs(total - lw) > 0.01) {
-      // ERROR FIX: Used backticks (`) for template literal
-      msg = `Lot Weight must equal total allocated (diff ${fmt(Math.abs(total - lw), 2)} kg).`;
+      // FIX: Replaced single quotes with backticks for template literal
+      msg = `Lot Weight must equal total allocated (diff ${fmt(Math.abs(total-lw),2)} kg).`;
     } else if (allocatedGrades().size > 1) {
       msg = 'Only one grade may be allocated per anneal lot.';
     } else {
       const nh3 = parseFloat(ammoniaEl.value || '0');
       if (nh3 < nh3Min) {
-        // ERROR FIX: Used backticks (`) for template literal
-        msg = `Ammonia must be at least ${fmt(nh3Min, 3)} kg.`;
+        // FIX: Replaced single quotes with backticks for template literal
+        msg = `Ammonia must be at least ${fmt(nh3Min,3)} kg.`;
       }
     }
 
