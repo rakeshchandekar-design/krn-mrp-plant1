@@ -562,3 +562,210 @@ async def anneal_downtime_csv(dep: None = Depends(require_roles("anneal","admin"
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=anneal_downtime.csv"}
     )
+
+from typing import Any, Dict, List
+from sqlalchemy import text
+
+def _fetch_anneal_header(conn, lot_id: int) -> Dict[str, Any] | None:
+    row = conn.execute(text("""
+        SELECT id, date, lot_no, grade, weight_kg, ammonia_kg,
+               rap_cost_per_kg, cost_per_kg, src_alloc_json, qa_status
+        FROM anneal_lots WHERE id = :id
+    """), {"id": lot_id}).mappings().first()
+    return dict(row) if row else None
+
+
+def _fetch_rap_rows_for_alloc(conn, alloc_map: Dict[str, float]) -> List[Dict[str, Any]]:
+    """
+    alloc_map: {"KRIP-20250919-003": 10.0, ...}
+
+    Returns one row per RAP lot_no that exists in base table lot
+    (reachable from rap_lot → lot). Includes base lot id/grade/cost
+    so we can link to your existing Traceability → Lot page.
+    """
+    if not alloc_map:
+        return []
+
+    lot_nos = list(alloc_map.keys())
+    rows = conn.execute(text("""
+        SELECT
+            rl.id              AS rap_lot_id,
+            l.id               AS base_lot_id,
+            l.lot_no           AS rap_lot_no,
+            COALESCE(l.grade,'')     AS rap_grade,
+            COALESCE(l.unit_cost,0)  AS rap_cost_per_kg
+        FROM rap_lot rl
+        JOIN lot     l  ON l.id = rl.lot_id
+        WHERE l.lot_no = ANY(:lot_nos)
+        ORDER BY l.lot_no
+    """), {"lot_nos": lot_nos}).mappings().all()
+
+    out = []
+    for r in rows:
+        ln = r["rap_lot_no"]
+        out.append({
+            "rap_lot_no": ln,
+            "rap_lot_id": r["rap_lot_id"],
+            "base_lot_id": r["base_lot_id"],
+            "rap_grade": r["rap_grade"],
+            "rap_cost_per_kg": float(r["rap_cost_per_kg"] or 0.0),
+            "allocated_kg": float(alloc_map.get(ln, 0.0)),
+        })
+    # add any allocs that didn’t match (rare, but don’t drop them)
+    known = {r["rap_lot_no"] for r in out}
+    for ln, q in alloc_map.items():
+        if ln not in known:
+            out.append({
+                "rap_lot_no": ln,
+                "rap_lot_id": None,
+                "base_lot_id": None,
+                "rap_grade": "",
+                "rap_cost_per_kg": 0.0,
+                "allocated_kg": float(q or 0.0),
+            })
+    return out
+
+
+def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
+    """
+    Tries lot_heats first, then lot_heat. Returns heat_id, heat_no, used_qty.
+    """
+    # try lot_heats
+    rows = conn.execute(text("""
+        SELECT h.id AS heat_id, h.heat_no, COALESCE(lh.used_qty,0)::float AS used_qty
+        FROM lot_heats lh
+        JOIN heats h ON h.id = lh.heat_id
+        WHERE lh.lot_id = :lid
+        ORDER BY h.id
+    """), {"lid": base_lot_id}).mappings().all()
+    if rows:
+        return [dict(r) for r in rows]
+
+    # fallback lot_heat
+    rows = conn.execute(text("""
+        SELECT h.id AS heat_id, h.heat_no, COALESCE(lh.qty,0)::float AS used_qty
+        FROM lot_heat lh
+        JOIN heats h ON h.id = lh.heat_id
+        WHERE lh.lot_id = :lid
+        ORDER BY h.id
+    """), {"lid": base_lot_id}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def _fetch_grns_for_heat(conn, heat_id: int) -> List[Dict[str, Any]]:
+    """
+    Tries heat_inputs first, then heat_rm. Joins to grns (or grn) to show GRN number.
+    Returns grn_no and qty_kg.
+    """
+    # Attempt heat_inputs → grns
+    rows = conn.execute(text("""
+        SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
+               COALESCE(hi.qty_kg, 0)::float     AS qty_kg
+        FROM heat_inputs hi
+        LEFT JOIN grns g ON g.id = hi.grn_id
+        WHERE hi.heat_id = :hid
+        ORDER BY g.id
+    """), {"hid": heat_id}).mappings().all()
+    if rows:
+        return [dict(r) for r in rows]
+
+    # Fallback heat_rm → grn
+    rows = conn.execute(text("""
+        SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
+               COALESCE(hr.qty_kg, 0)::float     AS qty_kg
+        FROM heat_rm hr
+        LEFT JOIN grn g ON g.id = hr.grn_id
+        WHERE hr.heat_id = :hid
+        ORDER BY g.id
+    """), {"hid": heat_id}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def _fetch_latest_anneal_qa(conn, anneal_lot_id: int) -> Dict[str, Any] | None:
+    row = conn.execute(text("""
+        SELECT id, anneal_lot_id, status, remarks, created_at
+        FROM anneal_qa
+        WHERE anneal_lot_id = :lid
+        ORDER BY id DESC
+        LIMIT 1
+    """), {"lid": anneal_lot_id}).mappings().first()
+    return dict(row) if row else None
+
+@router.get("/trace/{anneal_id}", response_class=HTMLResponse)
+async def anneal_trace_view(
+    request: Request,
+    anneal_id: int,
+    dep: None = Depends(require_roles("admin", "anneal", "view")),
+):
+    with engine.begin() as conn:
+        header = _fetch_anneal_header(conn, anneal_id)
+        if not header:
+            raise HTTPException(status_code=404, detail="Anneal lot not found")
+
+        # parse RAP allocations for this anneal lot
+        try:
+            alloc_map = json.loads(header.get("src_alloc_json") or "{}")
+        except Exception:
+            alloc_map = {}
+
+        rap_rows = _fetch_rap_rows_for_alloc(conn, alloc_map)
+
+        # enrich each RAP base lot with upstream heats and GRNs
+        for r in rap_rows:
+            r["heats"] = []
+            if r.get("base_lot_id"):
+                heats = _fetch_heats_for_base_lot(conn, r["base_lot_id"])
+                for h in heats:
+                    h["grns"] = _fetch_grns_for_heat(conn, h["heat_id"])
+                r["heats"] = heats
+
+        qa = _fetch_latest_anneal_qa(conn, anneal_id)
+
+    return templates.TemplateResponse(
+        "anneal_trace.html",
+        {
+            "request": request,
+            "header": header,     # anneal lot header
+            "rap_rows": rap_rows, # RAP → heats → GRNs
+            "qa": qa,             # latest QA (optional)
+        },
+    )
+
+@router.get("/pdf/{anneal_id}", response_class=HTMLResponse)
+async def anneal_pdf_view(
+    request: Request,
+    anneal_id: int,
+    dep: None = Depends(require_roles("admin", "anneal", "view")),
+):
+    with engine.begin() as conn:
+        header = _fetch_anneal_header(conn, anneal_id)
+        if not header:
+            raise HTTPException(status_code=404, detail="Anneal lot not found")
+
+        try:
+            alloc_map = json.loads(header.get("src_alloc_json") or "{}")
+        except Exception:
+            alloc_map = {}
+
+        rap_rows = _fetch_rap_rows_for_alloc(conn, alloc_map)
+        for r in rap_rows:
+            r["heats"] = []
+            if r.get("base_lot_id"):
+                heats = _fetch_heats_for_base_lot(conn, r["base_lot_id"])
+                for h in heats:
+                    h["grns"] = _fetch_grns_for_heat(conn, h["heat_id"])
+                r["heats"] = heats
+
+        qa = _fetch_latest_anneal_qa(conn, anneal_id)
+
+    # Render a print-friendly template; browser can "Print → Save as PDF".
+    # If you already have a wkhtmltopdf/WeasyPrint pipeline, point this HTML there.
+    return templates.TemplateResponse(
+        "anneal_pdf.html",
+        {
+            "request": request,
+            "header": header,
+            "rap_rows": rap_rows,
+            "qa": qa,
+        },
+    )
