@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from urllib.parse import quote_plus
 from starlette.templating import Jinja2Templates
 from sqlalchemy import text, bindparam
+from sqlalchemy import text
 import json, io, csv
 
 from krn_mrp_app.deps import engine, require_roles
@@ -394,10 +395,23 @@ async def anneal_lots(
     with engine.begin() as conn:
         rows = conn.execute(text(query), params).mappings().all()
 
-    visible_rows = [r for r in rows if (r["weight_kg"] or 0) > 0]
+    # augment rows with anneal_cost_per_kg + total_value (no SQL changes)
+    augmented = []
+    for r in rows:
+        eff_cost = r["cost_per_kg"]
+        if eff_cost is None or eff_cost == 0:
+            eff_cost = (r["rap_cost_per_kg"] or 0) + ANNEAL_ADD_COST
+        tot_val = eff_cost * (r["weight_kg"] or 0)
+
+        d = dict(r)
+        d["anneal_cost_per_kg"] = eff_cost
+        d["total_value"] = tot_val
+        augmented.append(d)
+
+    visible_rows = [r for r in augmented if (r["weight_kg"] or 0) > 0]
     total_weight = sum((r["weight_kg"] or 0) for r in visible_rows)
     weighted_cost = (
-        sum((r["cost_per_kg"] or 0) * (r["weight_kg"] or 0) for r in visible_rows) / total_weight
+        sum((r["anneal_cost_per_kg"] or 0) * (r["weight_kg"] or 0) for r in visible_rows) / total_weight
         if total_weight > 0 else 0.0
     )
 
@@ -410,7 +424,7 @@ async def anneal_lots(
     if csv:
         buf = io.StringIO()
         writer = csv.writer(buf)
-        # keep CSV as-is (includes cost) – change if you later want admin-only CSV
+        # CSV kept identical to your current version
         writer.writerow(["Date","Lot","Grade","Weight (kg)","Ammonia (kg)","RAP Cost/kg","Anneal Cost/kg","QA"])
         for r in rows:
             writer.writerow([
@@ -418,7 +432,7 @@ async def anneal_lots(
                 "%.0f" % (r["weight_kg"] or 0),
                 "%.2f" % (r["ammonia_kg"] or 0),
                 "%.2f" % (r["rap_cost_per_kg"] or 0),
-                "%.2f" % (r["cost_per_kg"] or 0),
+                "%.2f" % ((r["cost_per_kg"] if r["cost_per_kg"] not in (None, 0) else (r["rap_cost_per_kg"] or 0) + ANNEAL_ADD_COST) or 0),
                 r["qa_status"] or ""
             ])
         return Response(
@@ -429,13 +443,13 @@ async def anneal_lots(
 
     return templates.TemplateResponse("annealing_lot_list.html", {
         "request": request,
-        "lots": visible_rows,
+        "lots": visible_rows,              # each row now has anneal_cost_per_kg & total_value
         "total_weight": total_weight,
-        "weighted_cost": weighted_cost,
+        "weighted_cost": weighted_cost,    # uses effective anneal cost
         "from_date": from_date,
         "to_date": to_date,
         "today": date.today().isoformat(),
-        "is_admin": is_admin,   # <-- this is what your templates read
+        "is_admin": is_admin,
     })
 
 
