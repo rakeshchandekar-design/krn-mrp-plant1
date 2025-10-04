@@ -132,13 +132,13 @@
     if (!isFinite(lw) || lw <= 0) {
       msg = 'Enter Lot Weight (> 0).';
     } else if (Math.abs(total - lw) > 0.01) {
-      msg = `Lot Weight must equal total allocated (diff ${fmt(Math.abs(total-lw),2)} kg).`;
+      msg = Lot Weight must equal total allocated (diff ${fmt(Math.abs(total-lw),2)} kg).;
     } else if (allocatedGrades().size > 1) {
       msg = 'Only one grade may be allocated per anneal lot.';
     } else {
       const nh3 = parseFloat(ammoniaEl.value || '0');
       if (nh3 < nh3Min) {
-        msg = `Ammonia must be at least ${fmt(nh3Min,3)} kg.`;
+        msg = Ammonia must be at least ${fmt(nh3Min,3)} kg.;
       }
     }
 
