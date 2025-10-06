@@ -648,26 +648,21 @@ def _pick_qty_col(conn, table_name: str, candidates: list[str]) -> str | None:
 
 def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
     """
-    Returns rows with: heat_id, heat_no, used_qty (kg).
-    Detects the correct qty column up-front to avoid failing probes that can
-    abort the transaction. Tries lot_heats first, then lot_heat.
+    Returns rows with: heat_id, heat_no, used_qty (kg) for a given base lot.
+    Uses lot_heat.alloc_kg if present, otherwise lot_heat.qty.
     """
-    # Try lot_heats first
-    lh_col = _pick_qty_col(conn, "lot_heats",
-                           ["used_qty", "qty", "used_kg", "weight_kg", "weight"])
-    if lh_col:
-        rows = conn.execute(text(f"""
-            SELECT
-                h.id AS heat_id,
-                h.heat_no,
-                COALESCE(lh.{lh_col}, 0)::float AS used_qty
-            FROM lot_heats lh
-            JOIN heats h ON h.id = lh.heat_id
-            WHERE lh.lot_id = :lid
-            ORDER BY h.id
-        """), {"lid": base_lot_id}).mappings().all()
-        if rows:
-            return [dict(r) for r in rows]
+    rows = conn.execute(text("""
+        SELECT
+            h.id  AS heat_id,
+            h.heat_no,
+            COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
+        FROM lot_heat lh
+        JOIN heats h ON h.id = lh.heat_id
+        WHERE lh.lot_id = :lid
+        ORDER BY h.id
+    """), {"lid": base_lot_id}).mappings().all()
+
+    return [dict(r) for r in rows]
 
     # Fallback: lot_heat
     l_col = _pick_qty_col(conn, "lot_heat",
