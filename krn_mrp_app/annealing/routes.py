@@ -568,6 +568,22 @@ async def anneal_downtime_csv(dep: None = Depends(require_roles("anneal","admin"
 # --- annealing trace/pdf (with QA params) ---
 # Assumes: router, engine, templates, require_roles are already defined/imported in this module.
 
+def _get_columns(conn, table_name: str) -> set[str]:
+    rows = conn.execute(text("""
+        SELECT lower(column_name)
+        FROM information_schema.columns
+        WHERE table_schema='public' AND table_name=:t
+    """), {"t": table_name}).scalars().all()
+    return set(rows or [])
+
+
+def _table_exists(conn, table_name: str) -> bool:
+    return bool(conn.execute(text("""
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema='public' AND table_name=:t
+        LIMIT 1
+    """), {"t": table_name}).fetchone())
 
 def _fetch_anneal_header(conn, lot_id: int) -> Dict[str, Any] | None:
     row = conn.execute(text("""
@@ -731,29 +747,88 @@ def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
 
 def _fetch_grns_for_heat(conn, heat_id: int) -> List[Dict[str, Any]]:
     """
-    Tries heat_inputs first, then heat_rm. Joins to grns (or grn) to show GRN number.
-    Returns grn_no and qty_kg.
-    """
-    rows = conn.execute(text("""
-        SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
-               COALESCE(hi.qty_kg, 0)::float     AS qty_kg
-        FROM heat_inputs hi
-        LEFT JOIN grns g ON g.id = hi.grn_id
-        WHERE hi.heat_id = :hid
-        ORDER BY g.id
-    """), {"hid": heat_id}).mappings().all()
-    if rows:
-        return [dict(r) for r in rows]
+    Return [{grn_no, qty_kg}] for a heat. We try, in order:
 
-    rows = conn.execute(text("""
-        SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
-               COALESCE(hr.qty_kg, 0)::float     AS qty_kg
-        FROM heat_rm hr
-        LEFT JOIN grn g ON g.id = hr.grn_id
-        WHERE hr.heat_id = :hid
-        ORDER BY g.id
-    """), {"hid": heat_id}).mappings().all()
-    return [dict(r) for r in rows]
+      A) heat_inputs  (fk could be grn_id, grn, grns_id)
+         joined to grns (plural) or grn (singular)
+      B) heat_rm      (fk could be grn_id or grn)
+         joined to grn (singular) or grns (plural)
+
+    We introspect available columns/tables and only reference what exists.
+    """
+
+    def try_heat_inputs() -> List[Dict[str, Any]]:
+        cols = _get_columns(conn, "heat_inputs")
+        if not cols:
+            return []
+        fk_candidates = ["grn_id", "grn", "grns_id"]
+        fk = next((c for c in fk_candidates if c in cols), None)
+        if not fk:
+            return []
+
+        # Prefer plural table if present, else singular; try both safely.
+        targets = []
+        if _table_exists(conn, "grns"):
+            targets.append("grns")
+        if _table_exists(conn, "grn"):
+            targets.append("grn")
+
+        for tgt in targets:
+            try:
+                rows = conn.execute(text(f"""
+                    SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
+                           COALESCE(hi.qty_kg, 0)::float     AS qty_kg
+                    FROM heat_inputs hi
+                    LEFT JOIN {tgt} g ON g.id = hi.{fk}
+                    WHERE hi.heat_id = :hid
+                    ORDER BY g.id
+                """), {"hid": heat_id}).mappings().all()
+                if rows:
+                    return [dict(r) for r in rows]
+            except Exception:
+                # this join shape doesn't exist; try next
+                pass
+        return []
+
+    def try_heat_rm() -> List[Dict[str, Any]]:
+        cols = _get_columns(conn, "heat_rm")
+        if not cols:
+            return []
+        fk_candidates = ["grn_id", "grn"]
+        fk = next((c for c in fk_candidates if c in cols), None)
+        if not fk:
+            return []
+
+        targets = []
+        if _table_exists(conn, "grn"):
+            targets.append("grn")
+        if _table_exists(conn, "grns"):
+            targets.append("grns")
+
+        for tgt in targets:
+            try:
+                rows = conn.execute(text(f"""
+                    SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
+                           COALESCE(hr.qty_kg, 0)::float     AS qty_kg
+                    FROM heat_rm hr
+                    LEFT JOIN {tgt} g ON g.id = hr.{fk}
+                    WHERE hr.heat_id = :hid
+                    ORDER BY g.id
+                """), {"hid": heat_id}).mappings().all()
+                if rows:
+                    return [dict(r) for r in rows]
+            except Exception:
+                pass
+        return []
+
+    # A) heat_inputs path
+    rows = try_heat_inputs()
+    if rows:
+        return rows
+
+    # B) fallback heat_rm path
+    rows = try_heat_rm()
+    return rows or []
 
 
 def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | None:
