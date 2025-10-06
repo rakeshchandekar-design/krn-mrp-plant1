@@ -645,43 +645,52 @@ def _pick_qty_col(conn, table_name: str, candidates: list[str]) -> str | None:
     return None
 # -----------------------------------------------------------------------
 
-
 def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
     """
-    Returns rows with: heat_id, heat_no, used_qty (kg) for a given base lot.
-    Uses lot_heat.alloc_kg if present, otherwise lot_heat.qty.
+    Returns rows with: heat_id, heat_no, used_qty (kg).
+
+    Schema reality:
+      - lot_heats(lot_id, heat_id) = mapping only (no qty)
+      - lot_heat(lot_id, heat_id, qty?, alloc_kg?) = quantity columns
+
+    Strategy:
+      1) Use lot_heats to enumerate heats for the lot, and LEFT JOIN lot_heat
+         to fetch quantity from COALESCE(alloc_kg, qty).
+      2) If no rows found, fall back to lot_heat only.
     """
+    # 1) mapping table + qty from lot_heat
     rows = conn.execute(text("""
         SELECT
-            h.id  AS heat_id,
-            h.heat_no,
-            COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
+          h.id            AS heat_id,
+          h.heat_no       AS heat_no,
+          COALESCE(lhq.alloc_kg, lhq.qty, 0)::float AS used_qty
+        FROM lot_heats m
+        JOIN heats h
+          ON h.id = m.heat_id
+        LEFT JOIN lot_heat lhq
+          ON lhq.lot_id  = m.lot_id
+         AND lhq.heat_id = m.heat_id
+        WHERE m.lot_id = :lid
+        ORDER BY h.id
+    """), {"lid": base_lot_id}).mappings().all()
+
+    if rows:
+        return [dict(r) for r in rows]
+
+    # 2) fallback: quantities directly from lot_heat
+    rows = conn.execute(text("""
+        SELECT
+          h.id            AS heat_id,
+          h.heat_no       AS heat_no,
+          COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
         FROM lot_heat lh
-        JOIN heats h ON h.id = lh.heat_id
+        JOIN heats h
+          ON h.id = lh.heat_id
         WHERE lh.lot_id = :lid
         ORDER BY h.id
     """), {"lid": base_lot_id}).mappings().all()
 
     return [dict(r) for r in rows]
-
-    # Fallback: lot_heat
-    l_col = _pick_qty_col(conn, "lot_heat",
-                          ["qty", "used_qty", "used_kg", "weight_kg", "weight"])
-    if l_col:
-        rows = conn.execute(text(f"""
-            SELECT
-                h.id AS heat_id,
-                h.heat_no,
-                COALESCE(lh.{l_col}, 0)::float AS used_qty
-            FROM lot_heat lh
-            JOIN heats h ON h.id = lh.heat_id
-            WHERE lh.lot_id = :lid
-            ORDER BY h.id
-        """), {"lid": base_lot_id}).mappings().all()
-        if rows:
-            return [dict(r) for r in rows]
-
-    return []
 
 
 def _fetch_grns_for_heat(conn, heat_id: int) -> List[Dict[str, Any]]:
