@@ -585,6 +585,19 @@ def _table_exists(conn, table_name: str) -> bool:
         LIMIT 1
     """), {"t": table_name}).fetchone())
 
+
+def _safe_query(conn, sql: str, params: dict) -> list[dict]:
+    """
+    Run a 'probe' query inside a SAVEPOINT so failures don't abort the outer txn.
+    Returns [] on any error.
+    """
+    try:
+        with conn.begin_nested():  # SAVEPOINT
+            rows = conn.execute(text(sql), params).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception:
+        return []
+
 def _fetch_anneal_header(conn, lot_id: int) -> Dict[str, Any] | None:
     row = conn.execute(text("""
         SELECT id, date, lot_no, grade, weight_kg, ammonia_kg,
@@ -747,88 +760,57 @@ def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
 
 def _fetch_grns_for_heat(conn, heat_id: int) -> List[Dict[str, Any]]:
     """
-    Return [{grn_no, qty_kg}] for a heat. We try, in order:
-
-      A) heat_inputs  (fk could be grn_id, grn, grns_id)
-         joined to grns (plural) or grn (singular)
-      B) heat_rm      (fk could be grn_id or grn)
-         joined to grn (singular) or grns (plural)
-
-    We introspect available columns/tables and only reference what exists.
+    Return [{grn_no, qty_kg}] for the heat.
+    Try heat_inputs first, then heat_rm.
+    Joins to either grns (plural) or grn (singular), depending on what exists.
     """
 
-    def try_heat_inputs() -> List[Dict[str, Any]]:
-        cols = _get_columns(conn, "heat_inputs")
-        if not cols:
-            return []
-        fk_candidates = ["grn_id", "grn", "grns_id"]
-        fk = next((c for c in fk_candidates if c in cols), None)
-        if not fk:
-            return []
+    # ---------- heat_inputs path ----------
+    if _table_exists(conn, "heat_inputs"):
+        hi_cols = _get_columns(conn, "heat_inputs")
+        # foreign key column on heat_inputs could be: grn_id / grn / grns_id
+        hi_fk = next((c for c in ("grn_id", "grn", "grns_id") if c in hi_cols), None)
+        # quantity column on heat_inputs is typically qty_kg; fall back to qty if needed
+        hi_qty = "qty_kg" if "qty_kg" in hi_cols else ("qty" if "qty" in hi_cols else None)
 
-        # Prefer plural table if present, else singular; try both safely.
-        targets = []
-        if _table_exists(conn, "grns"):
-            targets.append("grns")
-        if _table_exists(conn, "grn"):
-            targets.append("grn")
+        if hi_fk and hi_qty:
+            for tgt in ("grns", "grn"):   # prefer plural, then singular
+                if _table_exists(conn, tgt):
+                    rows = _safe_query(conn, f"""
+                        SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
+                               COALESCE(hi.{hi_qty}, 0)::float  AS qty_kg
+                        FROM heat_inputs hi
+                        LEFT JOIN {tgt} g ON g.id = hi.{hi_fk}
+                        WHERE hi.heat_id = :hid
+                        ORDER BY g.id
+                    """, {"hid": heat_id})
+                    if rows:
+                        return rows
 
-        for tgt in targets:
-            try:
-                rows = conn.execute(text(f"""
-                    SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
-                           COALESCE(hi.qty_kg, 0)::float     AS qty_kg
-                    FROM heat_inputs hi
-                    LEFT JOIN {tgt} g ON g.id = hi.{fk}
-                    WHERE hi.heat_id = :hid
-                    ORDER BY g.id
-                """), {"hid": heat_id}).mappings().all()
-                if rows:
-                    return [dict(r) for r in rows]
-            except Exception:
-                # this join shape doesn't exist; try next
-                pass
-        return []
+    # ---------- heat_rm fallback ----------
+    if _table_exists(conn, "heat_rm"):
+        hr_cols = _get_columns(conn, "heat_rm")
+        # fk on heat_rm is usually grn or grn_id
+        hr_fk = next((c for c in ("grn_id", "grn") if c in hr_cols), None)
+        # quantity column on heat_rm is usually qty (not qty_kg)
+        hr_qty = "qty" if "qty" in hr_cols else ("qty_kg" if "qty_kg" in hr_cols else None)
 
-    def try_heat_rm() -> List[Dict[str, Any]]:
-        cols = _get_columns(conn, "heat_rm")
-        if not cols:
-            return []
-        fk_candidates = ["grn_id", "grn"]
-        fk = next((c for c in fk_candidates if c in cols), None)
-        if not fk:
-            return []
+        if hr_fk and hr_qty:
+            for tgt in ("grn", "grns"):   # most schemas use singular here; try both
+                if _table_exists(conn, tgt):
+                    rows = _safe_query(conn, f"""
+                        SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
+                               COALESCE(hr.{hr_qty}, 0)::float  AS qty_kg
+                        FROM heat_rm hr
+                        LEFT JOIN {tgt} g ON g.id = hr.{hr_fk}
+                        WHERE hr.heat_id = :hid
+                        ORDER BY g.id
+                    """, {"hid": heat_id})
+                    if rows:
+                        return rows
 
-        targets = []
-        if _table_exists(conn, "grn"):
-            targets.append("grn")
-        if _table_exists(conn, "grns"):
-            targets.append("grns")
-
-        for tgt in targets:
-            try:
-                rows = conn.execute(text(f"""
-                    SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
-                           COALESCE(hr.qty_kg, 0)::float     AS qty_kg
-                    FROM heat_rm hr
-                    LEFT JOIN {tgt} g ON g.id = hr.{fk}
-                    WHERE hr.heat_id = :hid
-                    ORDER BY g.id
-                """), {"hid": heat_id}).mappings().all()
-                if rows:
-                    return [dict(r) for r in rows]
-            except Exception:
-                pass
-        return []
-
-    # A) heat_inputs path
-    rows = try_heat_inputs()
-    if rows:
-        return rows
-
-    # B) fallback heat_rm path
-    rows = try_heat_rm()
-    return rows or []
+    # Nothing linked
+    return []
 
 
 def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | None:
