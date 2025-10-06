@@ -10,6 +10,7 @@ from sqlalchemy import text, bindparam
 from sqlalchemy import text
 import json, io, csv
 from typing import Any, Dict, List, Optional
+from fastapi import Depends, HTTPException
 
 from krn_mrp_app.deps import engine, require_roles
 
@@ -565,6 +566,9 @@ async def anneal_downtime_csv(dep: None = Depends(require_roles("anneal","admin"
     )
 
 # --- annealing trace/pdf (with QA params) ---
+# Assumes: router, engine, templates, require_roles are already defined/imported in this module.
+
+
 def _fetch_anneal_header(conn, lot_id: int) -> Dict[str, Any] | None:
     row = conn.execute(text("""
         SELECT id, date, lot_no, grade, weight_kg, ammonia_kg,
@@ -587,7 +591,6 @@ def _fetch_rap_rows_for_alloc(conn, alloc_map: Dict[str, float]) -> List[Dict[st
 
     lot_nos = list(alloc_map.keys())
 
-    # Postgres: = ANY(:array) works with psycopg lists
     rows = conn.execute(text("""
         SELECT
             rl.id                   AS rap_lot_id,
@@ -628,51 +631,61 @@ def _fetch_rap_rows_for_alloc(conn, alloc_map: Dict[str, float]) -> List[Dict[st
     return out
 
 
+# ---------- NEW: tiny helper to detect which qty column exists ----------
+def _pick_qty_col(conn, table_name: str, candidates: list[str]) -> str | None:
+    cols = conn.execute(text("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema='public' AND table_name=:t
+    """), {"t": table_name}).scalars().all()
+    have = {c.lower() for c in cols}
+    for c in candidates:
+        if c.lower() in have:
+            return c
+    return None
+# -----------------------------------------------------------------------
+
+
 def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
     """
-    Returns rows with: heat_id, heat_no, used_qty (kg)
-    Tries lot_heats first (with several possible column names), then falls back to lot_heat.
+    Returns rows with: heat_id, heat_no, used_qty (kg).
+    Detects the correct qty column up-front to avoid failing probes that can
+    abort the transaction. Tries lot_heats first, then lot_heat.
     """
-    # 1) Try lot_heats with multiple possible column names
-    lot_heats_qty_cols = ("used_qty", "qty", "used_kg", "weight_kg", "weight")
-    for col in lot_heats_qty_cols:
-        try:
-            rows = conn.execute(text(f"""
-                SELECT
-                    h.id AS heat_id,
-                    h.heat_no,
-                    COALESCE(lh.{col}, 0)::float AS used_qty
-                FROM lot_heats lh
-                JOIN heats h ON h.id = lh.heat_id
-                WHERE lh.lot_id = :lid
-                ORDER BY h.id
-            """), {"lid": base_lot_id}).mappings().all()
-            if rows:
-                return [dict(r) for r in rows]
-        except Exception:
-            # column doesn't exist or table shape differs; try next option
-            pass
+    # Try lot_heats first
+    lh_col = _pick_qty_col(conn, "lot_heats",
+                           ["used_qty", "qty", "used_kg", "weight_kg", "weight"])
+    if lh_col:
+        rows = conn.execute(text(f"""
+            SELECT
+                h.id AS heat_id,
+                h.heat_no,
+                COALESCE(lh.{lh_col}, 0)::float AS used_qty
+            FROM lot_heats lh
+            JOIN heats h ON h.id = lh.heat_id
+            WHERE lh.lot_id = :lid
+            ORDER BY h.id
+        """), {"lid": base_lot_id}).mappings().all()
+        if rows:
+            return [dict(r) for r in rows]
 
-    # 2) Fall back to legacy lot_heat table, try a few column names too
-    lot_heat_qty_cols = ("qty", "used_qty", "used_kg", "weight_kg", "weight")
-    for col in lot_heat_qty_cols:
-        try:
-            rows = conn.execute(text(f"""
-                SELECT
-                    h.id AS heat_id,
-                    h.heat_no,
-                    COALESCE(lh.{col}, 0)::float AS used_qty
-                FROM lot_heat lh
-                JOIN heats h ON h.id = lh.heat_id
-                WHERE lh.lot_id = :lid
-                ORDER BY h.id
-            """), {"lid": base_lot_id}).mappings().all()
-            if rows:
-                return [dict(r) for r in rows]
-        except Exception:
-            pass
+    # Fallback: lot_heat
+    l_col = _pick_qty_col(conn, "lot_heat",
+                          ["qty", "used_qty", "used_kg", "weight_kg", "weight"])
+    if l_col:
+        rows = conn.execute(text(f"""
+            SELECT
+                h.id AS heat_id,
+                h.heat_no,
+                COALESCE(lh.{l_col}, 0)::float AS used_qty
+            FROM lot_heat lh
+            JOIN heats h ON h.id = lh.heat_id
+            WHERE lh.lot_id = :lid
+            ORDER BY h.id
+        """), {"lid": base_lot_id}).mappings().all()
+        if rows:
+            return [dict(r) for r in rows]
 
-    # Nothing found
     return []
 
 
@@ -707,7 +720,6 @@ def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | N
     """
     Returns latest QA header + all parameter rows for the given anneal lot, if present.
     Expected params table: anneal_qa_params(anneal_qa_id, param_name, param_value, unit, spec_min, spec_max)
-    Adjust the table/column names below if your schema differs.
     """
     qa_row = conn.execute(text("""
         SELECT id, status, remarks, created_at
@@ -721,7 +733,6 @@ def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | N
         return None
 
     qa_id = qa_row["id"]
-    # Try to fetch parameter rows; if table doesn’t exist, this will raise—wrap in try/except.
     try:
         param_rows = conn.execute(text("""
             SELECT
@@ -736,13 +747,9 @@ def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | N
         """), {"qid": qa_id}).mappings().all()
         params = [dict(r) for r in param_rows]
     except Exception:
-        # Fallback: no params table or different name; return only header
         params = []
 
-    return {
-        "header": dict(qa_row),
-        "params": params,
-    }
+    return {"header": dict(qa_row), "params": params}
 
 
 @router.get("/trace/{anneal_id}", response_class=HTMLResponse)
@@ -756,7 +763,6 @@ async def anneal_trace_view(
         if not header:
             raise HTTPException(status_code=404, detail="Anneal lot not found")
 
-        # parse RAP allocations for this anneal lot
         try:
             alloc_map = json.loads(header.get("src_alloc_json") or "{}")
         except Exception:
@@ -775,14 +781,13 @@ async def anneal_trace_view(
 
         qa = _fetch_latest_anneal_qa_full(conn, anneal_id)
 
-    # Template expects: header (anneal lot header), rap_rows (list), qa (header+params or None)
     return templates.TemplateResponse(
         "anneal_trace.html",
         {
             "request": request,
-            "header": header,
-            "rap_rows": rap_rows,
-            "qa": qa,
+            "header": header,     # anneal lot header
+            "rap_rows": rap_rows, # RAP → heats → GRNs
+            "qa": qa,             # latest QA + params (optional)
         },
     )
 
