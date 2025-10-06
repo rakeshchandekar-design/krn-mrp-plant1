@@ -647,47 +647,83 @@ def _pick_qty_col(conn, table_name: str, candidates: list[str]) -> str | None:
 
 def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
     """
-    Returns rows with: heat_id, heat_no, used_qty (kg).
+    Return [{heat_id, heat_no, used_qty}] for a base RAP lot (lot.id).
 
-    Schema reality:
-      - lot_heats(lot_id, heat_id) = mapping only (no qty)
-      - lot_heat(lot_id, heat_id, qty?, alloc_kg?) = quantity columns
+    Handles both schemas:
+      - lot_heats(lot_id, heat_id)  (mapping only)
+      - lot_heat(lot_id, heat_id, alloc_kg/qty)  (with quantity)
+      - heat  (singular) and heats (plural) tables
 
-    Strategy:
-      1) Use lot_heats to enumerate heats for the lot, and LEFT JOIN lot_heat
-         to fetch quantity from COALESCE(alloc_kg, qty).
-      2) If no rows found, fall back to lot_heat only.
+    We UNION ALL all possible paths and SUM used_qty.
     """
-    # 1) mapping table + qty from lot_heat
     rows = conn.execute(text("""
-        SELECT
-          h.id            AS heat_id,
-          h.heat_no       AS heat_no,
-          COALESCE(lhq.alloc_kg, lhq.qty, 0)::float AS used_qty
-        FROM lot_heats m
-        JOIN heats h
-          ON h.id = m.heat_id
-        LEFT JOIN lot_heat lhq
-          ON lhq.lot_id  = m.lot_id
-         AND lhq.heat_id = m.heat_id
-        WHERE m.lot_id = :lid
-        ORDER BY h.id
-    """), {"lid": base_lot_id}).mappings().all()
+        WITH
+        -- mapping table (lot_heats) + qty from lot_heat, JOIN to heats (plural)
+        from_map_heats_plural AS (
+          SELECT
+            hp.id   AS heat_id,
+            hp.heat_no,
+            COALESCE(lhq.alloc_kg, lhq.qty, 0)::float AS used_qty
+          FROM lot_heats m
+          JOIN heats hp
+            ON hp.id = m.heat_id
+          LEFT JOIN lot_heat lhq
+            ON lhq.lot_id = m.lot_id
+           AND lhq.heat_id = m.heat_id
+          WHERE m.lot_id = :lid
+        ),
 
-    if rows:
-        return [dict(r) for r in rows]
+        -- mapping table (lot_heats) + qty from lot_heat, JOIN to heat (singular)
+        from_map_heat_singular AS (
+          SELECT
+            hs.id   AS heat_id,
+            hs.heat_no,
+            COALESCE(lhq.alloc_kg, lhq.qty, 0)::float AS used_qty
+          FROM lot_heats m
+          JOIN heat hs
+            ON hs.id = m.heat_id
+          LEFT JOIN lot_heat lhq
+            ON lhq.lot_id = m.lot_id
+           AND lhq.heat_id = m.heat_id
+          WHERE m.lot_id = :lid
+        ),
 
-    # 2) fallback: quantities directly from lot_heat
-    rows = conn.execute(text("""
-        SELECT
-          h.id            AS heat_id,
-          h.heat_no       AS heat_no,
-          COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
-        FROM lot_heat lh
-        JOIN heats h
-          ON h.id = lh.heat_id
-        WHERE lh.lot_id = :lid
-        ORDER BY h.id
+        -- qty table (lot_heat) directly, JOIN to heats (plural)
+        from_qty_heats_plural AS (
+          SELECT
+            hp.id   AS heat_id,
+            hp.heat_no,
+            COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
+          FROM lot_heat lh
+          JOIN heats hp
+            ON hp.id = lh.heat_id
+          WHERE lh.lot_id = :lid
+        ),
+
+        -- qty table (lot_heat) directly, JOIN to heat (singular)
+        from_qty_heat_singular AS (
+          SELECT
+            hs.id   AS heat_id,
+            hs.heat_no,
+            COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
+          FROM lot_heat lh
+          JOIN heat hs
+            ON hs.id = lh.heat_id
+          WHERE lh.lot_id = :lid
+        )
+
+        SELECT heat_id, heat_no, SUM(used_qty) AS used_qty
+        FROM (
+          SELECT * FROM from_map_heats_plural
+          UNION ALL
+          SELECT * FROM from_map_heat_singular
+          UNION ALL
+          SELECT * FROM from_qty_heats_plural
+          UNION ALL
+          SELECT * FROM from_qty_heat_singular
+        ) u
+        GROUP BY heat_id, heat_no
+        ORDER BY heat_id
     """), {"lid": base_lot_id}).mappings().all()
 
     return [dict(r) for r in rows]
