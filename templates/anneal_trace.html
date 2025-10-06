@@ -118,8 +118,8 @@
 
 {# Always show a QA table, even if empty #}
 <table class="table" style="width:auto">
-  <tr><th>Status</th><td>{{ qa and qa.header.status or '' }}</td></tr>
-  <tr><th>Oxygen</th><td>{{ qa and qa.header.oxygen or '' }}</td></tr>
+  <tr><th>Status</th>     <td>{{ qa and qa.header.decision or '' }}</td></tr>
+  <tr><th>Oxygen</th>     <td>{{ (qa and qa.header and qa.header.oxygen is not none) and ('%.2f'|format(qa.header.oxygen)) or '' }}</td></tr>
   <tr><th>Lot ID</th><td>{{ qa and qa.header.lot_id or '' }}</td></tr>
   <tr><th>Remarks</th><td>{{ qa and qa.header.remarks or '' }}</td></tr>
   <tr><th>Recorded At</th><td>{{ qa and qa.header.created_at or '' }}</td></tr>
