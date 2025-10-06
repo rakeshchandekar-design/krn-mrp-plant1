@@ -630,26 +630,50 @@ def _fetch_rap_rows_for_alloc(conn, alloc_map: Dict[str, float]) -> List[Dict[st
 
 def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
     """
-    Tries lot_heats first, then lot_heat. Returns heat_id, heat_no, used_qty.
+    Returns rows with: heat_id, heat_no, used_qty (kg)
+    Tries lot_heats first (with several possible column names), then falls back to lot_heat.
     """
-    rows = conn.execute(text("""
-        SELECT h.id AS heat_id, h.heat_no, COALESCE(lh.used_qty,0)::float AS used_qty
-        FROM lot_heats lh
-        JOIN heats h ON h.id = lh.heat_id
-        WHERE lh.lot_id = :lid
-        ORDER BY h.id
-    """), {"lid": base_lot_id}).mappings().all()
-    if rows:
-        return [dict(r) for r in rows]
+    # 1) Try lot_heats with multiple possible column names
+    lot_heats_qty_cols = ("used_qty", "qty", "used_kg", "weight_kg", "weight")
+    for col in lot_heats_qty_cols:
+        try:
+            rows = conn.execute(text(f"""
+                SELECT
+                    h.id AS heat_id,
+                    h.heat_no,
+                    COALESCE(lh.{col}, 0)::float AS used_qty
+                FROM lot_heats lh
+                JOIN heats h ON h.id = lh.heat_id
+                WHERE lh.lot_id = :lid
+                ORDER BY h.id
+            """), {"lid": base_lot_id}).mappings().all()
+            if rows:
+                return [dict(r) for r in rows]
+        except Exception:
+            # column doesn't exist or table shape differs; try next option
+            pass
 
-    rows = conn.execute(text("""
-        SELECT h.id AS heat_id, h.heat_no, COALESCE(lh.qty,0)::float AS used_qty
-        FROM lot_heat lh
-        JOIN heats h ON h.id = lh.heat_id
-        WHERE lh.lot_id = :lid
-        ORDER BY h.id
-    """), {"lid": base_lot_id}).mappings().all()
-    return [dict(r) for r in rows]
+    # 2) Fall back to legacy lot_heat table, try a few column names too
+    lot_heat_qty_cols = ("qty", "used_qty", "used_kg", "weight_kg", "weight")
+    for col in lot_heat_qty_cols:
+        try:
+            rows = conn.execute(text(f"""
+                SELECT
+                    h.id AS heat_id,
+                    h.heat_no,
+                    COALESCE(lh.{col}, 0)::float AS used_qty
+                FROM lot_heat lh
+                JOIN heats h ON h.id = lh.heat_id
+                WHERE lh.lot_id = :lid
+                ORDER BY h.id
+            """), {"lid": base_lot_id}).mappings().all()
+            if rows:
+                return [dict(r) for r in rows]
+        except Exception:
+            pass
+
+    # Nothing found
+    return []
 
 
 def _fetch_grns_for_heat(conn, heat_id: int) -> List[Dict[str, Any]]:
