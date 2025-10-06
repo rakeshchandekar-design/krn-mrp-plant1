@@ -1,42 +1,89 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Anneal Trace — {{ al.lot_no }}</h2>
-<p class="muted">Date: {{ al.date }} | Grade: {{ al.grade }} | Weight: {{ '%.0f'|format(al.weight_kg or 0) }} kg | Ammonia: {{ '%.2f'|format(al.ammonia_kg or 0) }} kg</p>
+<h2>Anneal Trace — {{ header.lot_no }}</h2>
+<p class="muted">
+  Date: {{ header.date }} | Grade: {{ header.grade }} |
+  Weight: {{ '%.0f'|format(header.weight_kg or 0) }} kg |
+  Ammonia: {{ '%.2f'|format(header.ammonia_kg or 0) }} kg
+</p>
 
 <table class="table">
   <tr>
     <th>RAP Lot</th><th>Grade</th><th class="right">Qty (kg)</th>
     <th class="right">RAP Cost/kg (₹)</th><th class="right">Value (₹)</th><th>Trace</th>
   </tr>
-  {% for r in items %}
+  {% for r in rap_rows %}
   <tr>
-    <td>{{ r.lot_no }}</td>
+    <td>{{ r.rap_lot_no }}</td>
     <td>{{ r.rap_grade }}</td>
-    <td class="right">{{ '%.2f'|format(r.qty) }}</td>
+    <td class="right">{{ '%.2f'|format(r.allocated_kg) }}</td>
     <td class="right">{{ '%.2f'|format(r.rap_cost_per_kg) }}</td>
-    <td class="right">{{ '%.2f'|format(r.qty * r.rap_cost_per_kg) }}</td>
+    <td class="right">{{ '%.2f'|format(r.allocated_kg * r.rap_cost_per_kg) }}</td>
     <td>
-      {% if r.trace_lot_id %}
-        <a href="/traceability/lot/{{ r.trace_lot_id }}" target="_blank">Trace</a>
+      {% if r.base_lot_id %}
+        <a href="/traceability/lot/{{ r.base_lot_id }}" target="_blank">Trace</a>
       {% else %}
         —
       {% endif %}
     </td>
   </tr>
+  {% if r.heats %}
+    <tr>
+      <td colspan="6" style="background:#fafafa">
+        <strong>Heats &amp; GRNs:</strong>
+        <ul style="margin:6px 0 0 18px">
+          {% for h in r.heats %}
+            <li>
+              Heat {{ h.heat_no }} — Used: {{ '%.1f'|format(h.used_qty or 0) }} kg
+              {% if h.grns %}
+                <ul style="margin:4px 0 4px 18px">
+                  {% for g in h.grns %}
+                    <li>GRN {{ g.grn_no }} — {{ '%.1f'|format(g.qty_kg or 0) }} kg</li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </td>
+    </tr>
+  {% endif %}
   {% endfor %}
 </table>
 
 <h3>Anneal Cost Summary</h3>
 <ul>
-  <li>Weighted RAP Cost/kg: ₹{{ '%.2f'|format(al.rap_cost_per_kg or 0) }}</li>
-  <li>Anneal Cost/kg: ₹{{ '%.2f'|format(al.cost_per_kg or 0) }}</li>
-  <li>Total Cost Value: ₹{{ '%.2f'|format((al.cost_per_kg or 0) * (al.weight_kg or 0)) }}</li>
+  <li>Weighted RAP Cost/kg: ₹{{ '%.2f'|format(header.rap_cost_per_kg or 0) }}</li>
+  <li>Anneal Cost/kg: ₹{{ '%.2f'|format(header.cost_per_kg or 0) }}</li>
+  <li>Total Cost Value: ₹{{ '%.2f'|format((header.cost_per_kg or 0) * (header.weight_kg or 0)) }}</li>
 </ul>
 
-{% if qa %}
 <h3>QA (Latest)</h3>
-<pre>{{ qa | tojson(indent=2) }}</pre>
+{% if qa and qa.header %}
+  <div class="muted">
+    Status: {{ qa.header.status or '—' }} |
+    On: {{ qa.header.created_at or '—' }} |
+    Remarks: {{ qa.header.remarks or '' }}
+  </div>
+  {% if qa.params %}
+    <table class="table" style="margin-top:6px">
+      <tr><th>Parameter</th><th>Value</th><th>Unit</th><th>Spec Min</th><th>Spec Max</th></tr>
+      {% for p in qa.params %}
+        <tr>
+          <td>{{ p.name }}</td>
+          <td>{{ p.value }}</td>
+          <td>{{ p.unit }}</td>
+          <td>{{ p.spec_min }}</td>
+          <td>{{ p.spec_max }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">No QA parameters recorded.</p>
+  {% endif %}
+{% else %}
+  <p class="muted">No QA record found.</p>
 {% endif %}
 
-<p><a class="btn" href="/anneal/pdf/{{ al.id }}" target="_blank">Open PDF</a></p>
+<p><a class="btn" href="/anneal/pdf/{{ header.id }}" target="_blank">Open PDF</a></p>
 {% endblock %}
