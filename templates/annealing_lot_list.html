@@ -64,14 +64,13 @@
       {% set totals.value_sum = totals.value_sum + (tval or 0) %}
 
       <td>{{ x.qa_status }}</td>
-      <td>
-        <a href="/anneal/trace/{{ x.id }}">Trace</a>
-        {% if x.qa_status and x.qa_status|lower == 'approved' %}
-          | <a href="/anneal/pdf/{{ x.id }}" target="_blank">PDF</a>
-        {% else %}
-          | {{ x.qa_status }}
-        {% endif %}
-      </td>
+     <td>
+  <a href="/anneal/trace/{{ x.id }}">Trace</a> | 
+  <a href="/anneal/pdf/{{ x.id }}" target="_blank">PDF</a>
+  {% if x.qa_status %}
+    <br><small>QA: {{ x.qa_status }}</small>
+  {% endif %}
+     </td>
       <td><a class="btn btn-small" href="/anneal/qa/{{ x.id }}">QA</a></td>
     </tr>
     {% endif %}
