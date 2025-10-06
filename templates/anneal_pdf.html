@@ -1,51 +1,130 @@
 {% extends "base.html" %}
 {% block content %}
+
 <style>
   @media print { .no-print { display:none } }
   .right { text-align:right }
+  .muted { color:#6b7280 }
+  .card { border:1px solid #e5e7eb; border-radius:8px; padding:10px; margin:10px 0 }
+  table { border-collapse:collapse; width:100% }
+  th, td { border:1px solid #e5e7eb; padding:6px 8px; text-align:left }
+  th.right, td.right { text-align:right }
+  .subtbl { width:auto; margin:6px 0 }
 </style>
 
 <h2>Anneal Lot Report — {{ header.lot_no }}</h2>
-<p>
-  Date: {{ header.date }} | Grade: {{ header.grade }} |
+<p class="muted">
+  Date: {{ header.date }} |
+  Grade: {{ header.grade }} |
   Weight: {{ '%.0f'|format(header.weight_kg or 0) }} kg |
   Ammonia: {{ '%.2f'|format(header.ammonia_kg or 0) }} kg
 </p>
 
-<h3>Cost</h3>
-<table class="table" style="width:auto">
-  <tr><th>Weighted RAP Cost/kg</th><td class="right">₹{{ '%.2f'|format(header.rap_cost_per_kg or 0) }}</td></tr>
-  <tr><th>Anneal Cost/kg</th><td class="right">₹{{ '%.2f'|format(header.cost_per_kg or 0) }}</td></tr>
-  <tr><th>Total Value</th><td class="right">₹{{ '%.2f'|format((header.cost_per_kg or 0) * (header.weight_kg or 0)) }}</td></tr>
-</table>
+<div class="card">
+  <h3 style="margin:0 0 6px 0;">Cost Summary</h3>
+  <table style="width:auto">
+    <tr><th>Weighted RAP Cost/kg</th><td class="right">₹{{ '%.2f'|format(header.rap_cost_per_kg or 0) }}</td></tr>
+    <tr><th>Anneal Cost/kg</th>     <td class="right">₹{{ '%.2f'|format(header.cost_per_kg or 0) }}</td></tr>
+    <tr><th>Total Value</th>        <td class="right">₹{{ '%.2f'|format((header.cost_per_kg or 0) * (header.weight_kg or 0)) }}</td></tr>
+  </table>
+</div>
 
-<h3>RAP Allocations</h3>
-<table class="table">
-  <tr>
-    <th>RAP Lot</th><th>Grade</th>
-    <th class="right">Qty (kg)</th><th class="right">RAP Cost/kg (₹)</th><th class="right">Value (₹)</th>
-  </tr>
+<div class="card">
+  <h3 style="margin:0 0 6px 0;">RAP Allocations</h3>
+  <table>
+    <tr>
+      <th>RAP Lot</th>
+      <th>Grade</th>
+      <th class="right">Qty (kg)</th>
+      <th class="right">RAP Cost/kg (₹)</th>
+      <th class="right">Value (₹)</th>
+    </tr>
+    {% set total_alloc_val = namespace(v=0.0) %}
+    {% for r in rap_rows %}
+      {% set row_val = (r.allocated_kg or 0) * (r.rap_cost_per_kg or 0) %}
+      {% set total_alloc_val.v = total_alloc_val.v + row_val %}
+      <tr>
+        <td>{{ r.rap_lot_no }}</td>
+        <td>{{ r.rap_grade }}</td>
+        <td class="right">{{ '%.2f'|format(r.allocated_kg or 0) }}</td>
+        <td class="right">{{ '%.2f'|format(r.rap_cost_per_kg or 0) }}</td>
+        <td class="right">{{ '%.2f'|format(row_val) }}</td>
+      </tr>
+    {% endfor %}
+    <tr class="table-info">
+      <th colspan="4" class="right">Allocations Total</th>
+      <th class="right">₹{{ '%.2f'|format(total_alloc_val.v) }}</th>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3 style="margin:0 0 6px 0;">Upstream Trace (RAP → Heats → GRNs)</h3>
   {% for r in rap_rows %}
-  <tr>
-    <td>{{ r.rap_lot_no }}</td>
-    <td>{{ r.rap_grade }}</td>
-    <td class="right">{{ '%.2f'|format(r.allocated_kg) }}</td>
-    <td class="right">{{ '%.2f'|format(r.rap_cost_per_kg) }}</td>
-    <td class="right">{{ '%.2f'|format(r.allocated_kg * r.rap_cost_per_kg) }}</td>
-  </tr>
-  {% endfor %}
-</table>
+    <h4 style="margin:8px 0 4px 0;">
+      RAP {{ r.rap_lot_no }}
+      <span class="muted">— {{ r.rap_grade or '—' }}, {{ '%.2f'|format(r.allocated_kg or 0) }} kg</span>
+    </h4>
 
-<h3>QA</h3>
-{% if qa and qa.header %}
-  <div class="muted">
-    Status: {{ qa.header.status or '—' }} |
-    On: {{ qa.header.created_at or '—' }} |
-    Remarks: {{ qa.header.remarks or '' }}
-  </div>
-  {% if qa.params %}
-    <table class="table" style="margin-top:6px">
-      <tr><th>Parameter</th><th>Value</th><th>Unit</th><th>Spec Min</th><th>Spec Max</th></tr>
+    {% if r.heats and r.heats|length > 0 %}
+      <table class="subtbl">
+        <thead>
+          <tr>
+            <th>Heat No</th>
+            <th class="right">Used Qty (kg)</th>
+            <th>GRNs (Inputs)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in r.heats %}
+            <tr>
+              <td>{{ h.heat_no }}</td>
+              <td class="right">{{ '%.2f'|format(h.used_qty or 0) }}</td>
+              <td>
+                {% if h.grns and h.grns|length > 0 %}
+                  <table class="subtbl">
+                    <thead><tr><th>GRN No</th><th class="right">Qty (kg)</th></tr></thead>
+                    <tbody>
+                      {% for g in h.grns %}
+                        <tr>
+                          <td>{{ g.grn_no }}</td>
+                          <td class="right">{{ '%.2f'|format(g.qty_kg or 0) }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                {% else %}
+                  <span class="muted">No GRN inputs recorded for this heat.</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted" style="margin:4px 0 0 0;">No upstream heats recorded for this RAP lot.</p>
+    {% endif %}
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h3 style="margin:0 0 6px 0;">QA</h3>
+
+  {# Always show header rows, even if blank #}
+  <table style="width:auto">
+    <tr><th>Status</th>     <td>{{ qa and qa.header.status or '' }}</td></tr>
+    <tr><th>Oxygen</th>     <td>{{ qa and qa.header.oxygen or '' }}</td></tr>
+    <tr><th>Lot ID</th>     <td>{{ qa and qa.header.lot_id or '' }}</td></tr>
+    <tr><th>Remarks</th>    <td>{{ qa and qa.header.remarks or '' }}</td></tr>
+    <tr><th>Recorded At</th><td>{{ qa and qa.header.created_at or '' }}</td></tr>
+  </table>
+
+  <h4 style="margin:10px 0 6px 0;">QA Parameters</h4>
+  {% if qa and qa.params and qa.params|length > 0 %}
+    <table>
+      <tr>
+        <th>Parameter</th><th>Value</th><th>Unit</th><th>Spec Min</th><th>Spec Max</th>
+      </tr>
       {% for p in qa.params %}
         <tr>
           <td>{{ p.name }}</td>
@@ -59,9 +138,8 @@
   {% else %}
     <p class="muted">No QA parameters recorded.</p>
   {% endif %}
-{% else %}
-  <p>No QA record found (current status: {{ header.qa_status or 'PENDING' }}).</p>
-{% endif %}
+</div>
 
-<p class="no-print"><button onclick="window.print()" class="btn">Print / Save as PDF</button></p>
+<p class="no-print"><button class="btn" onclick="window.print()">Print / Save as PDF</button></p>
+
 {% endblock %}
