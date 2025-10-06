@@ -719,10 +719,17 @@ def _fetch_grns_for_heat(conn, heat_id: int) -> List[Dict[str, Any]]:
 def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | None:
     """
     Returns latest QA header + all parameter rows for the given anneal lot, if present.
-    Expected params table: anneal_qa_params(anneal_qa_id, param_name, param_value, unit, spec_min, spec_max)
+    Uses your actual columns: decision, oxygen, remarks, lot_id.
+    We alias decision -> status so templates can read qa.header.status.
     """
     qa_row = conn.execute(text("""
-        SELECT id, status, remarks, created_at
+        SELECT
+            id,
+            anneal_lot_id,
+            decision       AS status,
+            oxygen,
+            lot_id,
+            COALESCE(remarks, '') AS remarks
         FROM anneal_qa
         WHERE anneal_lot_id = :lid
         ORDER BY id DESC
@@ -732,7 +739,7 @@ def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | N
     if not qa_row:
         return None
 
-    qa_id = qa_row["id"]
+    # Optional: parameters table (keep try/except in case it doesn't exist)
     try:
         param_rows = conn.execute(text("""
             SELECT
@@ -744,12 +751,15 @@ def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | N
             FROM anneal_qa_params
             WHERE anneal_qa_id = :qid
             ORDER BY id
-        """), {"qid": qa_id}).mappings().all()
+        """), {"qid": qa_row["id"]}).mappings().all()
         params = [dict(r) for r in param_rows]
     except Exception:
         params = []
 
-    return {"header": dict(qa_row), "params": params}
+    return {
+        "header": dict(qa_row),
+        "params": params,
+    }
 
 
 @router.get("/trace/{anneal_id}", response_class=HTMLResponse)
