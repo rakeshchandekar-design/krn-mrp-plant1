@@ -5,14 +5,18 @@
   .right { text-align:right }
 </style>
 
-<h2>Anneal Lot Report — {{ al.lot_no }}</h2>
-<p>Date: {{ al.date }} | Grade: {{ al.grade }} | Weight: {{ '%.0f'|format(al.weight_kg or 0) }} kg | Ammonia: {{ '%.2f'|format(al.ammonia_kg or 0) }} kg</p>
+<h2>Anneal Lot Report — {{ header.lot_no }}</h2>
+<p>
+  Date: {{ header.date }} | Grade: {{ header.grade }} |
+  Weight: {{ '%.0f'|format(header.weight_kg or 0) }} kg |
+  Ammonia: {{ '%.2f'|format(header.ammonia_kg or 0) }} kg
+</p>
 
 <h3>Cost</h3>
 <table class="table" style="width:auto">
-  <tr><th>Weighted RAP Cost/kg</th><td class="right">₹{{ '%.2f'|format(al.rap_cost_per_kg or 0) }}</td></tr>
-  <tr><th>Anneal Cost/kg</th><td class="right">₹{{ '%.2f'|format(al.cost_per_kg or 0) }}</td></tr>
-  <tr><th>Total Value</th><td class="right">₹{{ '%.2f'|format(total_cost_value or 0) }}</td></tr>
+  <tr><th>Weighted RAP Cost/kg</th><td class="right">₹{{ '%.2f'|format(header.rap_cost_per_kg or 0) }}</td></tr>
+  <tr><th>Anneal Cost/kg</th><td class="right">₹{{ '%.2f'|format(header.cost_per_kg or 0) }}</td></tr>
+  <tr><th>Total Value</th><td class="right">₹{{ '%.2f'|format((header.cost_per_kg or 0) * (header.weight_kg or 0)) }}</td></tr>
 </table>
 
 <h3>RAP Allocations</h3>
@@ -21,30 +25,42 @@
     <th>RAP Lot</th><th>Grade</th>
     <th class="right">Qty (kg)</th><th class="right">RAP Cost/kg (₹)</th><th class="right">Value (₹)</th>
   </tr>
-  {% for r in rows %}
+  {% for r in rap_rows %}
   <tr>
-    <td>{{ r.lot_no }}</td>
-    <td>{{ r.grade }}</td>
-    <td class="right">{{ '%.2f'|format(r.qty) }}</td>
-    <td class="right">{{ '%.2f'|format(r.cpk) }}</td>
-    <td class="right">{{ '%.2f'|format(r.val) }}</td>
+    <td>{{ r.rap_lot_no }}</td>
+    <td>{{ r.rap_grade }}</td>
+    <td class="right">{{ '%.2f'|format(r.allocated_kg) }}</td>
+    <td class="right">{{ '%.2f'|format(r.rap_cost_per_kg) }}</td>
+    <td class="right">{{ '%.2f'|format(r.allocated_kg * r.rap_cost_per_kg) }}</td>
   </tr>
   {% endfor %}
-  <tr class="table-info">
-    <th colspan="4" class="right">Allocations Total</th>
-    <th class="right">₹{{ '%.2f'|format(total_value or 0) }}</th>
-  </tr>
 </table>
 
 <h3>QA</h3>
-{% if qa %}
-  <table class="table">
-    {% for k, v in qa.items() %}
-      <tr><th>{{ k }}</th><td>{{ v }}</td></tr>
-    {% endfor %}
-  </table>
+{% if qa and qa.header %}
+  <div class="muted">
+    Status: {{ qa.header.status or '—' }} |
+    On: {{ qa.header.created_at or '—' }} |
+    Remarks: {{ qa.header.remarks or '' }}
+  </div>
+  {% if qa.params %}
+    <table class="table" style="margin-top:6px">
+      <tr><th>Parameter</th><th>Value</th><th>Unit</th><th>Spec Min</th><th>Spec Max</th></tr>
+      {% for p in qa.params %}
+        <tr>
+          <td>{{ p.name }}</td>
+          <td>{{ p.value }}</td>
+          <td>{{ p.unit }}</td>
+          <td>{{ p.spec_min }}</td>
+          <td>{{ p.spec_max }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">No QA parameters recorded.</p>
+  {% endif %}
 {% else %}
-  <p>No QA record found (current status: {{ al.qa_status or 'PENDING' }}).</p>
+  <p>No QA record found (current status: {{ header.qa_status or 'PENDING' }}).</p>
 {% endif %}
 
 <p class="no-print"><button onclick="window.print()" class="btn">Print / Save as PDF</button></p>
