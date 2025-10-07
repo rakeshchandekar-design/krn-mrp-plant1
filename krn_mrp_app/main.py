@@ -1955,11 +1955,6 @@ def atom_downtime_export(db: Session = Depends(get_db)):
 from sqlalchemy import text
 
 def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
-    """
-    Returns anneal lots with latest QA joined.
-    - No SQL date filtering (we filter in Python using lot_no-derived date).
-    - Each COALESCE arg is cast individually to double precision to avoid type errors.
-    """
     rows = db.execute(text("""
         WITH latest AS (
             SELECT DISTINCT ON (anneal_lot_id)
@@ -1972,19 +1967,11 @@ def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
             al.lot_no,
             al.grade,
             al.date AS db_date,
-            COALESCE(
-                CASE WHEN al.weight_kg IS NULL THEN NULL
-                     ELSE CAST(al.weight_kg AS double precision) END,
-                CASE WHEN al.weight     IS NULL THEN NULL
-                     ELSE CAST(al.weight     AS double precision) END,
-                0.0
-            ) AS weight_kg,
+            COALESCE(CAST(al.weight_kg AS double precision),
+                     CAST(al.weight    AS double precision),
+                     0.0) AS weight_kg,
             COALESCE(lat.decision, '') AS qa_status,
-            COALESCE(
-                CASE WHEN lat.oxygen IS NULL THEN NULL
-                     ELSE CAST(lat.oxygen AS double precision) END,
-                0.0
-            ) AS oxygen,
+            COALESCE(CAST(lat.oxygen AS double precision), 0.0) AS oxygen,
             COALESCE(lat.remarks, '') AS remarks
         FROM anneal_lots al
         LEFT JOIN latest lat
@@ -1993,15 +1980,14 @@ def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
     """)).mappings().all()
 
     today = dt.date.today()
-    out: list[dict] = []
+    out = []
     for r in rows:
-        # derive date from lot_no first (ANL-YYYYMMDD-xxx), else fall back to db_date
         d = None
         try:
             d = lot_date_from_no(r["lot_no"])
         except Exception:
-            d = None
-        if d is None:
+            pass
+        if not d:
             try:
                 dbd = r["db_date"]
                 if hasattr(dbd, "date"):
@@ -2009,15 +1995,13 @@ def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
                 elif isinstance(dbd, str):
                     d = dt.date.fromisoformat(dbd)
             except Exception:
-                d = None
-        if d is None:
+                d = today
+        if not d:
             d = today
-
         if s_date <= d <= e_date:
             rec = dict(r)
             rec["lot_date"] = d
             out.append(rec)
-
     return out
     
 def _anneal_latest_params_map(db, anneal_ids: list[int]) -> dict[int, dict[str, str]]:
