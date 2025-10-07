@@ -1085,54 +1085,55 @@ def _upsert_qa_params(conn, qa_id: int, params: Dict[str, float]) -> None:
         pass
 
 # ---------- Anneal QA: routes ----------
+# top of routes.py (if not already present)
+from fastapi import Depends, HTTPException, Request, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import text
+from typing import Dict, Any
+
 @router.get("/qa/{anneal_id}", response_class=HTMLResponse)
 async def anneal_qa_form(
     request: Request,
     anneal_id: int,
     dep: None = Depends(require_roles("admin", "qa", "anneal")),
 ):
-    # Header
     with engine.begin() as conn:
-        header = conn.execute(text("""
+        header_row = conn.execute(text("""
             SELECT id, date, lot_no, grade,
                    COALESCE(weight_kg, weight, 0) AS weight_kg,
                    ammonia_kg, rap_cost_per_kg, cost_per_kg, src_alloc_json, qa_status
             FROM anneal_lots WHERE id = :id
         """), {"id": anneal_id}).mappings().first()
 
-        if not header:
+        if not header_row:
             raise HTTPException(status_code=404, detail="Anneal lot not found")
 
-        header = dict(header)
+        header = dict(header_row)  # ensure it's a plain dict
 
-        # Default blocks from upstream RAP (60% rule / weighted avg)
         defaults = _anneal_default_blocks(conn, header)
-
-        # If an Anneal QA already exists, load and override defaults with saved values
         qa = _get_latest_anneal_qa(conn, anneal_id)
-        saved_params: Dict[str, str] = {}
-        if qa:
-            saved_params = _get_params_for_qa(conn, qa["id"])
+        saved_params: Dict[str, str] = _get_params_for_qa(conn, qa["id"]) if qa else {}
 
     def _pick(name: str, group: str) -> str:
-        if name in saved_params and str(saved_params[name]).strip() != "":
-            return str(saved_params[name])
-        return str(defaults[group].get(name, ""))
+        v = str(saved_params.get(name, "")).strip()
+        return v if v != "" else str(defaults[group].get(name, ""))
 
     chem = {k.capitalize(): _pick(k.capitalize(), "chem") for k in CHEM_KEYS}
     phys = {k: _pick(k, "phys") for k in PHYS_KEYS}
     psd  = {k: _pick(k, "psd") for k in PSD_KEYS}
 
-    context = {
-        "request": request,
-        "header": header,
-        "chem": chem,
-        "phys": phys,
-        "psd": psd,
-        "qa": qa or {"decision": "", "oxygen": "", "remarks": ""},
-        "read_only": False,   # require_roles already gated edit access
-    }
-    return templates.TemplateResponse("anneal_qa_form.html", context)
+    return templates.TemplateResponse(
+        "anneal_qa_form.html",
+        {
+            "request": request,
+            "header": header,  # <-- present for template
+            "chem": chem,
+            "phys": phys,
+            "psd": psd,
+            "qa": qa or {"decision": "", "oxygen": "", "remarks": ""},
+            "read_only": False,
+        },
+    )
 
 @router.post("/qa/{anneal_id}")
 async def anneal_qa_save(
