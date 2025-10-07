@@ -1,22 +1,25 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Anneal QA — {{ header.lot_no }}</h2>
+
+{% set has_header = (header is defined and header) %}
+
+<h2>Anneal QA — {{ header.lot_no if has_header else '' }}</h2>
 
 <div class="toolbar" style="margin:10px 0; display:flex; gap:8px; flex-wrap:wrap">
   <a class="btn" href="/qa-dashboard">← Back to QA Dashboard</a>
   <a class="btn" href="/anneal/lots">Anneal Lots</a>
-  <a class="btn" href="/anneal/trace/{{ header.id }}" target="_blank">Trace</a>
-  <a class="btn" href="/anneal/pdf/{{ header.id }}" target="_blank">PDF</a>
+  <a class="btn" href="/anneal/trace/{{ header.id if has_header else '' }}" target="_blank">Trace</a>
+  <a class="btn" href="/anneal/pdf/{{ header.id if has_header else '' }}" target="_blank">PDF</a>
 </div>
 
 <p class="muted">
-  Date: {{ header.date }} |
-  Grade: {{ header.grade }} |
-  Weight: {{ '%.0f'|format(header.weight_kg or 0) }} kg |
-  Ammonia: {{ '%.2f'|format(header.ammonia_kg or 0) }} kg
+  Date: {{ header.date if has_header else '' }} |
+  Grade: {{ header.grade if has_header else '' }} |
+  Weight: {{ '%.0f'|format((header.weight_kg or 0) if has_header else 0) }} kg |
+  Ammonia: {{ '%.2f'|format((header.ammonia_kg or 0) if has_header else 0) }} kg
 </p>
 
-<form method="post" action="/anneal/qa/{{ header.id }}">
+<form method="post" action="/anneal/qa/{{ header.id if has_header else '' }}">
   <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px">
     <div>
       <h3>Chemistry</h3>
