@@ -921,6 +921,11 @@ async def anneal_pdf_view(
 # ---------- Anneal QA: helpers (prefill from RAP allocations) ----------
 from typing import Any, Dict, List, Tuple
 from sqlalchemy import text
+from fastapi import Depends, Form, HTTPException, Request
+from fastapi.responses import RedirectResponse
+import json
+
+# assumes: engine, templates, require_roles, router already imported in this module
 
 CHEM_KEYS = ["c","si","s","p","cu","ni","mn","fe"]
 PHYS_KEYS = ["ad","flow"]
@@ -930,7 +935,6 @@ def _parse_alloc_map(header: Dict[str, Any]) -> Dict[str, float]:
     try:
         raw = header.get("src_alloc_json") or "{}"
         m = json.loads(raw)
-        # normalize values as float
         out = {}
         for k, v in (m.items() if isinstance(m, dict) else []):
             try:
@@ -945,7 +949,6 @@ def _fetch_lot_blocks_for_alloc(conn, alloc_map: Dict[str, float]) -> List[Dict[
     """
     For lot_nos in alloc_map, pull lot + chemistry + phys + psd.
     Assumes tables: lot, lot_chem, lot_phys, lot_psd
-    If your table names differ, tweak joins here.
     """
     if not alloc_map:
         return []
@@ -959,7 +962,7 @@ def _fetch_lot_blocks_for_alloc(conn, alloc_map: Dict[str, float]) -> List[Dict[
         FROM lot l
         LEFT JOIN lot_chem lc ON lc.lot_id = l.id
         LEFT JOIN lot_phys lp ON lp.lot_id = l.id
-        LEFT JOIN lot_psd psd ON psd.lot_id = l.id
+        LEFT JOIN lot_psd  psd ON psd.lot_id = l.id
         WHERE l.lot_no = ANY(:lot_nos)
         ORDER BY l.id
     """), {"lot_nos": lot_nos}).mappings().all()
@@ -1020,20 +1023,19 @@ def _anneal_default_blocks(conn, header: Dict[str, Any]) -> Dict[str, Dict[str, 
     def fmt4(x: float | None) -> str:
         return "" if x is None else f"{x:.4f}"
 
-    # helper to pull one lot’s complete dicts
     def from_lot(r: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
         chem = {k.capitalize(): fmt4(float(r.get(k)) if r.get(k) not in ("", None) else None) for k in CHEM_KEYS}
         phys = {k: fmt4(float(r.get(k)) if r.get(k) not in ("", None) else None) for k in PHYS_KEYS}
         psd  = {k: fmt4(float(r.get(k)) if r.get(k) not in ("", None) else None) for k in PSD_KEYS}
         return {"chem": chem, "phys": phys, "psd": psd}
 
-    # Check if dominant lot has all 8 chem values
+    # If dominant lot covers >=60% and has all 8 chem values -> use it
     if dom and share >= 0.60:
         has_all = all(dom.get(k) not in (None, "") for k in CHEM_KEYS)
         if has_all:
             return from_lot(dom)
 
-    # Weighted averages per field
+    # Otherwise weighted averages
     chem = {k.capitalize(): fmt4(_weighted_value(rows, k)) for k in CHEM_KEYS}
     phys = {k: fmt4(_weighted_value(rows, k)) for k in PHYS_KEYS}
     psd  = {k: fmt4(_weighted_value(rows, k)) for k in PSD_KEYS}
@@ -1064,19 +1066,20 @@ def _get_params_for_qa(conn, qa_id: int) -> Dict[str, str]:
     except Exception:
         return {}
 
-def _upsert_qa_params(conn, qa_id: int, params: Dict[str, str]) -> None:
+def _upsert_qa_params(conn, qa_id: int, params: Dict[str, float]) -> None:
     """
     Stores all fields (chem/phys/psd) as name/value rows.
     If anneal_qa_params table doesn't exist, we no-op safely.
     """
     try:
-        # simple: delete previous and insert current snapshot
         conn.execute(text("DELETE FROM anneal_qa_params WHERE anneal_qa_id = :qid"), {"qid": qa_id})
-        for name, val in params.items():
-            conn.execute(text("""
-                INSERT INTO anneal_qa_params(anneal_qa_id, param_name, param_value)
-                VALUES (:qid, :name, :val)
-            """), {"qid": qa_id, "name": name, "val": val})
+        conn.execute(text("""
+            INSERT INTO anneal_qa_params(anneal_qa_id, param_name, param_value)
+            VALUES (:qid, :name, :val)
+        """), [
+            {"qid": qa_id, "name": name, "val": float(val)}
+            for name, val in params.items()
+        ])
     except Exception:
         # silently ignore if the params table is absent
         pass
@@ -1091,8 +1094,9 @@ async def anneal_qa_form(
     # Header
     with engine.begin() as conn:
         header = conn.execute(text("""
-            SELECT id, date, lot_no, grade, weight_kg, ammonia_kg,
-                   rap_cost_per_kg, cost_per_kg, src_alloc_json, qa_status
+            SELECT id, date, lot_no, grade,
+                   COALESCE(weight_kg, weight, 0) AS weight_kg,
+                   ammonia_kg, rap_cost_per_kg, cost_per_kg, src_alloc_json, qa_status
             FROM anneal_lots WHERE id = :id
         """), {"id": anneal_id}).mappings().first()
 
@@ -1110,9 +1114,7 @@ async def anneal_qa_form(
         if qa:
             saved_params = _get_params_for_qa(conn, qa["id"])
 
-    # Compose fields for the form (saved values override defaults)
     def _pick(name: str, group: str) -> str:
-        # saved params use plain names e.g. 'C','Si','ad','flow','p212',...
         if name in saved_params and str(saved_params[name]).strip() != "":
             return str(saved_params[name])
         return str(defaults[group].get(name, ""))
@@ -1132,90 +1134,78 @@ async def anneal_qa_form(
     }
     return templates.TemplateResponse("anneal_qa_form.html", context)
 
-
 @router.post("/qa/{anneal_id}")
 async def anneal_qa_save(
     anneal_id: int,
     request: Request,
-    # chemistry
-    C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
-    Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
-    # physical
-    ad: str = Form(""), flow: str = Form(""),
-    # psd
-    p212: str = Form(""), p180: str = Form(""), n180p150: str = Form(""),
-    n150p75: str = Form(""), n75p45: str = Form(""), n45: str = Form(""),
+    # chemistry (all required > 0)
+    C: float = Form(...), Si: float = Form(...), S: float = Form(...), P: float = Form(...),
+    Cu: float = Form(...), Ni: float = Form(...), Mn: float = Form(...), Fe: float = Form(...),
+    # physical (required > 0)
+    ad: float = Form(...), flow: float = Form(...),
+    # psd (required > 0)
+    p212: float = Form(...), p180: float = Form(...), n180p150: float = Form(...),
+    n150p75: float = Form(...), n75p45: float = Form(...), n45: float = Form(...),
     # anneal-specific
-    oxygen: str = Form(""),
-    decision: str = Form("APPROVED"),
+    oxygen: float = Form(...),
+    decision: str = Form(...),
     remarks: str = Form(""),
     dep: None = Depends(require_roles("admin", "qa", "anneal")),
 ):
-    # basic numeric validation like your existing Lot QA
-    def _req_pos_float(name: str, raw: str) -> str:
-        s = (raw or "").strip()
-        if s == "":
-            # allow empty -> store as empty (you can tighten if you want)
-            return ""
+    # strict validation: every numeric must be > 0
+    numeric_fields = {
+        "Oxygen": oxygen,
+        "C": C, "Si": Si, "S": S, "P": P, "Cu": Cu, "Ni": Ni, "Mn": Mn, "Fe": Fe,
+        "AD": ad, "Flow": flow,
+        "+212": p212, "+180": p180, "-180+150": n180p150, "-150+75": n150p75, "-75+45": n75p45, "-45": n45,
+    }
+    for name, val in numeric_fields.items():
         try:
-            f = float(s)
+            if val is None or float(val) <= 0:
+                raise HTTPException(status_code=400, detail=f"{name} must be a number > 0.")
         except Exception:
-            raise HTTPException(status_code=400, detail=f"{name} must be a number.")
-        if f <= 0:
-            raise HTTPException(status_code=400, detail=f"{name} must be > 0.")
-        return f"{f:.4f}"
+            raise HTTPException(status_code=400, detail=f"{name} must be a number > 0.")
 
-    # Normalize inputs
-    chem = {
-        "C":  _req_pos_float("C", C),   "Si": _req_pos_float("Si", Si),
-        "S":  _req_pos_float("S", S),   "P":  _req_pos_float("P", P),
-        "Cu": _req_pos_float("Cu", Cu), "Ni": _req_pos_float("Ni", Ni),
-        "Mn": _req_pos_float("Mn", Mn), "Fe": _req_pos_float("Fe", Fe),
-    }
-    phys = {
-        "ad":   _req_pos_float("AD", ad),
-        "flow": _req_pos_float("Flow", flow),
-    }
-    psd = {
-        "p212": _req_pos_float("+212", p212),
-        "p180": _req_pos_float("+180", p180),
-        "n180p150": _req_pos_float("-180+150", n180p150),
-        "n150p75":  _req_pos_float("-150+75", n150p75),
-        "n75p45":   _req_pos_float("-75+45", n75p45),
-        "n45":      _req_pos_float("-45", n45),
-    }
-    oxy_fmt = _req_pos_float("Oxygen", oxygen)
+    decision = (decision or "").strip().upper()
+    if decision not in {"APPROVED", "HOLD", "REJECTED"}:
+        raise HTTPException(status_code=400, detail="Decision must be one of: APPROVED, HOLD, REJECTED.")
 
     with engine.begin() as conn:
-        # insert a new anneal_qa record
-        row = conn.execute(text("""
+        exists = conn.execute(text("SELECT 1 FROM anneal_lots WHERE id = :id"), {"id": anneal_id}).fetchone()
+        if not exists:
+            raise HTTPException(status_code=404, detail="Anneal lot not found.")
+
+        # insert anneal_qa header
+        qa_row = conn.execute(text("""
             INSERT INTO anneal_qa (anneal_lot_id, decision, oxygen, remarks, created_at)
-            VALUES (:lid, :dec, :oxy, :rem, NOW())
+            VALUES (:lid, :decision, :oxygen, :remarks, NOW())
             RETURNING id
         """), {
             "lid": anneal_id,
-            "dec": (decision or "APPROVED").upper(),
-            "oxy": oxy_fmt,
-            "rem": remarks or "",
-        }).first()
-        qa_id = row[0]
+            "decision": decision,
+            "oxygen": float(oxygen),
+            "remarks": remarks or "",
+        }).mappings().first()
+        qa_id = qa_row["id"]
 
-        # snapshot all fields as params (if the table exists)
-        all_params = {}
-        all_params.update(chem)
-        all_params.update(phys)
-        all_params.update(psd)
-        _upsert_qa_params(conn, qa_id, all_params)
+        # snapshot all fields as params
+        params_payload: Dict[str, float] = {
+            # chem
+            "C": float(C), "Si": float(Si), "S": float(S), "P": float(P),
+            "Cu": float(Cu), "Ni": float(Ni), "Mn": float(Mn), "Fe": float(Fe),
+            # phys
+            "ad": float(ad), "flow": float(flow),
+            # psd
+            "p212": float(p212), "p180": float(p180), "n180p150": float(n180p150),
+            "n150p75": float(n150p75), "n75p45": float(n75p45), "n45": float(n45),
+        }
+        _upsert_qa_params(conn, qa_id, params_payload)
 
-        # also reflect status onto anneal_lots.qa_status if you track it there
-        try:
-            conn.execute(text("""
-                UPDATE anneal_lots
-                SET qa_status = :st
-                WHERE id = :lid
-            """), {"st": (decision or "APPROVED").upper(), "lid": anneal_id})
-        except Exception:
-            pass
+        # reflect status onto anneal_lots
+        conn.execute(text("""
+            UPDATE anneal_lots
+            SET qa_status = :st
+            WHERE id = :lid
+        """), {"st": decision, "lid": anneal_id})
 
-    # back to dashboard (or you can redirect to the anneal lot list)
     return RedirectResponse("/qa-dashboard", status_code=303)
