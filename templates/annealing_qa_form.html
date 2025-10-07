@@ -98,10 +98,15 @@
   </div>
 
   <div style="margin-top:12px">
-    <button class="btn" type="submit">Save QA</button>
-    <a class="btn" href="/qa-dashboard">Cancel</a>
+  <button class="btn" type="submit">Save QA</button>
+  <a class="btn" href="/qa-dashboard">Cancel</a>
+</div>
+
+{% if error_text %}
+  <div style="margin-top:8px;color:#b91c1c;font-size:13px;">
+    {{ error_text }}
   </div>
-</form>
+{% endif %}
 
 <style>
   .muted{color:#6b7280}
