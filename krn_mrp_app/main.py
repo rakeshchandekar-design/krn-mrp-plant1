@@ -1951,79 +1951,77 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
-# ---------- Anneal QA helpers for dashboard / CSV ----------
+# ---------- Anneal QA helpers (FINAL, no LATERAL) ----------
 from sqlalchemy import text
 
-def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date):
+def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
     """
-    Returns anneal lots in [s_date, e_date] with latest QA header (if any).
-    NOTE: oxygen is numeric -> coalesce with 0.0 (NOT '') to avoid cast errors.
+    Returns anneal lots in [s_date, e_date] with the latest QA
+    attached (decision/oxygen/remarks). No LATERAL; uses DISTINCT ON.
     """
     rows = db.execute(text("""
+        WITH latest AS (
+            SELECT DISTINCT ON (anneal_lot_id)
+                   id, anneal_lot_id, decision, oxygen, remarks
+            FROM anneal_qa
+            ORDER BY anneal_lot_id, id DESC
+        )
         SELECT
             al.id,
             al.lot_no,
-            al.date                           AS lot_date,
-            COALESCE(al.weight_kg, al.weight, 0) AS weight_kg,
-            COALESCE(qa.decision, '')         AS qa_status,
-            COALESCE(qa.oxygen, 0.0)          AS oxygen,
-            COALESCE(qa.remarks, '')          AS remarks
+            al.date                        AS lot_date,
+            COALESCE(al.weight_kg, 0)      AS weight_kg,
+            COALESCE(lat.decision, '')     AS qa_status,
+            COALESCE(lat.oxygen, 0.0)      AS oxygen,   -- keep numeric (fixes the cast error)
+            COALESCE(lat.remarks, '')      AS remarks
         FROM anneal_lots al
-        LEFT JOIN LATERAL (
-            SELECT id, decision, oxygen, remarks
-            FROM anneal_qa
-            WHERE anneal_lot_id = al.id
-            ORDER BY id DESC
-            LIMIT 1
-        ) qa ON TRUE
+        LEFT JOIN latest lat
+               ON lat.anneal_lot_id = al.id
         WHERE al.date BETWEEN :s AND :e
         ORDER BY al.date DESC, al.id DESC
     """), {"s": s_date, "e": e_date}).mappings().all()
+
     return [dict(r) for r in rows]
+
 
 def _anneal_latest_params_map(db, anneal_ids: list[int]) -> dict[int, dict[str, str]]:
     """
-    Returns {anneal_lot_id: {'C': '...', 'Si': '...', ..., 'n45': '...'}} from latest QA snapshot.
-    If params table isn't present, just returns {}.
+    For a list of anneal lot IDs, returns the param snapshot of the
+    latest anneal_qa for each lot, as {anneal_lot_id: {name: value}}.
+    No LATERAL; uses a max(id) per anneal_lot_id subquery.
     """
     if not anneal_ids:
         return {}
-    # latest QA id per anneal lot
-    latest = db.execute(text("""
-        SELECT q.anneal_lot_id, q.id AS qa_id
-        FROM anneal_qa q
-        JOIN (
+
+    rows = db.execute(text("""
+        WITH mx AS (
             SELECT anneal_lot_id, MAX(id) AS max_id
             FROM anneal_qa
             WHERE anneal_lot_id = ANY(:ids)
             GROUP BY anneal_lot_id
-        ) x ON x.anneal_lot_id = q.anneal_lot_id AND x.max_id = q.id
+        )
+        SELECT
+            mx.anneal_lot_id,
+            p.param_name,
+            p.param_value
+        FROM mx
+        JOIN anneal_qa aq
+          ON aq.anneal_lot_id = mx.anneal_lot_id
+         AND aq.id = mx.max_id
+        LEFT JOIN anneal_qa_params p
+          ON p.anneal_qa_id = aq.id
+        ORDER BY mx.anneal_lot_id, p.id
     """), {"ids": anneal_ids}).mappings().all()
-    if not latest:
-        return {}
-
-    qa_map = {r["qa_id"]: r["anneal_lot_id"] for r in latest}
-    qa_ids = list(qa_map.keys())
-
-    # pull all params for those QA ids (if table exists)
-    try:
-        params = db.execute(text("""
-            SELECT anneal_qa_id, param_name, param_value
-            FROM anneal_qa_params
-            WHERE anneal_qa_id = ANY(:qa_ids)
-            ORDER BY anneal_qa_id, id
-        """), {"qa_ids": qa_ids}).mappings().all()
-    except Exception:
-        return {}
 
     out: dict[int, dict[str, str]] = {}
-    for r in params:
-        lot_id = qa_map.get(r["anneal_qa_id"])
-        if lot_id is None:
-            continue
-        lot_params = out.setdefault(lot_id, {})
-        # keep as string; caller can format
-        lot_params[str(r["param_name"])] = "" if r["param_value"] is None else str(r["param_value"])
+    for r in rows:
+        lot_id = int(r["anneal_lot_id"])
+        nm = str(r["param_name"] or "")
+        val = "" if r["param_value"] is None else str(r["param_value"])
+        if lot_id not in out:
+            out[lot_id] = {}
+        if nm:
+            out[lot_id][nm] = val
     return out
 
 # -------------------------------------------------
