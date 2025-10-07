@@ -1951,6 +1951,81 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
+# ---------- Anneal QA helpers for dashboard / CSV ----------
+from sqlalchemy import text
+
+def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date):
+    """
+    Returns anneal lots in [s_date, e_date] with latest QA header (if any).
+    NOTE: oxygen is numeric -> coalesce with 0.0 (NOT '') to avoid cast errors.
+    """
+    rows = db.execute(text("""
+        SELECT
+            al.id,
+            al.lot_no,
+            al.date                           AS lot_date,
+            COALESCE(al.weight_kg, al.weight, 0) AS weight_kg,
+            COALESCE(qa.decision, '')         AS qa_status,
+            COALESCE(qa.oxygen, 0.0)          AS oxygen,
+            COALESCE(qa.remarks, '')          AS remarks
+        FROM anneal_lots al
+        LEFT JOIN LATERAL (
+            SELECT id, decision, oxygen, remarks
+            FROM anneal_qa
+            WHERE anneal_lot_id = al.id
+            ORDER BY id DESC
+            LIMIT 1
+        ) qa ON TRUE
+        WHERE al.date BETWEEN :s AND :e
+        ORDER BY al.date DESC, al.id DESC
+    """), {"s": s_date, "e": e_date}).mappings().all()
+    return [dict(r) for r in rows]
+
+def _anneal_latest_params_map(db, anneal_ids: list[int]) -> dict[int, dict[str, str]]:
+    """
+    Returns {anneal_lot_id: {'C': '...', 'Si': '...', ..., 'n45': '...'}} from latest QA snapshot.
+    If params table isn't present, just returns {}.
+    """
+    if not anneal_ids:
+        return {}
+    # latest QA id per anneal lot
+    latest = db.execute(text("""
+        SELECT q.anneal_lot_id, q.id AS qa_id
+        FROM anneal_qa q
+        JOIN (
+            SELECT anneal_lot_id, MAX(id) AS max_id
+            FROM anneal_qa
+            WHERE anneal_lot_id = ANY(:ids)
+            GROUP BY anneal_lot_id
+        ) x ON x.anneal_lot_id = q.anneal_lot_id AND x.max_id = q.id
+    """), {"ids": anneal_ids}).mappings().all()
+    if not latest:
+        return {}
+
+    qa_map = {r["qa_id"]: r["anneal_lot_id"] for r in latest}
+    qa_ids = list(qa_map.keys())
+
+    # pull all params for those QA ids (if table exists)
+    try:
+        params = db.execute(text("""
+            SELECT anneal_qa_id, param_name, param_value
+            FROM anneal_qa_params
+            WHERE anneal_qa_id = ANY(:qa_ids)
+            ORDER BY anneal_qa_id, id
+        """), {"qa_ids": qa_ids}).mappings().all()
+    except Exception:
+        return {}
+
+    out: dict[int, dict[str, str]] = {}
+    for r in params:
+        lot_id = qa_map.get(r["anneal_qa_id"])
+        if lot_id is None:
+            continue
+        lot_params = out.setdefault(lot_id, {})
+        # keep as string; caller can format
+        lot_params[str(r["param_name"])] = "" if r["param_value"] is None else str(r["param_value"])
+    return out
+
 # -------------------------------------------------
 # QA Dashboard
 # -------------------------------------------------
@@ -1989,31 +2064,8 @@ def qa_dashboard(
     heats_vis = [h for h in heats_all if s_date <= _hd(h) <= e_date]
     lots_vis  = [l for l in lots_all  if s_date <= _ld(l) <= e_date]
 
-    # NEW: ANNEAL rows for dashboard (read-only query)
-    with engine.begin() as conn:
-        anneals = conn.execute(
-            text("""
-                SELECT
-                    al.id,
-                    al.lot_no,
-                    al.date        AS lot_date,
-                    COALESCE(al.weight_kg, 0) AS weight_kg,
-                    COALESCE(qa.decision, '') AS qa_status,
-                    COALESCE(qa.oxygen,  '') AS oxygen,
-                    COALESCE(qa.remarks, '') AS remarks
-                FROM anneal_lots al
-                LEFT JOIN LATERAL (
-                    SELECT id, decision, oxygen, remarks
-                    FROM anneal_qa
-                    WHERE anneal_lot_id = al.id
-                    ORDER BY id DESC
-                    LIMIT 1
-                ) qa ON TRUE
-                WHERE al.date BETWEEN :s AND :e
-                ORDER BY al.date DESC, al.id DESC
-            """),
-            {"s": s_iso, "e": e_iso},
-        ).mappings().all()
+    # ---- NEW: Anneal lots in range (using stored al.date) ----
+    anneals_vis = _anneal_rows_in_range(db, s_date, e_date)
 
     # KPI (This Month) – based on the month of the END date
     month_start = e_date.replace(day=1)
@@ -2034,6 +2086,7 @@ def qa_dashboard(
     pending_count = (
         sum(1 for h in heats_all if (h.qa_status or "").upper() == "PENDING") +
         sum(1 for l in lots_all  if (l.qa_status or "").upper() == "PENDING")
+        # (Anneal queue cards/logic can be added later if you want)
     )
     todays_count = (
         sum(1 for h in heats_all if _hd(h) == today and (h.qa_status or "").upper() != "PENDING") +
@@ -2049,9 +2102,10 @@ def qa_dashboard(
             "role": current_role(request),
             "heats": heats_vis,
             "lots": lots_vis,
-            "anneals": anneals,  # NEW: pass to template
-
             "heat_grades": heat_grades,
+
+            # ---- NEW: pass anneal lots (your template can render a table for these) ----
+            "anneals": anneals_vis,
 
             # ---- KPIs expected by the template ----
             "kpi_approved_month": float(kpi.get("approved_kg", 0.0)),
@@ -2064,10 +2118,10 @@ def qa_dashboard(
             "start": s_iso,
             "end": e_iso,
             "today_iso": today.isoformat(),
-                },
-        )
+        },
+    )
 
-# ---------- CSV export for QA (heats + lots, by date range) ----------
+# ---------- CSV export for QA (heats + lots + anneal, by date range) ----------
 @app.get("/qa/export")
 def qa_export(
     start: Optional[str] = None,
@@ -2089,9 +2143,15 @@ def qa_export(
     heats_in = [h for h in heats if s <= _hdate(h) <= e]
     lots_in  = [l for l in lots  if s <= _ldate(l) <= e]
 
+    # ---- NEW: Anneal lots in range ----
+    anneals_in = _anneal_rows_in_range(db, s, e)
+    # Pull latest param snapshot for these anneal lots
+    anneal_ids = [a["id"] for a in anneals_in]
+    anneal_params = _anneal_latest_params_map(db, anneal_ids)
+
     out = io.StringIO()
     w = out.write
-    # unified header
+    # unified header (kept same shape you had)
     w("Type,ID,Date,Grade/Type,Weight/Output (kg),QA Status,C,Si,S,P,Cu,Ni,Mn,Fe\n")
 
     # Heats
@@ -2111,7 +2171,7 @@ def qa_export(
             f"{(chem.fe if chem else '')}\n"
         )
 
-    # Lots
+    # Atomization Lots
     for l in lots_in:
         chem = l.chemistry
         w(
@@ -2127,35 +2187,23 @@ def qa_export(
             f"{(chem.fe if chem else '')}\n"
         )
 
-    # NEW: Anneal (append as type=ANNEAL)
-    with engine.begin() as conn:
-        anneals = conn.execute(
-            text("""
-                SELECT
-                    al.lot_no,
-                    al.date AS lot_date,
-                    COALESCE(al.weight_kg, 0) AS weight_kg,
-                    COALESCE(qa.decision, '') AS qa_status
-                FROM anneal_lots al
-                LEFT JOIN LATERAL (
-                    SELECT id, decision
-                    FROM anneal_qa
-                    WHERE anneal_lot_id = al.id
-                    ORDER BY id DESC
-                    LIMIT 1
-                ) qa ON TRUE
-                WHERE al.date BETWEEN :s AND :e
-                ORDER BY al.date, al.id
-            """),
-            {"s": s.isoformat(), "e": e.isoformat()},
-        ).mappings().all()
-
-    for a in anneals:
+    # ---- NEW: Anneal Lots ----
+    for a in anneals_in:
+        # Map params (if any) onto chem columns for CSV
+        p = anneal_params.get(a["id"], {})
+        # note: CSV only has chemistry columns; oxygen is not in header,
+        # but you can add a new column later if needed
         w(
-            f"ANNEAL,{a['lot_no']},{(a['lot_date'] or s).isoformat()},"
-            f"ANNEAL,"
-            f"{float(a['weight_kg'] or 0.0):.1f},{a['qa_status']},"
-            f",,,,,,,\n"  # C..Fe left blank (form is editable but we’re not pivoting params here)
+            f"ANNEAL,{a['lot_no']},{(a['lot_date'] or today).isoformat()},{'ANNEAL'},"
+            f"{float(a['weight_kg'] or 0.0):.1f},{a.get('qa_status','')},"
+            f"{p.get('C','')},"
+            f"{p.get('Si','')},"
+            f"{p.get('S','')},"
+            f"{p.get('P','')},"
+            f"{p.get('Cu','')},"
+            f"{p.get('Ni','')},"
+            f"{p.get('Mn','')},"
+            f"{p.get('Fe','')}\n"
         )
 
     data = out.getvalue().encode("utf-8")
