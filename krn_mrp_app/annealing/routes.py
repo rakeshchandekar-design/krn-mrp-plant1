@@ -917,3 +917,305 @@ async def anneal_pdf_view(
             "qa": qa,
         },
     )
+
+# ---------- Anneal QA: helpers (prefill from RAP allocations) ----------
+from typing import Any, Dict, List, Tuple
+from sqlalchemy import text
+
+CHEM_KEYS = ["c","si","s","p","cu","ni","mn","fe"]
+PHYS_KEYS = ["ad","flow"]
+PSD_KEYS  = ["p212","p180","n180p150","n150p75","n75p45","n45"]
+
+def _parse_alloc_map(header: Dict[str, Any]) -> Dict[str, float]:
+    try:
+        raw = header.get("src_alloc_json") or "{}"
+        m = json.loads(raw)
+        # normalize values as float
+        out = {}
+        for k, v in (m.items() if isinstance(m, dict) else []):
+            try:
+                out[str(k)] = float(v or 0)
+            except Exception:
+                out[str(k)] = 0.0
+        return out
+    except Exception:
+        return {}
+
+def _fetch_lot_blocks_for_alloc(conn, alloc_map: Dict[str, float]) -> List[Dict[str, Any]]:
+    """
+    For lot_nos in alloc_map, pull lot + chemistry + phys + psd.
+    Assumes tables: lot, lot_chem, lot_phys, lot_psd
+    If your table names differ, tweak joins here.
+    """
+    if not alloc_map:
+        return []
+    lot_nos = list(alloc_map.keys())
+    rows = conn.execute(text("""
+        SELECT
+            l.id, l.lot_no,
+            lc.c, lc.si, lc.s, lc.p, lc.cu, lc.ni, lc.mn, lc.fe,
+            lp.ad, lp.flow,
+            psd.p212, psd.p180, psd.n180p150, psd.n150p75, psd.n75p45, psd.n45
+        FROM lot l
+        LEFT JOIN lot_chem lc ON lc.lot_id = l.id
+        LEFT JOIN lot_phys lp ON lp.lot_id = l.id
+        LEFT JOIN lot_psd psd ON psd.lot_id = l.id
+        WHERE l.lot_no = ANY(:lot_nos)
+        ORDER BY l.id
+    """), {"lot_nos": lot_nos}).mappings().all()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["alloc_kg"] = float(alloc_map.get(d["lot_no"], 0.0))
+        out.append(d)
+    return out
+
+def _dominant_lot(rows: List[Dict[str, Any]]) -> Tuple[Dict[str, Any] | None, float]:
+    tot = sum(r["alloc_kg"] for r in rows)
+    if tot <= 0:
+        return None, 0.0
+    best = max(rows, key=lambda r: r["alloc_kg"])
+    share = best["alloc_kg"] / tot
+    return best, share
+
+def _weighted_value(rows: List[Dict[str, Any]], key: str) -> float | None:
+    tot_w = sum(r["alloc_kg"] for r in rows)
+    if tot_w <= 0:
+        return None
+    num = 0.0
+    den = 0.0
+    for r in rows:
+        try:
+            v = r.get(key)
+            if v is None or v == "":
+                continue
+            v = float(v)
+            w = float(r["alloc_kg"])
+            num += v * w
+            den += w
+        except Exception:
+            continue
+    if den <= 0:
+        return None
+    return num / den
+
+def _anneal_default_blocks(conn, header: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """
+    Build default CHEM/PHYS/PSD for Anneal QA from upstream RAP allocations:
+      - If a single RAP lot >=60% of total AND has full chemistry -> use it.
+      - Else compute allocation-weighted averages for each field.
+    Returns strings formatted for form inputs ("" or 4 decimals).
+    """
+    alloc_map = _parse_alloc_map(header)
+    rows = _fetch_lot_blocks_for_alloc(conn, alloc_map)
+    if not rows:
+        return {
+            "chem": {k:"" for k in [k.capitalize() for k in CHEM_KEYS]},
+            "phys": {"ad":"", "flow":""},
+            "psd":  {k:"" for k in ["p212","p180","n180p150","n150p75","n75p45","n45"]},
+        }
+
+    dom, share = _dominant_lot(rows)
+
+    def fmt4(x: float | None) -> str:
+        return "" if x is None else f"{x:.4f}"
+
+    # helper to pull one lot’s complete dicts
+    def from_lot(r: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+        chem = {k.capitalize(): fmt4(float(r.get(k)) if r.get(k) not in ("", None) else None) for k in CHEM_KEYS}
+        phys = {k: fmt4(float(r.get(k)) if r.get(k) not in ("", None) else None) for k in PHYS_KEYS}
+        psd  = {k: fmt4(float(r.get(k)) if r.get(k) not in ("", None) else None) for k in PSD_KEYS}
+        return {"chem": chem, "phys": phys, "psd": psd}
+
+    # Check if dominant lot has all 8 chem values
+    if dom and share >= 0.60:
+        has_all = all(dom.get(k) not in (None, "") for k in CHEM_KEYS)
+        if has_all:
+            return from_lot(dom)
+
+    # Weighted averages per field
+    chem = {k.capitalize(): fmt4(_weighted_value(rows, k)) for k in CHEM_KEYS}
+    phys = {k: fmt4(_weighted_value(rows, k)) for k in PHYS_KEYS}
+    psd  = {k: fmt4(_weighted_value(rows, k)) for k in PSD_KEYS}
+    return {"chem": chem, "phys": phys, "psd": psd}
+
+def _get_latest_anneal_qa(conn, anneal_id: int) -> Dict[str, Any] | None:
+    row = conn.execute(text("""
+        SELECT id, anneal_lot_id, decision, oxygen, remarks, created_at
+        FROM anneal_qa
+        WHERE anneal_lot_id = :lid
+        ORDER BY id DESC
+        LIMIT 1
+    """), {"lid": anneal_id}).mappings().first()
+    return dict(row) if row else None
+
+def _get_params_for_qa(conn, qa_id: int) -> Dict[str, str]:
+    try:
+        rows = conn.execute(text("""
+            SELECT param_name, param_value
+            FROM anneal_qa_params
+            WHERE anneal_qa_id = :qid
+            ORDER BY id
+        """), {"qid": qa_id}).mappings().all()
+        out = {}
+        for r in rows:
+            out[str(r["param_name"])] = str(r["param_value"] or "")
+        return out
+    except Exception:
+        return {}
+
+def _upsert_qa_params(conn, qa_id: int, params: Dict[str, str]) -> None:
+    """
+    Stores all fields (chem/phys/psd) as name/value rows.
+    If anneal_qa_params table doesn't exist, we no-op safely.
+    """
+    try:
+        # simple: delete previous and insert current snapshot
+        conn.execute(text("DELETE FROM anneal_qa_params WHERE anneal_qa_id = :qid"), {"qid": qa_id})
+        for name, val in params.items():
+            conn.execute(text("""
+                INSERT INTO anneal_qa_params(anneal_qa_id, param_name, param_value)
+                VALUES (:qid, :name, :val)
+            """), {"qid": qa_id, "name": name, "val": val})
+    except Exception:
+        # silently ignore if the params table is absent
+        pass
+
+# ---------- Anneal QA: routes ----------
+@router.get("/qa/{anneal_id}", response_class=HTMLResponse)
+async def anneal_qa_form(
+    request: Request,
+    anneal_id: int,
+    dep: None = Depends(require_roles("admin", "qa", "anneal")),
+):
+    # Header
+    with engine.begin() as conn:
+        header = conn.execute(text("""
+            SELECT id, date, lot_no, grade, weight_kg, ammonia_kg,
+                   rap_cost_per_kg, cost_per_kg, src_alloc_json, qa_status
+            FROM anneal_lots WHERE id = :id
+        """), {"id": anneal_id}).mappings().first()
+
+        if not header:
+            raise HTTPException(status_code=404, detail="Anneal lot not found")
+
+        header = dict(header)
+
+        # Default blocks from upstream RAP (60% rule / weighted avg)
+        defaults = _anneal_default_blocks(conn, header)
+
+        # If an Anneal QA already exists, load and override defaults with saved values
+        qa = _get_latest_anneal_qa(conn, anneal_id)
+        saved_params: Dict[str, str] = {}
+        if qa:
+            saved_params = _get_params_for_qa(conn, qa["id"])
+
+    # Compose fields for the form (saved values override defaults)
+    def _pick(name: str, group: str) -> str:
+        # saved params use plain names e.g. 'C','Si','ad','flow','p212',...
+        if name in saved_params and str(saved_params[name]).strip() != "":
+            return str(saved_params[name])
+        return str(defaults[group].get(name, ""))
+
+    chem = {k.capitalize(): _pick(k.capitalize(), "chem") for k in CHEM_KEYS}
+    phys = {k: _pick(k, "phys") for k in PHYS_KEYS}
+    psd  = {k: _pick(k, "psd") for k in PSD_KEYS}
+
+    context = {
+        "request": request,
+        "header": header,
+        "chem": chem,
+        "phys": phys,
+        "psd": psd,
+        "qa": qa or {"decision": "", "oxygen": "", "remarks": ""},
+        "read_only": False,   # require_roles already gated edit access
+    }
+    return templates.TemplateResponse("anneal_qa_form.html", context)
+
+
+@router.post("/qa/{anneal_id}")
+async def anneal_qa_save(
+    anneal_id: int,
+    request: Request,
+    # chemistry
+    C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
+    Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
+    # physical
+    ad: str = Form(""), flow: str = Form(""),
+    # psd
+    p212: str = Form(""), p180: str = Form(""), n180p150: str = Form(""),
+    n150p75: str = Form(""), n75p45: str = Form(""), n45: str = Form(""),
+    # anneal-specific
+    oxygen: str = Form(""),
+    decision: str = Form("APPROVED"),
+    remarks: str = Form(""),
+    dep: None = Depends(require_roles("admin", "qa", "anneal")),
+):
+    # basic numeric validation like your existing Lot QA
+    def _req_pos_float(name: str, raw: str) -> str:
+        s = (raw or "").strip()
+        if s == "":
+            # allow empty -> store as empty (you can tighten if you want)
+            return ""
+        try:
+            f = float(s)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"{name} must be a number.")
+        if f <= 0:
+            raise HTTPException(status_code=400, detail=f"{name} must be > 0.")
+        return f"{f:.4f}"
+
+    # Normalize inputs
+    chem = {
+        "C":  _req_pos_float("C", C),   "Si": _req_pos_float("Si", Si),
+        "S":  _req_pos_float("S", S),   "P":  _req_pos_float("P", P),
+        "Cu": _req_pos_float("Cu", Cu), "Ni": _req_pos_float("Ni", Ni),
+        "Mn": _req_pos_float("Mn", Mn), "Fe": _req_pos_float("Fe", Fe),
+    }
+    phys = {
+        "ad":   _req_pos_float("AD", ad),
+        "flow": _req_pos_float("Flow", flow),
+    }
+    psd = {
+        "p212": _req_pos_float("+212", p212),
+        "p180": _req_pos_float("+180", p180),
+        "n180p150": _req_pos_float("-180+150", n180p150),
+        "n150p75":  _req_pos_float("-150+75", n150p75),
+        "n75p45":   _req_pos_float("-75+45", n75p45),
+        "n45":      _req_pos_float("-45", n45),
+    }
+    oxy_fmt = _req_pos_float("Oxygen", oxygen)
+
+    with engine.begin() as conn:
+        # insert a new anneal_qa record
+        row = conn.execute(text("""
+            INSERT INTO anneal_qa (anneal_lot_id, decision, oxygen, remarks, created_at)
+            VALUES (:lid, :dec, :oxy, :rem, NOW())
+            RETURNING id
+        """), {
+            "lid": anneal_id,
+            "dec": (decision or "APPROVED").upper(),
+            "oxy": oxy_fmt,
+            "rem": remarks or "",
+        }).first()
+        qa_id = row[0]
+
+        # snapshot all fields as params (if the table exists)
+        all_params = {}
+        all_params.update(chem)
+        all_params.update(phys)
+        all_params.update(psd)
+        _upsert_qa_params(conn, qa_id, all_params)
+
+        # also reflect status onto anneal_lots.qa_status if you track it there
+        try:
+            conn.execute(text("""
+                UPDATE anneal_lots
+                SET qa_status = :st
+                WHERE id = :lid
+            """), {"st": (decision or "APPROVED").upper(), "lid": anneal_id})
+        except Exception:
+            pass
+
+    # back to dashboard (or you can redirect to the anneal lot list)
+    return RedirectResponse("/qa-dashboard", status_code=303)
