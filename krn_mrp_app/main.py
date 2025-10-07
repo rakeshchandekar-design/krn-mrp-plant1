@@ -1951,13 +1951,15 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
-# ---------- Anneal QA helpers (FINAL, no LATERAL) ----------
+# ---------- Anneal QA helpers (FINAL, safe date filtering in Python) ----------
+
 from sqlalchemy import text
 
 def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
     """
-    Returns anneal lots in [s_date, e_date] with the latest QA attached.
-    Adds grade for dashboard display. Keeps oxygen numeric.
+    Returns anneal lots with latest QA joined.
+    No SQL date filtering (avoids cast errors); we filter in Python using the
+    date parsed from lot_no (ANL-YYYYMMDD-xxx) with fallback to al.date.
     """
     rows = db.execute(text("""
         WITH latest AS (
@@ -1969,22 +1971,48 @@ def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
         SELECT
             al.id,
             al.lot_no,
-            al.grade,                                      -- ← NEW: grade for dashboard
-            al.date                         AS lot_date,
-            COALESCE(al.weight_kg, al.weight, 0)::float AS weight_kg,  -- robust weight
-            COALESCE(lat.decision, '')      AS qa_status,
-            COALESCE(lat.oxygen,  0)::float AS oxygen,     -- numeric (avoids cast errors)
-            COALESCE(lat.remarks, '')       AS remarks
+            al.grade,
+            al.date                                         AS db_date,          -- may be NULL / varchar
+            COALESCE(al.weight_kg, al.weight, 0)::float     AS weight_kg,
+            COALESCE(lat.decision, '')                      AS qa_status,
+            COALESCE(lat.oxygen,  0)::float                 AS oxygen,
+            COALESCE(lat.remarks, '')                       AS remarks
         FROM anneal_lots al
         LEFT JOIN latest lat
                ON lat.anneal_lot_id = al.id
-        WHERE al.date BETWEEN :s AND :e
-        ORDER BY al.date DESC, al.id DESC
-    """), {"s": s_date, "e": e_date}).mappings().all()
+        ORDER BY al.id DESC
+    """)).mappings().all()
 
-    return [dict(r) for r in rows]
+    today = dt.date.today()
+    out: list[dict] = []
+    for r in rows:
+        d = None
+        # 1) try lot number like ANL-20251003-...
+        try:
+            d = lot_date_from_no(r["lot_no"])
+        except Exception:
+            d = None
+        # 2) fallback to al.date if it is a true date
+        if d is None:
+            try:
+                # if db_date is a date/datetime already it will pass; else this excepts
+                d = r["db_date"].date() if hasattr(r["db_date"], "date") else r["db_date"]
+                if isinstance(d, str):
+                    d = dt.date.fromisoformat(d)
+                if not isinstance(d, dt.date):
+                    d = None
+            except Exception:
+                d = None
+        if d is None:
+            d = today
 
+        if s_date <= d <= e_date:
+            rec = dict(r)
+            rec["lot_date"] = d
+            out.append(rec)
 
+    return out
+    
 def _anneal_latest_params_map(db, anneal_ids: list[int]) -> dict[int, dict[str, str]]:
     """
     For a list of anneal lot IDs, returns the param snapshot of the
