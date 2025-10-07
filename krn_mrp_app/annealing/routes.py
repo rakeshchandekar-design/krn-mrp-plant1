@@ -568,23 +568,7 @@ async def anneal_downtime_csv(dep: None = Depends(require_roles("anneal","admin"
 # --- annealing trace/pdf (with QA params) ---
 # Assumes: router, engine, templates, require_roles are already defined/imported in this module.
 
-def _get_columns(conn, table_name: str) -> set[str]:
-    rows = conn.execute(text("""
-        SELECT lower(column_name)
-        FROM information_schema.columns
-        WHERE table_schema='public' AND table_name=:t
-    """), {"t": table_name}).scalars().all()
-    return set(rows or [])
-
-
-def _table_exists(conn, table_name: str) -> bool:
-    return bool(conn.execute(text("""
-        SELECT 1
-        FROM information_schema.tables
-        WHERE table_schema='public' AND table_name=:t
-        LIMIT 1
-    """), {"t": table_name}).fetchone())
-
+# ========== Small safe helpers ==========
 
 def _safe_query(conn, sql: str, params: dict) -> list[dict]:
     """
@@ -597,6 +581,33 @@ def _safe_query(conn, sql: str, params: dict) -> list[dict]:
             return [dict(r) for r in rows]
     except Exception:
         return []
+
+def _get_columns(conn, table_name: str) -> set[str]:
+    """Safely fetch lowercase column names for a table."""
+    try:
+        with conn.begin_nested():
+            rows = conn.execute(text("""
+                SELECT lower(column_name)
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name=:t
+            """), {"t": table_name}).scalars().all()
+            return set(rows or [])
+    except Exception:
+        return set()
+
+def _table_exists(conn, table_name: str) -> bool:
+    """Safely check if a table exists."""
+    try:
+        with conn.begin_nested():
+            exists = conn.execute(
+                text("SELECT to_regclass('public.'||:t) IS NOT NULL"),
+                {"t": table_name}
+            ).scalar()
+            return bool(exists)
+    except Exception:
+        return False
+
+# ========== Data fetchers ==========
 
 def _fetch_anneal_header(conn, lot_id: int) -> Dict[str, Any] | None:
     row = conn.execute(text("""
@@ -660,19 +671,14 @@ def _fetch_rap_rows_for_alloc(conn, alloc_map: Dict[str, float]) -> List[Dict[st
     return out
 
 
-# ---------- NEW: tiny helper to detect which qty column exists ----------
+# (kept; used by some earlier iterations; harmless even if unused)
 def _pick_qty_col(conn, table_name: str, candidates: list[str]) -> str | None:
-    cols = conn.execute(text("""
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema='public' AND table_name=:t
-    """), {"t": table_name}).scalars().all()
-    have = {c.lower() for c in cols}
+    cols = _get_columns(conn, table_name)
     for c in candidates:
-        if c.lower() in have:
+        if c.lower() in cols:
             return c
     return None
-# -----------------------------------------------------------------------
+
 
 def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
     """
@@ -682,7 +688,6 @@ def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
     this lot in lot_heat, we fall back to lot_heats (mapping only; qty = 0).
     Supports both 'heats' (plural) and 'heat' (singular).
     """
-
     # 1) Prefer quantity rows from lot_heat → join to heats (plural)
     rows = conn.execute(text("""
         SELECT
@@ -738,6 +743,55 @@ def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
     """), {"lid": base_lot_id}).mappings().all()
 
     return [dict(r) for r in rows]
+
+
+def _fetch_grns_for_heat(conn, heat_id: int) -> List[Dict[str, Any]]:
+    """
+    Return [{grn_no, qty_kg}] for the heat.
+    Try heat_inputs first, then heat_rm.
+    Joins to either grns (plural) or grn (singular), depending on what exists.
+    All probes are safe; if a path fails it falls back to the next.
+    """
+    # ---- heat_inputs path ----
+    if _table_exists(conn, "heat_inputs"):
+        hi_cols = _get_columns(conn, "heat_inputs")
+        hi_fk   = next((c for c in ("grn_id", "grn", "grns_id") if c in hi_cols), None)
+        hi_qty  = "qty_kg" if "qty_kg" in hi_cols else ("qty" if "qty" in hi_cols else None)
+        if hi_fk and hi_qty:
+            for tgt in ("grns", "grn"):  # prefer plural
+                if _table_exists(conn, tgt):
+                    rows = _safe_query(conn, f"""
+                        SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
+                               COALESCE(hi.{hi_qty}, 0)::float   AS qty_kg
+                        FROM heat_inputs hi
+                        LEFT JOIN {tgt} g ON g.id = hi.{hi_fk}
+                        WHERE hi.heat_id = :hid
+                        ORDER BY g.id
+                    """, {"hid": heat_id})
+                    if rows:
+                        return rows
+
+    # ---- heat_rm fallback ----
+    if _table_exists(conn, "heat_rm"):
+        hr_cols = _get_columns(conn, "heat_rm")
+        hr_fk   = next((c for c in ("grn_id", "grn") if c in hr_cols), None)
+        hr_qty  = "qty" if "qty" in hr_cols else ("qty_kg" if "qty_kg" in hr_cols else None)
+        if hr_fk and hr_qty:
+            for tgt in ("grn", "grns"):  # most schemas use singular; try both
+                if _table_exists(conn, tgt):
+                    rows = _safe_query(conn, f"""
+                        SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
+                               COALESCE(hr.{hr_qty}, 0)::float   AS qty_kg
+                        FROM heat_rm hr
+                        LEFT JOIN {tgt} g ON g.id = hr.{hr_fk}
+                        WHERE hr.heat_id = :hid
+                        ORDER BY g.id
+                    """, {"hid": heat_id})
+                    if rows:
+                        return rows
+
+    # Nothing linked
+    return []
 
 
 def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | None:
