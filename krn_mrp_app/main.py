@@ -1956,8 +1956,8 @@ from sqlalchemy import text
 
 def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
     """
-    Returns anneal lots in [s_date, e_date] with the latest QA
-    attached (decision/oxygen/remarks). No LATERAL; uses DISTINCT ON.
+    Returns anneal lots in [s_date, e_date] with the latest QA attached.
+    Adds grade for dashboard display. Keeps oxygen numeric.
     """
     rows = db.execute(text("""
         WITH latest AS (
@@ -1969,11 +1969,12 @@ def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
         SELECT
             al.id,
             al.lot_no,
-            al.date                        AS lot_date,
-            COALESCE(al.weight_kg, 0)      AS weight_kg,
-            COALESCE(lat.decision, '')     AS qa_status,
-            COALESCE(lat.oxygen, 0.0)      AS oxygen,   -- keep numeric (fixes the cast error)
-            COALESCE(lat.remarks, '')      AS remarks
+            al.grade,                                      -- ← NEW: grade for dashboard
+            al.date                         AS lot_date,
+            COALESCE(al.weight_kg, al.weight, 0)::float AS weight_kg,  -- robust weight
+            COALESCE(lat.decision, '')      AS qa_status,
+            COALESCE(lat.oxygen,  0)::float AS oxygen,     -- numeric (avoids cast errors)
+            COALESCE(lat.remarks, '')       AS remarks
         FROM anneal_lots al
         LEFT JOIN latest lat
                ON lat.anneal_lot_id = al.id
