@@ -21,6 +21,11 @@ from starlette.status import HTTP_403_FORBIDDEN
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+router = APIRouter()
+templates = Jinja2Templates(directory="templates")  # we will place annealing HTML in global /templates
+
+TARGET_KG_PER_DAY = 6000.0
+ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
 
 # ---------- Helper: detect if the client expects JSON (AJAX/fetch) ----------
 def _wants_json(request: Request) -> bool:
@@ -84,12 +89,6 @@ async def anneal_http_exception_handler(request: Request, exc: HTTPException):
         content=f"<h3>Error {code}</h3><p>{exc.detail}</p>",
         status_code=code,
     )
-
-router = APIRouter()
-templates = Jinja2Templates(directory="templates")  # we will place annealing HTML in global /templates
-
-TARGET_KG_PER_DAY = 6000.0
-ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
 
 # ---- Plant-2 balance for Annealing (ONLY lots transferred to Plant 2) ----
 def fetch_plant2_balance():
