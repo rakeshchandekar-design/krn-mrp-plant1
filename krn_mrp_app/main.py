@@ -1951,15 +1951,14 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
-# ---------- Anneal QA helpers (FINAL, safe date filtering in Python) ----------
-
+# ---------- Anneal QA helpers (safe casting + Python date filter) ----------
 from sqlalchemy import text
 
 def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
     """
     Returns anneal lots with latest QA joined.
-    No SQL date filtering (avoids cast errors); we filter in Python using the
-    date parsed from lot_no (ANL-YYYYMMDD-xxx) with fallback to al.date.
+    - No SQL date filtering (we filter in Python using lot_no-derived date).
+    - Each COALESCE arg is cast individually to double precision to avoid type errors.
     """
     rows = db.execute(text("""
         WITH latest AS (
@@ -1972,11 +1971,21 @@ def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
             al.id,
             al.lot_no,
             al.grade,
-            al.date                                         AS db_date,          -- may be NULL / varchar
-            COALESCE(al.weight_kg, al.weight, 0)::float     AS weight_kg,
-            COALESCE(lat.decision, '')                      AS qa_status,
-            COALESCE(lat.oxygen,  0)::float                 AS oxygen,
-            COALESCE(lat.remarks, '')                       AS remarks
+            al.date AS db_date,
+            COALESCE(
+                CASE WHEN al.weight_kg IS NULL THEN NULL
+                     ELSE CAST(al.weight_kg AS double precision) END,
+                CASE WHEN al.weight     IS NULL THEN NULL
+                     ELSE CAST(al.weight     AS double precision) END,
+                0.0
+            ) AS weight_kg,
+            COALESCE(lat.decision, '') AS qa_status,
+            COALESCE(
+                CASE WHEN lat.oxygen IS NULL THEN NULL
+                     ELSE CAST(lat.oxygen AS double precision) END,
+                0.0
+            ) AS oxygen,
+            COALESCE(lat.remarks, '') AS remarks
         FROM anneal_lots al
         LEFT JOIN latest lat
                ON lat.anneal_lot_id = al.id
@@ -1986,21 +1995,19 @@ def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
     today = dt.date.today()
     out: list[dict] = []
     for r in rows:
+        # derive date from lot_no first (ANL-YYYYMMDD-xxx), else fall back to db_date
         d = None
-        # 1) try lot number like ANL-20251003-...
         try:
             d = lot_date_from_no(r["lot_no"])
         except Exception:
             d = None
-        # 2) fallback to al.date if it is a true date
         if d is None:
             try:
-                # if db_date is a date/datetime already it will pass; else this excepts
-                d = r["db_date"].date() if hasattr(r["db_date"], "date") else r["db_date"]
-                if isinstance(d, str):
-                    d = dt.date.fromisoformat(d)
-                if not isinstance(d, dt.date):
-                    d = None
+                dbd = r["db_date"]
+                if hasattr(dbd, "date"):
+                    d = dbd.date()
+                elif isinstance(dbd, str):
+                    d = dt.date.fromisoformat(dbd)
             except Exception:
                 d = None
         if d is None:
