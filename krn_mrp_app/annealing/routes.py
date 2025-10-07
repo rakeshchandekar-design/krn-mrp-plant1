@@ -18,12 +18,72 @@ from fastapi.responses import HTMLResponse
 from fastapi.exception_handlers import http_exception_handler
 from starlette.status import HTTP_403_FORBIDDEN
 
-@app.exception_handler(HTTPException)
-async def friendly_http_exceptions(request: Request, exc: HTTPException):
-    if exc.status_code == HTTP_403_FORBIDDEN:
-        html = "<h3>Sorry Access is not allowed for this login. COntact to Admin.</h3>"
-        return HTMLResponse(html, status_code=HTTP_403_FORBIDDEN)
-    return await http_exception_handler(request, exc)
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+
+
+# ---------- Helper: detect if the client expects JSON (AJAX/fetch) ----------
+def _wants_json(request: Request) -> bool:
+    # X-Requested-With set by many libs; also check Accept header
+    xrw = request.headers.get("X-Requested-With", "").lower()
+    if xrw in ("xmlhttprequest", "fetch"):
+        return True
+    accept = request.headers.get("accept", "").lower()
+    # if the client explicitly prefers JSON over HTML
+    if "application/json" in accept and "text/html" not in accept:
+        return True
+    return False
+
+# ---------- Router-scoped exception handler (NO 'app' reference) ----------
+@router.exception_handler(HTTPException)
+async def anneal_http_exception_handler(request: Request, exc: HTTPException):
+    code = exc.status_code
+
+    # Only customize 401/403; let other errors fall back to plain detail
+    if code in (401, 403):
+        msg_title = "Access Denied" if code == 403 else "Unauthorized"
+        msg_line1 = "Sorry, Access is denied to this login." if code == 403 else "Sorry, you are not logged in."
+        msg_line2 = "Please contact to Admin." if code == 403 else "Please login and try again."
+
+        if _wants_json(request):
+            # JSON for AJAX/fetch calls
+            return JSONResponse(
+                {"error": msg_title, "message": f"{msg_line1} {msg_line2}"},
+                status_code=code,
+            )
+
+        # Pretty HTML for normal page loads
+        html = f"""
+        <html>
+          <head>
+            <title>{msg_title}</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1"/>
+            <style>
+              body {{ font-family: system-ui, Arial, sans-serif; display:flex; align-items:center; justify-content:center; min-height: 60vh; }}
+              .card {{ border:1px solid #e5e7eb; border-radius:10px; padding:20px 24px; max-width: 520px; }}
+              h2 {{ color:#b91c1c; margin:0 0 8px 0; }}
+              p {{ margin: 6px 0; color:#374151; }}
+              a.btn {{ display:inline-block; margin-top:10px; padding:8px 14px; background:#111827; color:#fff; border-radius:8px; text-decoration:none; }}
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h2>{msg_line1}</h2>
+              <p>{msg_line2}</p>
+              <p><a class="btn" href="/">Go Home</a></p>
+            </div>
+          </body>
+        </html>
+        """
+        return HTMLResponse(content=html, status_code=code)
+
+    # Default for other HTTP errors on this router
+    if _wants_json(request):
+        return JSONResponse({"error": f"HTTP {code}", "message": exc.detail}, status_code=code)
+    return HTMLResponse(
+        content=f"<h3>Error {code}</h3><p>{exc.detail}</p>",
+        status_code=code,
+    )
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")  # we will place annealing HTML in global /templates
