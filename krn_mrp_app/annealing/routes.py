@@ -13,51 +13,36 @@ from typing import Any, Dict, List, Optional
 from fastapi import Depends, HTTPException
 
 from krn_mrp_app.deps import engine, require_roles
-
-from fastapi.responses import HTMLResponse
-from fastapi.exception_handlers import http_exception_handler
-from starlette.status import HTTP_403_FORBIDDEN
-
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")  # we will place annealing HTML in global /templates
+templates = Jinja2Templates(directory="templates")
 
 TARGET_KG_PER_DAY = 6000.0
 ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
 
 # ---------- Helper: detect if the client expects JSON (AJAX/fetch) ----------
 def _wants_json(request: Request) -> bool:
-    # X-Requested-With set by many libs; also check Accept header
     xrw = request.headers.get("X-Requested-With", "").lower()
     if xrw in ("xmlhttprequest", "fetch"):
         return True
     accept = request.headers.get("accept", "").lower()
-    # if the client explicitly prefers JSON over HTML
-    if "application/json" in accept and "text/html" not in accept:
-        return True
-    return False
+    return ("application/json" in accept) and ("text/html" not in accept)
 
-# ---------- Router-scoped exception handler (NO 'app' reference) ----------
-@router.exception_handler(HTTPException)
+# ---------- Router-scoped exception handler (register it below) ----------
 async def anneal_http_exception_handler(request: Request, exc: HTTPException):
     code = exc.status_code
 
-    # Only customize 401/403; let other errors fall back to plain detail
+    # Only customize 401/403; let others fall through with a simple response
     if code in (401, 403):
         msg_title = "Access Denied" if code == 403 else "Unauthorized"
         msg_line1 = "Sorry, Access is denied to this login." if code == 403 else "Sorry, you are not logged in."
-        msg_line2 = "Please contact to Admin." if code == 403 else "Please login and try again."
+        msg_line2 = "Please contact the Admin." if code == 403 else "Please login and try again."
 
         if _wants_json(request):
-            # JSON for AJAX/fetch calls
-            return JSONResponse(
-                {"error": msg_title, "message": f"{msg_line1} {msg_line2}"},
-                status_code=code,
-            )
+            return JSONResponse({"error": msg_title, "message": f"{msg_line1} {msg_line2}"}, status_code=code)
 
-        # Pretty HTML for normal page loads
         html = f"""
         <html>
           <head>
@@ -85,11 +70,10 @@ async def anneal_http_exception_handler(request: Request, exc: HTTPException):
     # Default for other HTTP errors on this router
     if _wants_json(request):
         return JSONResponse({"error": f"HTTP {code}", "message": exc.detail}, status_code=code)
-    return HTMLResponse(
-        content=f"<h3>Error {code}</h3><p>{exc.detail}</p>",
-        status_code=code,
-    )
+    return HTMLResponse(f"<h3>Error {code}</h3><p>{exc.detail}</p>", status_code=code)
 
+# REGISTER the handler for this router (this line replaces the decorator)
+router.add_exception_handler(HTTPException, anneal_http_exception_handler)
 # ---- Plant-2 balance for Annealing (ONLY lots transferred to Plant 2) ----
 def fetch_plant2_balance():
     """
