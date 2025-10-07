@@ -1989,6 +1989,32 @@ def qa_dashboard(
     heats_vis = [h for h in heats_all if s_date <= _hd(h) <= e_date]
     lots_vis  = [l for l in lots_all  if s_date <= _ld(l) <= e_date]
 
+    # NEW: ANNEAL rows for dashboard (read-only query)
+    with engine.begin() as conn:
+        anneals = conn.execute(
+            text("""
+                SELECT
+                    al.id,
+                    al.lot_no,
+                    al.date        AS lot_date,
+                    COALESCE(al.weight_kg, 0) AS weight_kg,
+                    COALESCE(qa.decision, '') AS qa_status,
+                    COALESCE(qa.oxygen,  '') AS oxygen,
+                    COALESCE(qa.remarks, '') AS remarks
+                FROM anneal_lots al
+                LEFT JOIN LATERAL (
+                    SELECT id, decision, oxygen, remarks
+                    FROM anneal_qa
+                    WHERE anneal_lot_id = al.id
+                    ORDER BY id DESC
+                    LIMIT 1
+                ) qa ON TRUE
+                WHERE al.date BETWEEN :s AND :e
+                ORDER BY al.date DESC, al.id DESC
+            """),
+            {"s": s_iso, "e": e_iso},
+        ).mappings().all()
+
     # KPI (This Month) – based on the month of the END date
     month_start = e_date.replace(day=1)
     month_end   = (month_start + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
@@ -2023,6 +2049,8 @@ def qa_dashboard(
             "role": current_role(request),
             "heats": heats_vis,
             "lots": lots_vis,
+            "anneals": anneals,  # NEW: pass to template
+
             "heat_grades": heat_grades,
 
             # ---- KPIs expected by the template ----
@@ -2097,6 +2125,37 @@ def qa_export(
             f"{(chem.ni if chem else '')},"
             f"{(chem.mn if chem else '')},"
             f"{(chem.fe if chem else '')}\n"
+        )
+
+    # NEW: Anneal (append as type=ANNEAL)
+    with engine.begin() as conn:
+        anneals = conn.execute(
+            text("""
+                SELECT
+                    al.lot_no,
+                    al.date AS lot_date,
+                    COALESCE(al.weight_kg, 0) AS weight_kg,
+                    COALESCE(qa.decision, '') AS qa_status
+                FROM anneal_lots al
+                LEFT JOIN LATERAL (
+                    SELECT id, decision
+                    FROM anneal_qa
+                    WHERE anneal_lot_id = al.id
+                    ORDER BY id DESC
+                    LIMIT 1
+                ) qa ON TRUE
+                WHERE al.date BETWEEN :s AND :e
+                ORDER BY al.date, al.id
+            """),
+            {"s": s.isoformat(), "e": e.isoformat()},
+        ).mappings().all()
+
+    for a in anneals:
+        w(
+            f"ANNEAL,{a['lot_no']},{(a['lot_date'] or s).isoformat()},"
+            f"ANNEAL,"
+            f"{float(a['weight_kg'] or 0.0):.1f},{a['qa_status']},"
+            f",,,,,,,\n"  # C..Fe left blank (form is editable but we’re not pivoting params here)
         )
 
     data = out.getvalue().encode("utf-8")
