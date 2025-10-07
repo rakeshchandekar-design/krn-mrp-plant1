@@ -185,10 +185,12 @@
   <!-- Annealing Lot QA list (read-only on dashboard, link to Anneal QA form) -->
 <div class="card" style="margin-top:12px">
   <h2>Annealing – Lots</h2>
+  {% if anneals and anneals|length > 0 %}
   <table>
     <thead>
       <tr>
         <th>Lot No</th>
+        <th>Grade</th> <!-- NEW -->
         <th>Date</th>
         <th>Weight (kg)</th>
         <th>Oxygen</th>
@@ -199,22 +201,22 @@
     </thead>
     <tbody>
       {% for al in anneals %}
-        <tr>
-          <td>{{ al.lot_no }}</td>
-          <td>{{ al.lot_date }}</td>
-          <td>{{ '%.1f' % (al.weight_kg or 0) }}</td>
-          <td>{{ '%.3f' % (al.oxygen or 0) }}</td>
-          <td>{{ al.qa_status or 'PENDING' }}</td>
-          <td>{{ al.remarks }}</td>
-          <td><a href="/anneal/qa/{{ al.id }}">QA</a></td>
-        </tr>
-      {% else %}
-        <tr>
-          <td colspan="7" class="muted">No anneal lots in this date range.</td>
-        </tr>
+      <tr>
+        <td>{{ al.lot_no }}</td>
+        <td>{{ al.grade or '' }}</td> <!-- NEW -->
+        <td>{{ al.lot_date }}</td>
+        <td>{{ '%.1f' % (al.weight_kg or 0) }}</td>
+        <td>{{ '%.3f' % (al.oxygen or 0) }}</td>
+        <td>{{ al.qa_status or 'PENDING' }}</td>
+        <td>{{ al.remarks or '' }}</td>
+        <td><a href="/anneal/qa/{{ al.id }}">QA</a></td>
+      </tr>
       {% endfor %}
     </tbody>
   </table>
+  {% else %}
+    <p class="muted">No anneal lots in this date range.</p>
+  {% endif %}
 </div>
   
   <script>
@@ -253,4 +255,4 @@
 })();
 </script>
 </body>
-</html>
+</html> 
