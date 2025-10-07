@@ -14,6 +14,16 @@ from fastapi import Depends, HTTPException
 
 from krn_mrp_app.deps import engine, require_roles
 
+from fastapi.responses import HTMLResponse
+from fastapi.exception_handlers import http_exception_handler
+from starlette.status import HTTP_403_FORBIDDEN
+
+@app.exception_handler(HTTPException)
+async def friendly_http_exceptions(request: Request, exc: HTTPException):
+    if exc.status_code == HTTP_403_FORBIDDEN:
+        html = "<h3>Sorry Access is not allowed for this login. COntact to Admin.</h3>"
+        return HTMLResponse(html, status_code=HTTP_403_FORBIDDEN)
+    return await http_exception_handler(request, exc)
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")  # we will place annealing HTML in global /templates
@@ -678,139 +688,66 @@ def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
     """
     Return [{heat_id, heat_no, used_qty}] for a base RAP lot (lot.id).
 
-    Handles both schemas:
-      - lot_heats(lot_id, heat_id)  (mapping only)
-      - lot_heat(lot_id, heat_id, alloc_kg/qty)  (with quantity)
-      - heat  (singular) and heats (plural) tables
-
-    We UNION ALL all possible paths and SUM used_qty.
+    We prefer quantities from lot_heat (alloc_kg/qty). If nothing exists for
+    this lot in lot_heat, we fall back to lot_heats (mapping only; qty = 0).
+    Supports both 'heats' (plural) and 'heat' (singular).
     """
+
+    # 1) Prefer quantity rows from lot_heat → join to heats (plural)
     rows = conn.execute(text("""
-        WITH
-        -- mapping table (lot_heats) + qty from lot_heat, JOIN to heats (plural)
-        from_map_heats_plural AS (
-          SELECT
-            hp.id   AS heat_id,
-            hp.heat_no,
-            COALESCE(lhq.alloc_kg, lhq.qty, 0)::float AS used_qty
-          FROM lot_heats m
-          JOIN heats hp
-            ON hp.id = m.heat_id
-          LEFT JOIN lot_heat lhq
-            ON lhq.lot_id = m.lot_id
-           AND lhq.heat_id = m.heat_id
-          WHERE m.lot_id = :lid
-        ),
+        SELECT
+          h.id                                    AS heat_id,
+          h.heat_no                               AS heat_no,
+          COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
+        FROM lot_heat lh
+        JOIN heats h ON h.id = lh.heat_id
+        WHERE lh.lot_id = :lid
+        ORDER BY h.id
+    """), {"lid": base_lot_id}).mappings().all()
+    if rows:
+        return [dict(r) for r in rows]
 
-        -- mapping table (lot_heats) + qty from lot_heat, JOIN to heat (singular)
-        from_map_heat_singular AS (
-          SELECT
-            hs.id   AS heat_id,
-            hs.heat_no,
-            COALESCE(lhq.alloc_kg, lhq.qty, 0)::float AS used_qty
-          FROM lot_heats m
-          JOIN heat hs
-            ON hs.id = m.heat_id
-          LEFT JOIN lot_heat lhq
-            ON lhq.lot_id = m.lot_id
-           AND lhq.heat_id = m.heat_id
-          WHERE m.lot_id = :lid
-        ),
+    # 1b) If your DB uses 'heat' (singular) instead of 'heats'
+    rows = conn.execute(text("""
+        SELECT
+          h.id                                    AS heat_id,
+          h.heat_no                               AS heat_no,
+          COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
+        FROM lot_heat lh
+        JOIN heat h ON h.id = lh.heat_id
+        WHERE lh.lot_id = :lid
+        ORDER BY h.id
+    """), {"lid": base_lot_id}).mappings().all()
+    if rows:
+        return [dict(r) for r in rows]
 
-        -- qty table (lot_heat) directly, JOIN to heats (plural)
-        from_qty_heats_plural AS (
-          SELECT
-            hp.id   AS heat_id,
-            hp.heat_no,
-            COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
-          FROM lot_heat lh
-          JOIN heats hp
-            ON hp.id = lh.heat_id
-          WHERE lh.lot_id = :lid
-        ),
+    # 2) Fallback: mapping only (no qty in lot_heats → show 0.00)
+    rows = conn.execute(text("""
+        SELECT
+          h.id       AS heat_id,
+          h.heat_no  AS heat_no,
+          0.0::float AS used_qty
+        FROM lot_heats m
+        JOIN heats h ON h.id = m.heat_id
+        WHERE m.lot_id = :lid
+        ORDER BY h.id
+    """), {"lid": base_lot_id}).mappings().all()
+    if rows:
+        return [dict(r) for r in rows]
 
-        -- qty table (lot_heat) directly, JOIN to heat (singular)
-        from_qty_heat_singular AS (
-          SELECT
-            hs.id   AS heat_id,
-            hs.heat_no,
-            COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
-          FROM lot_heat lh
-          JOIN heat hs
-            ON hs.id = lh.heat_id
-          WHERE lh.lot_id = :lid
-        )
-
-        SELECT heat_id, heat_no, SUM(used_qty) AS used_qty
-        FROM (
-          SELECT * FROM from_map_heats_plural
-          UNION ALL
-          SELECT * FROM from_map_heat_singular
-          UNION ALL
-          SELECT * FROM from_qty_heats_plural
-          UNION ALL
-          SELECT * FROM from_qty_heat_singular
-        ) u
-        GROUP BY heat_id, heat_no
-        ORDER BY heat_id
+    # 2b) Fallback with 'heat' (singular)
+    rows = conn.execute(text("""
+        SELECT
+          h.id       AS heat_id,
+          h.heat_no  AS heat_no,
+          0.0::float AS used_qty
+        FROM lot_heats m
+        JOIN heat h ON h.id = m.heat_id
+        WHERE m.lot_id = :lid
+        ORDER BY h.id
     """), {"lid": base_lot_id}).mappings().all()
 
     return [dict(r) for r in rows]
-
-
-def _fetch_grns_for_heat(conn, heat_id: int) -> List[Dict[str, Any]]:
-    """
-    Return [{grn_no, qty_kg}] for the heat.
-    Try heat_inputs first, then heat_rm.
-    Joins to either grns (plural) or grn (singular), depending on what exists.
-    """
-
-    # ---------- heat_inputs path ----------
-    if _table_exists(conn, "heat_inputs"):
-        hi_cols = _get_columns(conn, "heat_inputs")
-        # foreign key column on heat_inputs could be: grn_id / grn / grns_id
-        hi_fk = next((c for c in ("grn_id", "grn", "grns_id") if c in hi_cols), None)
-        # quantity column on heat_inputs is typically qty_kg; fall back to qty if needed
-        hi_qty = "qty_kg" if "qty_kg" in hi_cols else ("qty" if "qty" in hi_cols else None)
-
-        if hi_fk and hi_qty:
-            for tgt in ("grns", "grn"):   # prefer plural, then singular
-                if _table_exists(conn, tgt):
-                    rows = _safe_query(conn, f"""
-                        SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
-                               COALESCE(hi.{hi_qty}, 0)::float  AS qty_kg
-                        FROM heat_inputs hi
-                        LEFT JOIN {tgt} g ON g.id = hi.{hi_fk}
-                        WHERE hi.heat_id = :hid
-                        ORDER BY g.id
-                    """, {"hid": heat_id})
-                    if rows:
-                        return rows
-
-    # ---------- heat_rm fallback ----------
-    if _table_exists(conn, "heat_rm"):
-        hr_cols = _get_columns(conn, "heat_rm")
-        # fk on heat_rm is usually grn or grn_id
-        hr_fk = next((c for c in ("grn_id", "grn") if c in hr_cols), None)
-        # quantity column on heat_rm is usually qty (not qty_kg)
-        hr_qty = "qty" if "qty" in hr_cols else ("qty_kg" if "qty_kg" in hr_cols else None)
-
-        if hr_fk and hr_qty:
-            for tgt in ("grn", "grns"):   # most schemas use singular here; try both
-                if _table_exists(conn, tgt):
-                    rows = _safe_query(conn, f"""
-                        SELECT COALESCE(g.grn_no, 'GRN-'||g.id) AS grn_no,
-                               COALESCE(hr.{hr_qty}, 0)::float  AS qty_kg
-                        FROM heat_rm hr
-                        LEFT JOIN {tgt} g ON g.id = hr.{hr_fk}
-                        WHERE hr.heat_id = :hid
-                        ORDER BY g.id
-                    """, {"hid": heat_id})
-                    if rows:
-                        return rows
-
-    # Nothing linked
-    return []
 
 
 def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | None:
