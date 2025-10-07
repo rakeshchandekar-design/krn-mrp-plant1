@@ -184,37 +184,33 @@
 
   <!-- Annealing Lot QA list (read-only on dashboard, link to Anneal QA form) -->
   <div class="card" style="margin-top:12px">
-    <h2>Annealing – Lots</h2>
-    {% if anneals and anneals|length %}
-      <table>
-        <thead>
-          <tr>
-            <th>Lot</th>
-            <th>Date</th>
-            <th>Weight (kg)</th>
-            <th>Oxygen</th>
-            <th>QA</th>
-            <th>Remarks</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for a in anneals %}
-          <tr>
-            <td>{{ a.lot_no }}</td>
-            <td>{{ a.lot_date }}</td>
-            <td>{{ '%.1f' % (a.weight_kg or 0) }}</td>
-            <td>{{ a.oxygen }}</td>
-            <td><span class="chip">{{ a.qa_status or 'PENDING' }}</span></td>
-            <td>{{ a.remarks }}</td>
-            <td>
-              <a href="/anneal/qa/{{ a.id }}">QA</a>
-              <a href="/anneal/trace/{{ a.id }}">Trace</a>
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+   <h2>Annealing – Lots</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Lot No</th>
+      <th>Date</th>
+      <th>Weight (kg)</th>
+      <th>Oxygen</th>
+      <th>QA Status</th>
+      <th>Remarks</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for al in anneals %}
+    <tr>
+      <td>{{ al.lot_no }}</td>
+      <td>{{ al.lot_date }}</td>
+      <td>{{ "%.1f"|format(al.weight_kg or 0) }}</td>
+      <td>{{ "%.3f"|format(al.oxygen or 0) }}</td>
+      <td>{{ al.qa_status }}</td>
+      <td>{{ al.remarks }}</td>
+      <td><a href="/anneal/qa/{{ al.id }}">QA</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
     {% else %}
       <p class="muted">No anneal lots in this date range.</p>
     {% endif %}
