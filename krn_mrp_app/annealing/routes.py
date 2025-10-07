@@ -1139,74 +1139,137 @@ async def anneal_qa_form(
 async def anneal_qa_save(
     anneal_id: int,
     request: Request,
-    # chemistry (all required > 0)
-    C: float = Form(...), Si: float = Form(...), S: float = Form(...), P: float = Form(...),
-    Cu: float = Form(...), Ni: float = Form(...), Mn: float = Form(...), Fe: float = Form(...),
+    # chemistry (required > 0)
+    C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
+    Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
     # physical (required > 0)
-    ad: float = Form(...), flow: float = Form(...),
+    ad: str = Form(""), flow: str = Form(""),
     # psd (required > 0)
-    p212: float = Form(...), p180: float = Form(...), n180p150: float = Form(...),
-    n150p75: float = Form(...), n75p45: float = Form(...), n45: float = Form(...),
-    # anneal-specific
-    oxygen: float = Form(...),
-    decision: str = Form(...),
+    p212: str = Form(""), p180: str = Form(""), n180p150: str = Form(""),
+    n150p75: str = Form(""), n75p45: str = Form(""), n45: str = Form(""),
+    # anneal-specific (required > 0)
+    oxygen: str = Form(""),
+    decision: str = Form("APPROVED"),
     remarks: str = Form(""),
     dep: None = Depends(require_roles("admin", "qa", "anneal")),
 ):
-    # strict validation: every numeric must be > 0
-    numeric_fields = {
-        "Oxygen": oxygen,
-        "C": C, "Si": Si, "S": S, "P": P, "Cu": Cu, "Ni": Ni, "Mn": Mn, "Fe": Fe,
-        "AD": ad, "Flow": flow,
-        "+212": p212, "+180": p180, "-180+150": n180p150, "-150+75": n150p75, "-75+45": n75p45, "-45": n45,
-    }
-    for name, val in numeric_fields.items():
+    # ---- helper for validation ----
+    def _req_pos(name: str, s: str) -> float | None:
+        s2 = (s or "").strip()
         try:
-            if val is None or float(val) <= 0:
-                raise HTTPException(status_code=400, detail=f"{name} must be a number > 0.")
+            v = float(s2)
         except Exception:
-            raise HTTPException(status_code=400, detail=f"{name} must be a number > 0.")
+            return None
+        if v <= 0:
+            return None
+        return v
 
-    decision = (decision or "").strip().upper()
-    if decision not in {"APPROVED", "HOLD", "REJECTED"}:
-        raise HTTPException(status_code=400, detail="Decision must be one of: APPROVED, HOLD, REJECTED.")
+    # collect and validate all numeric fields
+    posted_chem = {"C": C, "Si": Si, "S": S, "P": P, "Cu": Cu, "Ni": Ni, "Mn": Mn, "Fe": Fe}
+    posted_phys = {"ad": ad, "flow": flow}
+    posted_psd  = {"p212": p212, "p180": p180, "n180p150": n180p150, "n150p75": n150p75, "n75p45": n75p45, "n45": n45}
 
+    errors = []
+    parsed = {}
+
+    for k, v in posted_chem.items():
+        val = _req_pos(k, v)
+        if val is None:
+            errors.append(f"{k} must be a number > 0.")
+        else:
+            parsed[k] = val
+
+    for k, v in posted_phys.items():
+        val = _req_pos(k.upper(), v)
+        if val is None:
+            errors.append(f"{k.upper()} must be a number > 0.")
+        else:
+            parsed[k] = val
+
+    for k, v in posted_psd.items():
+        label = { "p212":"+212", "p180":"+180", "n180p150":"-180+150",
+                  "n150p75":"-150+75", "n75p45":"-75+45", "n45":"-45" }[k]
+        val = _req_pos(label, v)
+        if val is None:
+            errors.append(f"{label} must be a number > 0.")
+        else:
+            parsed[k] = val
+
+    oxy_val = _req_pos("Oxygen", oxygen)
+    if oxy_val is None:
+        errors.append("Oxygen must be a number > 0.")
+
+    decision_norm = (decision or "").strip().upper()
+    if decision_norm not in {"APPROVED", "HOLD", "REJECTED"}:
+        errors.append("Decision must be one of: APPROVED, HOLD, REJECTED.")
+
+    if errors:
+        # Re-render the form with the user's values and an error line
+        with engine.begin() as conn:
+            header = conn.execute(text("""
+                SELECT id, date, lot_no, grade,
+                       COALESCE(weight_kg, weight, 0) AS weight_kg,
+                       ammonia_kg, rap_cost_per_kg, cost_per_kg, src_alloc_json, qa_status
+                FROM anneal_lots WHERE id = :id
+            """), {"id": anneal_id}).mappings().first()
+            if not header:
+                raise HTTPException(status_code=404, detail="Anneal lot not found")
+            header = dict(header)
+
+        # use what the user typed
+        chem_ctx = {k: posted_chem[k] for k in ["C","Si","S","P","Cu","Ni","Mn","Fe"]}
+        phys_ctx = {k: posted_phys[k] for k in ["ad","flow"]}
+        psd_ctx  = {k: posted_psd[k]  for k in ["p212","p180","n180p150","n150p75","n75p45","n45"]}
+
+        qa_ctx = {"decision": decision_norm, "oxygen": oxygen, "remarks": remarks}
+
+        return templates.TemplateResponse(
+            "anneal_qa_form.html",
+            {
+                "request": request,
+                "header": header,
+                "chem": chem_ctx,
+                "phys": phys_ctx,
+                "psd": psd_ctx,
+                "qa": qa_ctx,
+                "read_only": False,
+                "error_text": " | ".join(errors),   # <— one thin line
+            },
+            status_code=400,
+        )
+
+    # ---- save when valid ----
     with engine.begin() as conn:
         exists = conn.execute(text("SELECT 1 FROM anneal_lots WHERE id = :id"), {"id": anneal_id}).fetchone()
         if not exists:
             raise HTTPException(status_code=404, detail="Anneal lot not found.")
 
-        # insert anneal_qa header
         qa_row = conn.execute(text("""
             INSERT INTO anneal_qa (anneal_lot_id, decision, oxygen, remarks, created_at)
             VALUES (:lid, :decision, :oxygen, :remarks, NOW())
             RETURNING id
         """), {
             "lid": anneal_id,
-            "decision": decision,
-            "oxygen": float(oxygen),
+            "decision": decision_norm,
+            "oxygen": oxy_val,
             "remarks": remarks or "",
         }).mappings().first()
         qa_id = qa_row["id"]
 
-        # snapshot all fields as params
-        params_payload: Dict[str, float] = {
-            # chem
-            "C": float(C), "Si": float(Si), "S": float(S), "P": float(P),
-            "Cu": float(Cu), "Ni": float(Ni), "Mn": float(Mn), "Fe": float(Fe),
-            # phys
-            "ad": float(ad), "flow": float(flow),
-            # psd
-            "p212": float(p212), "p180": float(p180), "n180p150": float(n180p150),
-            "n150p75": float(n150p75), "n75p45": float(n75p45), "n45": float(n45),
+        # snapshot params (as strings or numbers—your anneal_qa_params accepts text)
+        params_payload = {
+            "C": parsed["C"], "Si": parsed["Si"], "S": parsed["S"], "P": parsed["P"],
+            "Cu": parsed["Cu"], "Ni": parsed["Ni"], "Mn": parsed["Mn"], "Fe": parsed["Fe"],
+            "ad": parsed["ad"], "flow": parsed["flow"],
+            "p212": parsed["p212"], "p180": parsed["p180"], "n180p150": parsed["n180p150"],
+            "n150p75": parsed["n150p75"], "n75p45": parsed["n75p45"], "n45": parsed["n45"],
         }
-        _upsert_qa_params(conn, qa_id, params_payload)
+        _upsert_qa_params(conn, qa_id, {k: f"{v:.4f}" for k,v in params_payload.items()})
 
-        # reflect status onto anneal_lots
         conn.execute(text("""
             UPDATE anneal_lots
             SET qa_status = :st
             WHERE id = :lid
-        """), {"st": decision, "lid": anneal_id})
+        """), {"st": decision_norm, "lid": anneal_id})
 
     return RedirectResponse("/qa-dashboard", status_code=303)
