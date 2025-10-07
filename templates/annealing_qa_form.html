@@ -1,33 +1,101 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>QA — {{ lot.lot_no }}</h2>
-<form method="post">
-  <label>Status</label>
-  <select name="qa_status">
-    <option value="APPROVED" {% if lot.qa_status=='APPROVED' %}selected{% endif %}>APPROVED</option>
-    <option value="HOLD" {% if lot.qa_status=='HOLD' %}selected{% endif %}>HOLD</option>
-    <option value="REJECTED" {% if lot.qa_status=='REJECTED' %}selected{% endif %}>REJECTED</option>
-  </select>
+<h2>Anneal QA — {{ header.lot_no }}</h2>
 
-  <label>Oxygen % *</label>
-  <input type="number" step="0.0001" min="0.0001" name="o_pct" value="{{ lot.o_pct or '' }}" required>
+<div class="toolbar" style="margin:10px 0; display:flex; gap:8px; flex-wrap:wrap">
+  <a class="btn" href="/qa-dashboard">← Back to QA Dashboard</a>
+  <a class="btn" href="/anneal/lots">Anneal Lots</a>
+  <a class="btn" href="/anneal/trace/{{ header.id }}" target="_blank">Trace</a>
+  <a class="btn" href="/anneal/pdf/{{ header.id }}" target="_blank">PDF</a>
+</div>
 
-  <label>Compressibility *</label>
-  <input type="number" step="0.0001" min="0.0001" name="compressibility" value="{{ lot.compressibility or '' }}" required>
+<p class="muted">
+  Date: {{ header.date }} |
+  Grade: {{ header.grade }} |
+  Weight: {{ '%.0f'|format(header.weight_kg or 0) }} kg |
+  Ammonia: {{ '%.2f'|format(header.ammonia_kg or 0) }} kg
+</p>
 
-  <div class="grid-2">
+<form method="post" action="/anneal/qa/{{ header.id }}">
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px">
     <div>
-      <label>C %</label><input type="number" step="0.0001" name="c_pct" value="{{ lot.c_pct or '' }}">
-      <label>Si %</label><input type="number" step="0.0001" name="si_pct" value="{{ lot.si_pct or '' }}">
-      <label>Mn %</label><input type="number" step="0.0001" name="mn_pct" value="{{ lot.mn_pct or '' }}">
+      <h3>Chemistry</h3>
+      <table class="table" style="width:auto">
+        <tr>
+          <th>C</th><td><input name="C"   value="{{ chem.C }}"></td>
+          <th>Si</th><td><input name="Si" value="{{ chem.Si }}"></td>
+        </tr>
+        <tr>
+          <th>S</th><td><input name="S"   value="{{ chem.S }}"></td>
+          <th>P</th><td><input name="P"   value="{{ chem.P }}"></td>
+        </tr>
+        <tr>
+          <th>Cu</th><td><input name="Cu" value="{{ chem.Cu }}"></td>
+          <th>Ni</th><td><input name="Ni" value="{{ chem.Ni }}"></td>
+        </tr>
+        <tr>
+          <th>Mn</th><td><input name="Mn" value="{{ chem.Mn }}"></td>
+          <th>Fe</th><td><input name="Fe" value="{{ chem.Fe }}"></td>
+        </tr>
+      </table>
     </div>
+
     <div>
-      <label>S %</label><input type="number" step="0.0001" name="s_pct" value="{{ lot.s_pct or '' }}">
-      <label>P %</label><input type="number" step="0.0001" name="p_pct" value="{{ lot.p_pct or '' }}">
-      <label>Remarks</label><input type="text" name="remarks" value="{{ lot.remarks or '' }}">
+      <h3>Physical / PSD</h3>
+      <table class="table" style="width:auto">
+        <tr>
+          <th>AD</th><td><input name="ad"   value="{{ phys.ad }}"></td>
+          <th>Flow</th><td><input name="flow" value="{{ phys.flow }}"></td>
+        </tr>
+      </table>
+
+      <h4 style="margin-top:10px">PSD</h4>
+      <table class="table" style="width:auto">
+        <tr><th>+212</th><td><input name="p212" value="{{ psd.p212 }}"></td></tr>
+        <tr><th>+180</th><td><input name="p180" value="{{ psd.p180 }}"></td></tr>
+        <tr><th>-180+150</th><td><input name="n180p150" value="{{ psd.n180p150 }}"></td></tr>
+        <tr><th>-150+75</th><td><input name="n150p75"  value="{{ psd.n150p75 }}"></td></tr>
+        <tr><th>-75+45</th><td><input name="n75p45"   value="{{ psd.n75p45 }}"></td></tr>
+        <tr><th>-45</th><td><input name="n45"        value="{{ psd.n45 }}"></td></tr>
+      </table>
     </div>
   </div>
 
-  <button class="btn btn-primary" type="submit">Save</button>
+  <div style="margin-top:12px">
+    <h3>Anneal-specific</h3>
+    <table class="table" style="width:auto">
+      <tr>
+        <th>Oxygen</th>
+        <td><input name="oxygen" value="{{ qa.oxygen or '' }}"></td>
+        <th>Decision</th>
+        <td>
+          <select name="decision">
+            {% set dec = (qa.decision or 'APPROVED')|upper %}
+            <option value="APPROVED" {{ 'selected' if dec=='APPROVED' else '' }}>APPROVED</option>
+            <option value="HOLD"      {{ 'selected' if dec=='HOLD' else '' }}>HOLD</option>
+            <option value="REJECTED"  {{ 'selected' if dec=='REJECTED' else '' }}>REJECTED</option>
+            <option value="PENDING"   {{ 'selected' if dec=='PENDING' else '' }}>PENDING</option>
+          </select>
+        </td>
+      </tr>
+      <tr>
+        <th>Remarks</th>
+        <td colspan="3"><input name="remarks" style="width:100%" value="{{ qa.remarks or '' }}"></td>
+      </tr>
+    </table>
+  </div>
+
+  <div style="margin-top:12px">
+    <button class="btn" type="submit">Save QA</button>
+    <a class="btn" href="/qa-dashboard">Cancel</a>
+  </div>
 </form>
+
+<style>
+  .muted{color:#6b7280}
+  .table{border-collapse:collapse}
+  .table th,.table td{border:1px solid #e5e7eb; padding:6px 8px}
+  input{padding:6px 8px; min-width:120px}
+  .btn{padding:8px 14px; background:#111827; color:#fff; border-radius:8px; text-decoration:none; border:0}
+</style>
 {% endblock %}
