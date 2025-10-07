@@ -22,6 +22,56 @@ templates = Jinja2Templates(directory="templates")
 TARGET_KG_PER_DAY = 6000.0
 ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
 
+from fastapi import Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse
+import inspect
+
+def _access_denied_html(title: str, line1: str, line2: str) -> str:
+    return f"""
+    <html>
+      <head>
+        <title>{title}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1"/>
+        <style>
+          body {{ font-family: system-ui, Arial, sans-serif; display:flex; align-items:center;
+                  justify-content:center; min-height: 60vh; }}
+          .card {{ border:1px solid #e5e7eb; border-radius:10px; padding:20px 24px; max-width: 520px; }}
+          h2 {{ color:#b91c1c; margin:0 0 8px 0; }}
+          p {{ margin: 6px 0; color:#374151; }}
+          a.btn {{ display:inline-block; margin-top:10px; padding:8px 14px; background:#111827; color:#fff;
+                   border-radius:8px; text-decoration:none; }}
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h2>{line1}</h2>
+          <p>{line2}</p>
+          <p><a class="btn" href="/">Go Home</a></p>
+        </div>
+      </body>
+    </html>
+    """
+
+async def anneal_guard(request: Request):
+    """
+    Wrap require_roles("admin","anneal","view") so that if it denies access,
+    we return a pretty HTML page (or can be extended to JSON if you like).
+    This avoids app-level exception handlers in main.py.
+    """
+    dep_fn = require_roles("admin", "anneal", "view")  # returns a dependency callable
+    try:
+        maybe_coro = dep_fn(request)
+        if inspect.isawaitable(maybe_coro):
+            await maybe_coro
+    except HTTPException as exc:
+        # Only customize 401/403; otherwise re-raise
+        if exc.status_code in (401, 403):
+            title = "Access Denied" if exc.status_code == 403 else "Unauthorized"
+            line1 = "Sorry, Access is denied to this login." if exc.status_code == 403 else "Sorry, you are not logged in."
+            line2 = "Please contact to Admin." if exc.status_code == 403 else "Please login and try again."
+            return HTMLResponse(_access_denied_html(title, line1, line2), status_code=exc.status_code)
+        raise
+
 # ---------- Helper: detect if the client expects JSON (AJAX/fetch) ----------
 def _wants_json(request: Request) -> bool:
     xrw = request.headers.get("X-Requested-With", "").lower()
@@ -843,8 +893,9 @@ def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | N
 async def anneal_trace_view(
     request: Request,
     anneal_id: int,
-    dep: None = Depends(require_roles("admin", "anneal", "view")),
+    _guard: Response | None = Depends(anneal_guard),  # <— new guard
 ):
+
     with engine.begin() as conn:
         header = _fetch_anneal_header(conn, anneal_id)
         if not header:
@@ -883,8 +934,9 @@ async def anneal_trace_view(
 async def anneal_pdf_view(
     request: Request,
     anneal_id: int,
-    dep: None = Depends(require_roles("admin", "anneal", "view")),
+    _guard: Response | None = Depends(anneal_guard),  # <— new guard
 ):
+
     with engine.begin() as conn:
         header = _fetch_anneal_header(conn, anneal_id)
         if not header:
