@@ -1951,13 +1951,14 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
-# ---------- Anneal QA helpers (robust casting) ----------
+# ---------- Anneal QA helpers (safe: parse in Python, not SQL) ----------
 from sqlalchemy import text
 
 def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
     """
-    Returns anneal lots in [s_date, e_date] with the latest QA attached.
-    All numeric fields are cast safely even if the DB holds '' (empty string).
+    Returns anneal lots with the latest QA (decision/oxygen/remarks).
+    We fetch numeric-like fields *as text* and convert in Python so that
+    blanks, commas, stray characters, etc. never crash the query.
     """
     rows = db.execute(text("""
         WITH latest AS (
@@ -1970,35 +1971,46 @@ def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
             al.id,
             al.lot_no,
             al.grade,
-            al.date AS db_date,
-
-            /* weight: prefer weight_kg, else weight; both tolerated as text/blank */
-            COALESCE(
-                NULLIF(TRIM(al.weight_kg::text), '')::double precision,
-                NULLIF(TRIM(al.weight::text),    '')::double precision,
-                0.0
-            ) AS weight_kg,
-
-            COALESCE(lat.decision, '') AS qa_status,
-
-            /* oxygen may be stored as text/blank; make it safe */
-            COALESCE(
-                NULLIF(TRIM(lat.oxygen::text), '')::double precision,
-                0.0
-            ) AS oxygen,
-
-            COALESCE(lat.remarks, '') AS remarks
+            al.date        AS db_date,
+            al.weight_kg::text AS weight_kg_txt,   -- fetch as text
+            al.weight::text    AS weight_txt,      -- ok if NULL/absent -> None
+            lat.decision       AS qa_status,
+            lat.oxygen::text   AS oxygen_txt,      -- fetch as text
+            lat.remarks        AS remarks
         FROM anneal_lots al
         LEFT JOIN latest lat
                ON lat.anneal_lot_id = al.id
         ORDER BY al.id DESC
     """)).mappings().all()
 
-    # Keep your date filtering behaviour exactly as before
-    today = dt.date.today()
+    def _to_float(x, default=0.0):
+        """Convert messy DB text to float: handles '', commas, spaces, None."""
+        if x is None:
+            return default
+        s = str(x).strip()
+        if not s:
+            return default
+        s = s.replace(",", ".")          # tolerate 10,5 -> 10.5
+        # keep digits, one dot, sign; drop anything else (e.g. units)
+        filtered = []
+        dot_seen = False
+        for ch in s:
+            if ch.isdigit() or ch in "+-":
+                filtered.append(ch)
+            elif ch == "." and not dot_seen:
+                filtered.append(ch)
+                dot_seen = True
+            # anything else ignored
+        s2 = "".join(filtered)
+        try:
+            return float(s2) if s2 not in ("", "+", "-", ".", "+.", "-.") else default
+        except Exception:
+            return default
+
     out = []
+    today = dt.date.today()
     for r in rows:
-        # prefer parsing from lot_no; fall back to db date
+        # date resolution: lot_no -> db_date -> today
         d = None
         try:
             d = lot_date_from_no(r["lot_no"])
@@ -2007,19 +2019,29 @@ def _anneal_rows_in_range(db, s_date: dt.date, e_date: dt.date) -> list[dict]:
         if not d:
             try:
                 dbd = r["db_date"]
-                if hasattr(dbd, "date"):
-                    d = dbd.date()
-                elif isinstance(dbd, str):
-                    d = dt.date.fromisoformat(dbd[:10])
+                d = dbd.date() if hasattr(dbd, "date") else dt.date.fromisoformat(str(dbd)[:10])
             except Exception:
-                d = None
-        if not d:
-            d = today
+                d = today
 
-        if s_date <= d <= e_date:
-            rec = dict(r)
-            rec["lot_date"] = d
-            out.append(rec)
+        if not (s_date <= d <= e_date):
+            continue
+
+        # weight: prefer weight_kg, else weight
+        w = _to_float(r.get("weight_kg_txt"), None)
+        if w is None or w == 0.0:
+            w = _to_float(r.get("weight_txt"), 0.0)
+
+        rec = {
+            "id":       r["id"],
+            "lot_no":   r["lot_no"],
+            "grade":    r.get("grade") or "",
+            "lot_date": d,
+            "weight_kg": w,
+            "qa_status": r.get("qa_status") or "",
+            "oxygen":   _to_float(r.get("oxygen_txt"), 0.0),
+            "remarks":  r.get("remarks") or "",
+        }
+        out.append(rec)
 
     return out
     
