@@ -1951,84 +1951,50 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
-# ---------- Anneal QA helpers (SAFE: parse in Python, not SQL) ----------
+# ---------- Anneal QA helper (DROP-IN) ----------
 from sqlalchemy import text
-from datetime import datetime, date
-import re
 
-def _anneal_rows_in_range(start_date: date, end_date: date) -> list[dict]:
+def _anneal_rows_in_range(db, start_date, end_date):
     """
-    Fetch anneal lots, attach latest QA (decision/oxygen/remarks).
-    - Oxygen is parsed in Python; non-numeric -> 0.0 (prevents SQL cast errors)
-    - Lot date parsed from lot_no (ANL-YYYYMMDD-XXX); fallback to al.date
-    - Returns keys: id, lot_no, grade, weight, date, qa_status, oxygen, remarks
+    Return anneal lots in [start_date, end_date] with latest QA info.
+    Field names match the dashboard & CSV:
+      - lot_date, weight_kg, grade, qa_status, oxygen, remarks
     """
-    sql = text("""
-        SELECT 
-            al.id,
-            al.lot_no,
-            COALESCE(al.grade, '')                                  AS grade,
-            COALESCE(al.weight_kg, al.weight, 0)::double precision  AS weight,
-            al.date,                                                -- DB date (as fallback)
-            lat.decision,                                           -- text
-            lat.oxygen,                                             -- keep as text; parse in Python
-            lat.remarks
-        FROM anneal_lots al
-        LEFT JOIN (
+    rows = db.execute(text("""
+        WITH latest AS (
             SELECT DISTINCT ON (anneal_lot_id)
                    id, anneal_lot_id, decision, oxygen, remarks
             FROM anneal_qa
             ORDER BY anneal_lot_id, id DESC
-        ) lat
-          ON lat.anneal_lot_id = al.id
-        ORDER BY al.id DESC
-    """)
-    with engine.begin() as conn:
-        rows = conn.execute(sql).mappings().all()
+        )
+        SELECT
+            al.id,
+            al.lot_no,
+            al.grade,
+            al.date                              AS lot_date,
+            COALESCE(al.weight_kg, al.weight, 0)::double precision AS weight_kg,
+            COALESCE(lat.decision, '')           AS qa_status,
+            COALESCE(lat.oxygen, 0)::double precision AS oxygen,
+            COALESCE(lat.remarks, '')            AS remarks
+        FROM anneal_lots al
+        LEFT JOIN latest lat
+               ON lat.anneal_lot_id = al.id
+        WHERE al.date BETWEEN :s AND :e
+        ORDER BY al.date DESC, al.id DESC
+    """), {"s": start_date, "e": end_date}).mappings().all()
 
-    out: list[dict] = []
+    # Already filtered by date in SQL; just normalize shapes
+    out = []
     for r in rows:
-        # --- parse lot date from lot_no (ANL-YYYYMMDD-XXX) ---
-        lot_date: date | None = None
-        ln = r.get("lot_no") or ""
-        m = re.search(r"-([0-9]{8})-", ln)  # capture 8 digits between hyphens
-        if m:
-            try:
-                lot_date = datetime.strptime(m.group(1), "%Y%m%d").date()
-            except Exception:
-                lot_date = None
-        if not lot_date:
-            # fallback to DB date (already date or datetime)
-            d = r.get("date")
-            if isinstance(d, datetime):
-                lot_date = d.date()
-            elif isinstance(d, date):
-                lot_date = d
-            else:
-                lot_date = None
-
-        # --- Python-side date filter (safe if lot_date is None) ---
-        if start_date and lot_date and lot_date < start_date:
-            continue
-        if end_date and lot_date and lot_date > end_date:
-            continue
-
-        # --- safe oxygen parse ---
-        oxy_txt = r.get("oxygen")
-        try:
-            oxygen = float(oxy_txt) if (oxy_txt is not None and str(oxy_txt).strip() != "") else 0.0
-        except Exception:
-            oxygen = 0.0
-
         out.append({
             "id": r["id"],
-            "lot_no": ln,
-            "grade": r.get("grade") or "",
-            "weight": float(r.get("weight") or 0.0),
-            "date": lot_date,                              # this is a date object (ok for Jinja)
-            "qa_status": (r.get("decision") or "PENDING"),
-            "oxygen": oxygen,
-            "remarks": r.get("remarks") or "",
+            "lot_no": r["lot_no"],
+            "grade": r["grade"],
+            "lot_date": r["lot_date"],
+            "weight_kg": float(r["weight_kg"] or 0.0),
+            "qa_status": r["qa_status"] or "PENDING",
+            "oxygen": float(r["oxygen"] or 0.0),
+            "remarks": r["remarks"] or "",
         })
     return out
     
@@ -2111,8 +2077,8 @@ def qa_dashboard(
     lots_vis  = [l for l in lots_all  if s_date <= _ld(l) <= e_date]
 
     # ---- NEW: Anneal lots in range (using stored al.date) ----
-    anneals_vis = _anneal_rows_in_range(db, s_date, e_date)
-
+    anneals_vis = _anneal_rows_in_range(s_date, e_date)
+    
     # KPI (This Month) – based on the month of the END date
     month_start = e_date.replace(day=1)
     month_end   = (month_start + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
@@ -2190,7 +2156,8 @@ def qa_export(
     lots_in  = [l for l in lots  if s <= _ldate(l) <= e]
 
     # ---- NEW: Anneal lots in range ----
-    anneals_in = _anneal_rows_in_range(db, s, e)
+    anneals_in = _anneal_rows_in_range(s, e)
+    
     # Pull latest param snapshot for these anneal lots
     anneal_ids = [a["id"] for a in anneals_in]
     anneal_params = _anneal_latest_params_map(db, anneal_ids)
