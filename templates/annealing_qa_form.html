@@ -97,11 +97,16 @@
     </table>
   </div>
 
-  <div style="margin-top:12px">
+<div style="margin-top:12px">
   <button class="btn" type="submit">Save QA</button>
   <a class="btn" href="/qa-dashboard">Cancel</a>
+  <a class="btn" href="/anneal/trace/{{ header.id }}" target="_blank">Trace</a>
+  <a class="btn" href="/anneal/pdf/{{ header.id }}" target="_blank">PDF</a>
 </div>
 
+{% if error_text %}
+  <p style="color:#b91c1c; margin-top:8px;">{{ error_text }}</p>
+{% endif %}  
 {% if error_text %}
   <div style="margin-top:8px;color:#b91c1c;font-size:13px;">
     {{ error_text }}
