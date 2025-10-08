@@ -216,13 +216,17 @@
         </td>
         <td><span class="chip">{{ al.qa_status or 'PENDING' }}</span></td>
         <td>{{ al.remarks or '' }}</td>
-        <td><a href="/anneal/qa/{{ al.id }}">QA</a></td>
+        <td>
+        <a href="/anneal/qa/{{ al.id }}">QA</a> 
+        <a href="/anneal/trace/{{ al.id }}" target="_blank">Trace</a> 
+        <a href="/anneal/pdf/{{ al.id }}" target="_blank">PDF</a>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% else %}
-    <p class="muted">No anneal lots in this date range.</p>
+    <tr><td colspan="8" class="muted">No anneal lots in this date range.</td></tr>
   {% endif %}
 </div>
   
