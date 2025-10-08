@@ -1273,3 +1273,83 @@ async def anneal_qa_save(
         """), {"st": decision_norm, "lid": anneal_id})
 
     return RedirectResponse("/qa-dashboard", status_code=303)
+
+# === Anneal Trace & PDF (drop-in, paste into annealing/routes.py) ===
+
+@router.get("/trace/{anneal_id}", response_class=HTMLResponse)
+async def anneal_trace_view(
+    request: Request,
+    anneal_id: int,
+    dep: None = Depends(require_roles("admin", "qa", "anneal", "view")),
+):
+    with engine.begin() as conn:
+        header = _fetch_anneal_header(conn, anneal_id)
+        if not header:
+            raise HTTPException(status_code=404, detail="Anneal lot not found")
+
+        # parse allocations safely
+        try:
+            alloc_map = json.loads(header.get("src_alloc_json") or "{}")
+        except Exception:
+            alloc_map = {}
+
+        rap_rows = _fetch_rap_rows_for_alloc(conn, alloc_map)
+
+        # enrich RAP rows with upstream heats and GRNs
+        for r in rap_rows:
+            r["heats"] = []
+            if r.get("base_lot_id"):
+                heats = _fetch_heats_for_base_lot(conn, r["base_lot_id"])
+                for h in heats:
+                    h["grns"] = _fetch_grns_for_heat(conn, h["heat_id"])
+                r["heats"] = heats
+
+        qa = _fetch_latest_anneal_qa_full(conn, anneal_id)
+
+    return templates.TemplateResponse(
+        "anneal_trace.html",
+        {
+            "request": request,
+            "header": header,     # Anneal lot header
+            "rap_rows": rap_rows, # RAP → Heats → GRNs
+            "qa": qa,             # Latest QA + params (optional)
+        },
+    )
+
+
+@router.get("/pdf/{anneal_id}", response_class=HTMLResponse)
+async def anneal_pdf_view(
+    request: Request,
+    anneal_id: int,
+    dep: None = Depends(require_roles("admin", "qa", "anneal", "view")),
+):
+    with engine.begin() as conn:
+        header = _fetch_anneal_header(conn, anneal_id)
+        if not header:
+            raise HTTPException(status_code=404, detail="Anneal lot not found")
+
+        try:
+            alloc_map = json.loads(header.get("src_alloc_json") or "{}")
+        except Exception:
+            alloc_map = {}
+
+        rap_rows = _fetch_rap_rows_for_alloc(conn, alloc_map)
+        for r in rap_rows:
+            r["heats"] = []
+            if r.get("base_lot_id"):
+                heats = _fetch_heats_for_base_lot(conn, r["base_lot_id"])
+                for h in heats:
+                    h["grns"] = _fetch_grns_for_heat(conn, h["heat_id"])
+                r["heats"] = heats
+
+        qa = _fetch_latest_anneal_qa_full(conn, anneal_id)
+
+    return templates.TemplateResponse(
+        "anneal_pdf.html",
+        {
+            "request": request,
+            "header": header,
+            "rap_rows": rap_rows,
+            "qa": qa,
+        },
+    )
