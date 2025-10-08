@@ -1951,74 +1951,86 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
-# ---------- Anneal QA helpers (safe: parse in Python, not SQL) ----------
+# ---------- Anneal QA helpers (SAFE: parse in Python, not SQL) ----------
 from sqlalchemy import text
-from datetime import datetime
+from datetime import datetime, date
+import re
 
-def _anneal_rows_in_range(start_date, end_date):
+def _anneal_rows_in_range(start_date: date, end_date: date) -> list[dict]:
     """
-    Fetch anneal lots within the date range, including latest QA decision,
-    oxygen, and remarks. Fixes the missing oxygen column issue.
+    Fetch anneal lots, attach latest QA (decision/oxygen/remarks).
+    - Oxygen is parsed in Python; non-numeric -> 0.0 (prevents SQL cast errors)
+    - Lot date parsed from lot_no (ANL-YYYYMMDD-XXX); fallback to al.date
+    - Returns keys: id, lot_no, grade, weight, date, qa_status, oxygen, remarks
     """
     sql = text("""
-    SELECT 
-        al.id,
-        al.lot_no,
-        al.grade,
-        COALESCE(al.weight_kg, al.weight, 0)::double precision AS weight,
-        al.date,
-        lat.decision AS qa_status,
-        lat.oxygen::double precision AS oxygen,
-        lat.remarks
-    FROM anneal_lots al
-    LEFT JOIN (
-        SELECT DISTINCT ON (anneal_lot_id)
-            id,
-            anneal_lot_id,
-            decision,
-            remarks,
-            oxygen
-        FROM anneal_qa
-        ORDER BY anneal_lot_id, id DESC
-    ) lat
-    ON lat.anneal_lot_id = al.id
-    ORDER BY al.id DESC
+        SELECT 
+            al.id,
+            al.lot_no,
+            COALESCE(al.grade, '')                                  AS grade,
+            COALESCE(al.weight_kg, al.weight, 0)::double precision  AS weight,
+            al.date,                                                -- DB date (as fallback)
+            lat.decision,                                           -- text
+            lat.oxygen,                                             -- keep as text; parse in Python
+            lat.remarks
+        FROM anneal_lots al
+        LEFT JOIN (
+            SELECT DISTINCT ON (anneal_lot_id)
+                   id, anneal_lot_id, decision, oxygen, remarks
+            FROM anneal_qa
+            ORDER BY anneal_lot_id, id DESC
+        ) lat
+          ON lat.anneal_lot_id = al.id
+        ORDER BY al.id DESC
     """)
     with engine.begin() as conn:
         rows = conn.execute(sql).mappings().all()
 
-    result = []
+    out: list[dict] = []
     for r in rows:
-        # Parse date from lot_no if possible, else fallback to DB date
-        lot_date = None
-        try:
-            if r["lot_no"]:
-                lot_date = datetime.strptime(r["lot_no"].split("-")[1], "%y%m%d")
-        except Exception:
-            lot_date = None
-        if not lot_date:
+        # --- parse lot date from lot_no (ANL-YYYYMMDD-XXX) ---
+        lot_date: date | None = None
+        ln = r.get("lot_no") or ""
+        m = re.search(r"-([0-9]{8})-", ln)  # capture 8 digits between hyphens
+        if m:
             try:
-                lot_date = r["date"]
+                lot_date = datetime.strptime(m.group(1), "%Y%m%d").date()
             except Exception:
                 lot_date = None
+        if not lot_date:
+            # fallback to DB date (already date or datetime)
+            d = r.get("date")
+            if isinstance(d, datetime):
+                lot_date = d.date()
+            elif isinstance(d, date):
+                lot_date = d
+            else:
+                lot_date = None
 
-        # Apply Python-side date filtering
+        # --- Python-side date filter (safe if lot_date is None) ---
         if start_date and lot_date and lot_date < start_date:
             continue
         if end_date and lot_date and lot_date > end_date:
             continue
 
-        result.append({
+        # --- safe oxygen parse ---
+        oxy_txt = r.get("oxygen")
+        try:
+            oxygen = float(oxy_txt) if (oxy_txt is not None and str(oxy_txt).strip() != "") else 0.0
+        except Exception:
+            oxygen = 0.0
+
+        out.append({
             "id": r["id"],
-            "lot_no": r["lot_no"],
-            "grade": r["grade"],
-            "weight": r["weight"],
-            "date": lot_date,
-            "qa_status": r["qa_status"] or "PENDING",
-            "oxygen": r["oxygen"] or 0.0,
-            "remarks": r["remarks"] or ""
+            "lot_no": ln,
+            "grade": r.get("grade") or "",
+            "weight": float(r.get("weight") or 0.0),
+            "date": lot_date,                              # this is a date object (ok for Jinja)
+            "qa_status": (r.get("decision") or "PENDING"),
+            "oxygen": oxygen,
+            "remarks": r.get("remarks") or "",
         })
-    return result
+    return out
     
 def _anneal_latest_params_map(db, anneal_ids: list[int]) -> dict[int, dict[str, str]]:
     """
