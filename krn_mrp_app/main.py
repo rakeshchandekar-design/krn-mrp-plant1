@@ -2077,7 +2077,7 @@ def qa_dashboard(
     lots_vis  = [l for l in lots_all  if s_date <= _ld(l) <= e_date]
 
     # ---- NEW: Anneal lots in range (using stored al.date) ----
-    anneals_vis = _anneal_rows_in_range(s_date, e_date)
+    anneals_vis = _anneal_rows_in_range(db, s_date, e_date)
     
     # KPI (This Month) – based on the month of the END date
     month_start = e_date.replace(day=1)
@@ -2156,7 +2156,7 @@ def qa_export(
     lots_in  = [l for l in lots  if s <= _ldate(l) <= e]
 
     # ---- NEW: Anneal lots in range ----
-    anneals_in = _anneal_rows_in_range(s, e)
+    anneals_in = _anneal_rows_in_range(db, s, e)
     
     # Pull latest param snapshot for these anneal lots
     anneal_ids = [a["id"] for a in anneals_in]
