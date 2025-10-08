@@ -1951,7 +1951,7 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
-# ---------- Anneal QA helper (DROP-IN) ----------
+# ---------- Anneal QA helper (DROP-IN, FIXED) ----------
 from sqlalchemy import text
 
 def _anneal_rows_in_range(db, start_date, end_date):
@@ -1959,6 +1959,7 @@ def _anneal_rows_in_range(db, start_date, end_date):
     Return anneal lots in [start_date, end_date] with latest QA info.
     Field names match the dashboard & CSV:
       - lot_date, weight_kg, grade, qa_status, oxygen, remarks
+    Safe guards: filters out NULL/blank dates to avoid Postgres errors.
     """
     rows = db.execute(text("""
         WITH latest AS (
@@ -1973,17 +1974,18 @@ def _anneal_rows_in_range(db, start_date, end_date):
             al.grade,
             al.date                              AS lot_date,
             COALESCE(al.weight_kg, al.weight, 0)::double precision AS weight_kg,
-            COALESCE(lat.decision, '')           AS qa_status,
+            COALESCE(lat.decision, 'PENDING')   AS qa_status,
             COALESCE(lat.oxygen, 0)::double precision AS oxygen,
-            COALESCE(lat.remarks, '')            AS remarks
+            COALESCE(lat.remarks, '')           AS remarks
         FROM anneal_lots al
         LEFT JOIN latest lat
                ON lat.anneal_lot_id = al.id
-        WHERE al.date BETWEEN :s AND :e
+        WHERE al.date IS NOT NULL
+          AND al.date::text <> ''
+          AND al.date BETWEEN :s AND :e
         ORDER BY al.date DESC, al.id DESC
     """), {"s": start_date, "e": end_date}).mappings().all()
 
-    # Already filtered by date in SQL; just normalize shapes
     out = []
     for r in rows:
         out.append({
@@ -2200,15 +2202,18 @@ def qa_export(
             f"{(chem.fe if chem else '')}\n"
         )
 
-    # ---- NEW: Anneal Lots ----
+   # ---- NEW: Anneal Lots ----
     for a in anneals_in:
-        # Map params (if any) onto chem columns for CSV
         p = anneal_params.get(a["id"], {})
-        # note: CSV only has chemistry columns; oxygen is not in header,
-        # but you can add a new column later if needed
+
+        oxygen_str = ""
+        if a.get("oxygen") and float(a["oxygen"]) != 0.0:
+            oxygen_str = f"{float(a['oxygen']):.3f}"
+
         w(
-            f"ANNEAL,{a['lot_no']},{(a['lot_date'] or today).isoformat()},{'ANNEAL'},"
+            f"ANNEAL,{a['lot_no']},{(a['lot_date'] or today).isoformat()},{a.get('grade','')},"
             f"{float(a['weight_kg'] or 0.0):.1f},{a.get('qa_status','')},"
+            f"{oxygen_str},"
             f"{p.get('C','')},"
             f"{p.get('Si','')},"
             f"{p.get('S','')},"
