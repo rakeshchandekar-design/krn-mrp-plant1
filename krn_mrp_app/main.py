@@ -1951,15 +1951,14 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
 
-# ---------- Anneal QA helper (DROP-IN, FIXED) ----------
+# ---------- Anneal QA helper (robust date filtering + safe oxygen cast) ----------
 from sqlalchemy import text
 
 def _anneal_rows_in_range(db, start_date, end_date):
     """
     Return anneal lots in [start_date, end_date] with latest QA info.
-    Field names match the dashboard & CSV:
-      - lot_date, weight_kg, grade, qa_status, oxygen, remarks
-    Safe guards: filters out NULL/blank dates to avoid Postgres errors.
+    Works whether anneal_lots.date is DATE or TEXT (with some blanks),
+    and tolerates legacy blank oxygen values.
     """
     rows = db.execute(text("""
         WITH latest AS (
@@ -1972,19 +1971,23 @@ def _anneal_rows_in_range(db, start_date, end_date):
             al.id,
             al.lot_no,
             al.grade,
-            al.date                              AS lot_date,
+            -- if al.weight_kg missing, fall back to al.weight
             COALESCE(al.weight_kg, al.weight, 0)::double precision AS weight_kg,
-            COALESCE(lat.decision, 'PENDING')   AS qa_status,
-            COALESCE(lat.oxygen, 0)::double precision AS oxygen,
-            COALESCE(lat.remarks, '')           AS remarks
+            -- normalize date regardless of column type (DATE or TEXT)
+            -- this casts to text then back to date safely after empty-check
+            (NULLIF(al.date::text, ''))::date                     AS lot_date,
+            COALESCE(lat.decision, 'PENDING')                     AS qa_status,
+            -- tolerate legacy '' oxygen values
+            COALESCE(NULLIF(lat.oxygen::text, '')::double precision, 0.0) AS oxygen,
+            COALESCE(lat.remarks, '')                             AS remarks
         FROM anneal_lots al
         LEFT JOIN latest lat
                ON lat.anneal_lot_id = al.id
-        WHERE al.date IS NOT NULL
-          AND al.date::text <> ''
-          AND al.date BETWEEN :s AND :e
-        ORDER BY al.date DESC, al.id DESC
-    """), {"s": start_date, "e": end_date}).mappings().all()
+        WHERE
+            NULLIF(al.date::text, '') IS NOT NULL
+            AND (NULLIF(al.date::text, '')::date BETWEEN :s AND :e)
+        ORDER BY lot_date DESC, al.id DESC
+    """)), {"s": start_date, "e": end_date}.mappings().all()
 
     out = []
     for r in rows:
@@ -1992,7 +1995,7 @@ def _anneal_rows_in_range(db, start_date, end_date):
             "id": r["id"],
             "lot_no": r["lot_no"],
             "grade": r["grade"],
-            "lot_date": r["lot_date"],
+            "lot_date": r["lot_date"],                 # already a proper date
             "weight_kg": float(r["weight_kg"] or 0.0),
             "qa_status": r["qa_status"] or "PENDING",
             "oxygen": float(r["oxygen"] or 0.0),
