@@ -1123,7 +1123,7 @@ async def anneal_qa_form(
     psd  = {k: _pick(k, "psd") for k in PSD_KEYS}
 
     return templates.TemplateResponse(
-        "anneal_qa_form.html",
+        "annealing_qa_form.html",
         {
             "request": request,
             "header": header,  # <-- present for template
@@ -1224,7 +1224,7 @@ async def anneal_qa_save(
         qa_ctx = {"decision": decision_norm, "oxygen": oxygen, "remarks": remarks}
 
         return templates.TemplateResponse(
-            "anneal_qa_form.html",
+            "annealing_qa_form.html",
             {
                 "request": request,
                 "header": header,
