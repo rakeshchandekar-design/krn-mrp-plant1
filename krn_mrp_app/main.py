@@ -1956,9 +1956,8 @@ from sqlalchemy import text
 
 def _anneal_rows_in_range(db, start_date, end_date):
     """
-    Return anneal lots in [start_date, end_date] with latest QA info.
-    Works whether anneal_lots.date is DATE or TEXT (with some blanks),
-    and tolerates legacy blank oxygen values.
+    Fetch anneal lots with latest QA snapshot in the given date range.
+    Safe against blank al.date and '' oxygen values.
     """
     rows = db.execute(text("""
         WITH latest AS (
@@ -1971,13 +1970,11 @@ def _anneal_rows_in_range(db, start_date, end_date):
             al.id,
             al.lot_no,
             al.grade,
-            -- if al.weight_kg missing, fall back to al.weight
             COALESCE(al.weight_kg, al.weight, 0)::double precision AS weight_kg,
-            -- normalize date regardless of column type (DATE or TEXT)
-            -- this casts to text then back to date safely after empty-check
+            -- cast date safely (works if al.date is text or date)
             (NULLIF(al.date::text, ''))::date                     AS lot_date,
             COALESCE(lat.decision, 'PENDING')                     AS qa_status,
-            -- tolerate legacy '' oxygen values
+            -- oxygen: blank strings -> NULL -> 0.0
             COALESCE(NULLIF(lat.oxygen::text, '')::double precision, 0.0) AS oxygen,
             COALESCE(lat.remarks, '')                             AS remarks
         FROM anneal_lots al
@@ -1987,7 +1984,7 @@ def _anneal_rows_in_range(db, start_date, end_date):
             NULLIF(al.date::text, '') IS NOT NULL
             AND (NULLIF(al.date::text, '')::date BETWEEN :s AND :e)
         ORDER BY lot_date DESC, al.id DESC
-    """)), {"s": start_date, "e": end_date}.mappings().all()
+    """), {"s": start_date, "e": end_date}).mappings().all()
 
     out = []
     for r in rows:
@@ -1995,7 +1992,7 @@ def _anneal_rows_in_range(db, start_date, end_date):
             "id": r["id"],
             "lot_no": r["lot_no"],
             "grade": r["grade"],
-            "lot_date": r["lot_date"],                 # already a proper date
+            "lot_date": r["lot_date"],
             "weight_kg": float(r["weight_kg"] or 0.0),
             "qa_status": r["qa_status"] or "PENDING",
             "oxygen": float(r["oxygen"] or 0.0),
