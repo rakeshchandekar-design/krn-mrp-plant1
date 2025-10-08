@@ -1957,9 +1957,23 @@ from sqlalchemy import text
 def _anneal_rows_in_range(db, start_date, end_date):
     """
     Fetch anneal lots with latest QA snapshot in the given date range.
-    Safe against blank al.date and '' oxygen values.
+    Works if table has only weight_kg, or both weight_kg and weight.
     """
-    rows = db.execute(text("""
+
+    # First check if `weight` column exists
+    has_weight = db.execute(text("""
+        SELECT COUNT(*) 
+        FROM information_schema.columns 
+        WHERE table_name='anneal_lots' AND column_name='weight'
+    """)).scalar() > 0
+
+    # Build SQL depending on schema
+    if has_weight:
+        weight_expr = "COALESCE(al.weight_kg, al.weight, 0)::double precision"
+    else:
+        weight_expr = "COALESCE(al.weight_kg, 0)::double precision"
+
+    sql = f"""
         WITH latest AS (
             SELECT DISTINCT ON (anneal_lot_id)
                    id, anneal_lot_id, decision, oxygen, remarks
@@ -1970,13 +1984,11 @@ def _anneal_rows_in_range(db, start_date, end_date):
             al.id,
             al.lot_no,
             al.grade,
-            COALESCE(al.weight_kg, al.weight, 0)::double precision AS weight_kg,
-            -- cast date safely (works if al.date is text or date)
-            (NULLIF(al.date::text, ''))::date                     AS lot_date,
-            COALESCE(lat.decision, 'PENDING')                     AS qa_status,
-            -- oxygen: blank strings -> NULL -> 0.0
+            {weight_expr}                               AS weight_kg,
+            (NULLIF(al.date::text, ''))::date           AS lot_date,
+            COALESCE(lat.decision, 'PENDING')           AS qa_status,
             COALESCE(NULLIF(lat.oxygen::text, '')::double precision, 0.0) AS oxygen,
-            COALESCE(lat.remarks, '')                             AS remarks
+            COALESCE(lat.remarks, '')                   AS remarks
         FROM anneal_lots al
         LEFT JOIN latest lat
                ON lat.anneal_lot_id = al.id
@@ -1984,7 +1996,9 @@ def _anneal_rows_in_range(db, start_date, end_date):
             NULLIF(al.date::text, '') IS NOT NULL
             AND (NULLIF(al.date::text, '')::date BETWEEN :s AND :e)
         ORDER BY lot_date DESC, al.id DESC
-    """), {"s": start_date, "e": end_date}).mappings().all()
+    """
+
+    rows = db.execute(text(sql), {"s": start_date, "e": end_date}).mappings().all()
 
     out = []
     for r in rows:
