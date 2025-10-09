@@ -455,45 +455,6 @@ async def anneal_lots(
     })
 
 
-@router.get("/qa/{lot_id}", response_class=HTMLResponse)
-async def anneal_qa_get(lot_id: int, request: Request, dep: None = Depends(require_roles("qa","admin"))):
-    with engine.begin() as conn:
-        lot = conn.execute(text("SELECT * FROM anneal_lots WHERE id=:i"), {"i": lot_id}).mappings().first()
-    if not lot:
-        raise HTTPException(status_code=404)
-    return templates.TemplateResponse("annealing_qa_form.html", {"request": request, "lot": lot})
-
-@router.post("/qa/{lot_id}")
-async def anneal_qa_post(lot_id: int, request: Request, dep: None = Depends(require_roles("qa","admin"))):
-    form = await request.form()
-    try:
-        o_pct = float(form["o_pct"]); comp = float(form["compressibility"])
-        if o_pct <= 0 or comp <= 0:
-            raise ValueError("Oxygen% and Compressibility must be > 0")
-    except Exception:
-        return RedirectResponse(url=f"/anneal/qa/{lot_id}", status_code=303)
-
-    fields = {
-        "qa_status": form.get("qa_status","APPROVED"),
-        "o_pct": o_pct, "compressibility": comp,
-        "c_pct": form.get("c_pct"), "si_pct": form.get("si_pct"),
-        "mn_pct": form.get("mn_pct"), "s_pct": form.get("s_pct"),
-        "p_pct": form.get("p_pct"), "remarks": form.get("remarks")
-    }
-    # build update SQL
-    sets = []
-    params = {"id": lot_id}
-    for k,v in fields.items():
-        if v is not None and v != "":
-            sets.append(f"{k} = :{k}")
-            params[k] = float(v) if k.endswith("_pct") or k in ("compressibility",) else v
-    if sets:
-        sql = text(f"UPDATE anneal_lots SET {', '.join(sets)} WHERE id=:id")
-        with engine.begin() as conn:
-            conn.execute(sql, params)
-
-    return RedirectResponse(url="/anneal/lots", status_code=303)
-
 from datetime import date, timedelta, datetime  # make sure datetime is imported
 
 @router.get("/downtime", response_class=HTMLResponse)
