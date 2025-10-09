@@ -1061,7 +1061,7 @@ async def anneal_qa_form(
     with engine.begin() as conn:
         header_row = conn.execute(text("""
             SELECT id, date, lot_no, grade,
-                   COALESCE(weight_kg, weight, 0) AS weight_kg,
+                   COALESCE(al.weight_kg, 0) AS weight_kg,
                    ammonia_kg, rap_cost_per_kg, cost_per_kg, src_alloc_json, qa_status
             FROM anneal_lots WHERE id = :id
         """), {"id": anneal_id}).mappings().first()
