@@ -1263,9 +1263,20 @@ async def anneal_trace_view(
             r["heats"] = []
             if r.get("base_lot_id"):
                 heats = _fetch_heats_for_base_lot(conn, r["base_lot_id"])
-                for h in heats:
-                    h["grns"] = _fetch_grns_for_heat(conn, h["heat_id"])
-                r["heats"] = heats
+        for h in heats:
+            grns = _fetch_grns_for_heat(conn, h["heat_id"])
+            h["grns"] = grns
+
+            # --- NEW: fallback for Used Qty ---
+            # If used_qty is NULL/0, compute from GRNs
+            try:
+                uq = float(h.get("used_qty") or 0.0)
+            except Exception:
+                uq = 0.0
+            if uq <= 0.0:
+                uq = sum(float(g.get("qty_kg") or 0.0) for g in grns)
+            h["used_qty"] = uq
+        r["heats"] = heats
 
         qa = _fetch_latest_anneal_qa_full(conn, anneal_id)
 
