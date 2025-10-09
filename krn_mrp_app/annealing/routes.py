@@ -1004,7 +1004,7 @@ def _anneal_default_blocks(conn, header: Dict[str, Any]) -> Dict[str, Dict[str, 
 
 def _get_latest_anneal_qa(conn, anneal_id: int) -> Dict[str, Any] | None:
     row = conn.execute(text("""
-        SELECT id, anneal_lot_id, decision, oxygen, remarks, created_at
+        SELECT id, anneal_lot_id, decision, oxygen, remarks
         FROM anneal_qa
         WHERE anneal_lot_id = :lid
         ORDER BY id DESC
@@ -1208,7 +1208,7 @@ async def anneal_qa_save(
             raise HTTPException(status_code=404, detail="Anneal lot not found.")
 
         qa_row = conn.execute(text("""
-            INSERT INTO anneal_qa (anneal_lot_id, decision, oxygen, remarks, created_at)
+            INSERT INTO anneal_qa (anneal_lot_id, decision, oxygen, remarks)
             VALUES (:lid, :decision, :oxygen, :remarks, NOW())
             RETURNING id
         """), {
