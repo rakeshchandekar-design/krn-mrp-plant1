@@ -1955,64 +1955,64 @@ def atom_downtime_export(db: Session = Depends(get_db)):
 from sqlalchemy import text
 
 def _anneal_rows_in_range(db, start_date, end_date):
-    """
-    Fetch anneal lots with latest QA snapshot in the given date range.
-    Works if table has only weight_kg, or both weight_kg and weight.
-    """
+    # Figure out which FK column exists in anneal_qa: anneal_lot_id or anneal_id
+    qa_fk = db.execute(text("""
+        SELECT CASE
+          WHEN EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='anneal_qa' AND column_name='anneal_lot_id'
+          ) THEN 'anneal_lot_id'
+          WHEN EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='anneal_qa' AND column_name='anneal_id'
+          ) THEN 'anneal_id'
+          ELSE NULL
+        END
+    """)).scalar()
 
-    # First check if `weight` column exists
-    has_weight = db.execute(text("""
-        SELECT COUNT(*) 
-        FROM information_schema.columns 
-        WHERE table_name='anneal_lots' AND column_name='weight'
-    """)).scalar() > 0
+    if not qa_fk:
+        # Fail early with a clear message instead of a cryptic f405
+        raise RuntimeError("anneal_qa must have anneal_lot_id or anneal_id")
 
-    # Build SQL depending on schema
-    if has_weight:
-        weight_expr = "COALESCE(al.weight_kg, al.weight, 0)::double precision"
-    else:
-        weight_expr = "COALESCE(al.weight_kg, 0)::double precision"
-
-    sql = f"""
+    # If the table uses anneal_id, alias it out as anneal_lot_id so the rest of the code can stay the same
+    latest_sql = f"""
         WITH latest AS (
-            SELECT DISTINCT ON (anneal_lot_id)
-                   id, anneal_lot_id, decision, oxygen, remarks
+            SELECT DISTINCT ON ({qa_fk})
+                   id,
+                   {qa_fk} AS anneal_lot_id,
+                   decision,
+                   oxygen,
+                   remarks
             FROM anneal_qa
-            ORDER BY anneal_lot_id, id DESC
+            ORDER BY {qa_fk}, id DESC
         )
         SELECT
             al.id,
             al.lot_no,
             al.grade,
-            {weight_expr}                               AS weight_kg,
-            (NULLIF(al.date::text, ''))::date           AS lot_date,
-            COALESCE(lat.decision, 'PENDING')           AS qa_status,
-            COALESCE(NULLIF(lat.oxygen::text, '')::double precision, 0.0) AS oxygen,
-            COALESCE(lat.remarks, '')                   AS remarks
+            COALESCE(al.weight_kg, 0)::double precision      AS weight_kg,
+            (NULLIF(al.date::text, ''))::date                AS lot_date,
+            COALESCE(lat.decision, 'PENDING')                AS qa_status,
+            COALESCE(NULLIF(lat.oxygen::text,'')::float8,0)  AS oxygen,
+            COALESCE(lat.remarks, '')                        AS remarks
         FROM anneal_lots al
         LEFT JOIN latest lat
                ON lat.anneal_lot_id = al.id
-        WHERE
-            NULLIF(al.date::text, '') IS NOT NULL
-            AND (NULLIF(al.date::text, '')::date BETWEEN :s AND :e)
+        WHERE (NULLIF(al.date::text, ''))::date BETWEEN :s AND :e
         ORDER BY lot_date DESC, al.id DESC
     """
 
-    rows = db.execute(text(sql), {"s": start_date, "e": end_date}).mappings().all()
-
-    out = []
-    for r in rows:
-        out.append({
-            "id": r["id"],
-            "lot_no": r["lot_no"],
-            "grade": r["grade"],
-            "lot_date": r["lot_date"],
-            "weight_kg": float(r["weight_kg"] or 0.0),
-            "qa_status": r["qa_status"] or "PENDING",
-            "oxygen": float(r["oxygen"] or 0.0),
-            "remarks": r["remarks"] or "",
-        })
-    return out
+    rows = db.execute(text(latest_sql), {"s": start_date, "e": end_date}).mappings().all()
+    return [{
+        "id": r["id"],
+        "lot_no": r["lot_no"],
+        "grade": r["grade"],
+        "lot_date": r["lot_date"],
+        "weight_kg": float(r["weight_kg"] or 0.0),
+        "qa_status": r["qa_status"] or "PENDING",
+        "oxygen": float(r["oxygen"] or 0.0),
+        "remarks": r["remarks"] or "",
+    } for r in rows]
     
 def _anneal_latest_params_map(db, anneal_ids: list[int]) -> dict[int, dict[str, str]]:
     """
