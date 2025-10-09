@@ -1061,9 +1061,10 @@ async def anneal_qa_form(
     with engine.begin() as conn:
         header_row = conn.execute(text("""
         SELECT id, date, lot_no, grade,
-        COALESCE(al.weight_kg, 0) AS weight_kg,
+        COALESCE(weight_kg, 0) AS weight_kg,
         ammonia_kg, rap_cost_per_kg, cost_per_kg, src_alloc_json, qa_status
-        FROM anneal_lots WHERE id = :id
+        FROM anneal_lots
+        WHERE id = :id
         """), {"id": anneal_id}).mappings().first()
 
         if not header_row:
@@ -1168,10 +1169,11 @@ async def anneal_qa_save(
         # Re-render the form with the user's values and an error line
         with engine.begin() as conn:
             header = conn.execute(text("""
-                SELECT id, date, lot_no, grade,
-                COALESCE(al.weight_kg, 0) AS weight_kg,
-                ammonia_kg, rap_cost_per_kg, cost_per_kg, src_alloc_json, qa_status
-                FROM anneal_lots WHERE id = :id
+            SELECT id, date, lot_no, grade,
+            COALESCE(weight_kg, 0) AS weight_kg,
+            ammonia_kg, rap_cost_per_kg, cost_per_kg, src_alloc_json, qa_status
+            FROM anneal_lots
+            WHERE id = :id
             """), {"id": anneal_id}).mappings().first()
             if not header:
                 raise HTTPException(status_code=404, detail="Anneal lot not found")
