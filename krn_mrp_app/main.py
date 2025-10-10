@@ -2068,6 +2068,8 @@ def qa_dashboard(
         return RedirectResponse("/login", status_code=303)
 
     today = dt.date.today()
+    # detect reset (show all lots) if ?all=1
+    show_all = (request.query_params.get("all") == "1")
 
     # resolve range (default = today)
     s_iso = start or today.isoformat()
@@ -2089,11 +2091,14 @@ def qa_dashboard(
     def _ld(l: Lot) -> dt.date:
         return lot_date_from_no(l.lot_no) or today
 
-    heats_vis = [h for h in heats_all if s_date <= _hd(h) <= e_date]
-    lots_vis  = [l for l in lots_all  if s_date <= _ld(l) <= e_date]
-
-    # ---- NEW: Anneal lots in range (using stored al.date) ----
-    anneals_vis = _anneal_rows_in_range(db, s_date, e_date)
+    if show_all:
+        heats_vis = heats_all
+        lots_vis  = lots_all
+        anneals_vis = _anneal_rows_in_range(db, dt.date(1900, 1, 1), dt.date(3000, 1, 1))
+    else:
+        heats_vis = [h for h in heats_all if s_date <= _hd(h) <= e_date]
+        lots_vis  = [l for l in lots_all  if s_date <= _ld(l) <= e_date]
+        anneals_vis = _anneal_rows_in_range(db, s_date, e_date)
     
     # KPI (This Month) – based on the month of the END date
     month_start = e_date.replace(day=1)
@@ -2143,8 +2148,8 @@ def qa_dashboard(
             "kpi_today_count":    int(todays_count),
 
             # toolbar defaults
-            "start": s_iso,
-            "end": e_iso,
+            "start": "" if show_all else s_iso,
+            "end": "" if show_all else e_iso,
             "today_iso": today.isoformat(),
         },
     )
