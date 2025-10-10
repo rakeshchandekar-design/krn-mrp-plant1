@@ -123,7 +123,7 @@
 
     <button class="btn" type="submit">Fetch</button>
     <a class="btn secondary" href="/qa-dashboard?start={{ today_iso }}&end={{ today_iso }}">Today</a>
-    <a class="btn ghost" href="/qa-dashboard?start={{ today_iso }}&end={{ today_iso }}">Reset</a>
+    <a class="btn ghost" href="/qa-dashboard?all=1">Reset</a>
     <a class="btn" href="/qa/export?start={{ start or today_iso }}&end={{ end or today_iso }}">Download CSV</a>
     <input type="hidden" value="{{ today_iso }}">
   </form>
