@@ -78,39 +78,64 @@
   <div class="grid">
     <!-- Left: month KPIs -->
     <div class="card">
-      <h2>KPIs (This Month)</h2>
-      <div class="kpi">
-        <div class="box">
-          <div class="muted">Approved Lot Qty (kg)</div>
-          <div class="val">{{ '%.1f' % (kpi_approved_month or 0) }}</div>
-        </div>
-        <div class="box">
-          <div class="muted">Hold Lot Qty (kg)</div>
-          <div class="val">{{ '%.1f' % (kpi_hold_month or 0) }}</div>
-        </div>
-        <div class="box">
-          <div class="muted">Rejected Lot Qty (kg)</div>
-          <div class="val">{{ '%.1f' % (kpi_rejected_month or 0) }}</div>
-        </div>
-      </div>
+      <div class="card">
+  <h2>KPIs (This Month)</h2>
+  <div class="kpi" style="grid-template-columns:repeat(3,1fr)">
+    <!-- Heats -->
+    <div class="box">
+      <div class="muted">Heats — Approved</div>
+      <div class="val">{{ '%.1f' % ((kpi_heats.approved) if kpi_heats else 0) }}</div>
+      <div class="muted">Hold: {{ '%.1f' % ((kpi_heats.hold) if kpi_heats else 0) }} |
+        Rej: {{ '%.1f' % ((kpi_heats.rejected) if kpi_heats else 0) }}</div>
     </div>
+
+    <!-- Atomization Lots -->
+    <div class="box">
+      <div class="muted">Atomization — Approved</div>
+      <div class="val">{{ '%.1f' % ((kpi_lots.approved) if kpi_lots else 0) }}</div>
+      <div class="muted">Hold: {{ '%.1f' % ((kpi_lots.hold) if kpi_lots else 0) }} |
+        Rej: {{ '%.1f' % ((kpi_lots.rejected) if kpi_lots else 0) }}</div>
+    </div>
+
+    <!-- Annealing Lots -->
+    <div class="box">
+      <div class="muted">Annealing — Approved</div>
+      <div class="val">{{ '%.1f' % ((kpi_anneal.approved) if kpi_anneal else 0) }}</div>
+      <div class="muted">Hold: {{ '%.1f' % ((kpi_anneal.hold) if kpi_anneal else 0) }} |
+        Rej: {{ '%.1f' % ((kpi_anneal.rejected) if kpi_anneal else 0) }}</div>
+    </div>
+  </div>
+</div>
 
     <!-- Right: queue KPIs -->
     <div class="card">
-      <h2>QA Queue</h2>
-      <div class="kpi" style="grid-template-columns:repeat(2,1fr)">
-        <div class="box">
-          <div class="muted">Pending for QA (count)</div>
-          <div class="val">{{ (kpi_pending_count or 0) }}</div>
-        </div>
-        <div class="box">
-          <div class="muted">Today’s QA (count)</div>
-          <div class="val">{{ (kpi_today_count or 0) }}</div>
-        </div>
+  <h2>QA Queue</h2>
+  <div class="kpi" style="grid-template-columns:repeat(3,1fr)">
+    <div class="box">
+      <div class="muted">Pending — Heats / Lots / Anneal</div>
+      <div class="val">
+        {{ (queue_pending.heats or 0) }} / {{ (queue_pending.lots or 0) }} / {{ (queue_pending.anneal or 0) }}
       </div>
-      <div class="muted" style="margin-top:6px">Counts combine heats + lots unless you split them server-side.</div>
+      <div class="muted">Total: {{ (queue_pending.total or 0) }}</div>
+    </div>
+
+    <div class="box">
+      <div class="muted">Today Completed — Heats / Lots / Anneal</div>
+      <div class="val">
+        {{ (queue_today.heats or 0) }} / {{ (queue_today.lots or 0) }} / {{ (queue_today.anneal or 0) }}
+      </div>
+      <div class="muted">Total: {{ (queue_today.total or 0) }}</div>
+    </div>
+
+    <div class="box">
+      <div class="muted">Today</div>
+      <div class="val">{{ today_iso }}</div>
     </div>
   </div>
+  <div class="muted" style="margin-top:6px">
+    Now split per entity (Heats / Atomization / Annealing).
+  </div>
+</div>
 
   <!-- Toolbar -->
 <div class="card">
