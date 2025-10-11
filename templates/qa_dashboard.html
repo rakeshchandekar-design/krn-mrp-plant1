@@ -4,166 +4,215 @@
   <meta charset="utf-8">
   <title>QA Dashboard</title>
   <style>
-    :root{--border:#e5e7eb;--muted:#6b7280;--bg:#f9fafb;--chip:#111827}
-    body{font-family:system-ui,Arial,sans-serif;margin:20px}
-    .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-    .brand .name{font-weight:600;font-size:26px;line-height:48px;margin:0}
-    .brand img{height:48px}
-    a.btn-link{display:inline-block;margin:4px 0 12px 0}
+    :root {
+      --border: #e5e7eb;
+      --muted: #6b7280;
+      --bg: #f9fafb;
+      --chip: #111827;
+    }
+    body {
+      font-family: system-ui, Arial, sans-serif;
+      margin: 0;
+      background: #f3f4f6;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 20px auto;
+      padding: 0 12px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .brand .name {
+      font-weight: 600;
+      font-size: 26px;
+      line-height: 48px;
+      margin: 0;
+    }
+    .brand img {
+      height: 48px;
+    }
+    a.btn-link {
+      display: inline-block;
+      margin: 4px 0 12px 0;
+    }
 
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
-    .card{border:1px solid var(--border);border-radius:8px;padding:12px;background:#fff}
-    .card h2{margin:0 0 8px 0;font-size:18px}
-    .card h3{margin:0 0 6px 0;font-size:14px}
-    .muted{color:var(--muted);font-size:12px}
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    .card h2 {
+      margin: 0 0 8px 0;
+      font-size: 18px;
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .kpi {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .kpi .box {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      background: var(--bg);
+    }
+    .kpi .val {
+      font-weight: 700;
+      font-size: 20px;
+    }
 
-    .kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-    .kpi .box{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--bg)}
-    .kpi .val{font-weight:700;font-size:18px}
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0 12px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      padding: 8px 14px;
+      border-radius: 8px;
+      background: #111827;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .btn.secondary { background: #374151; }
+    .btn.ghost { background: #e5e7eb; color: #111827; }
+    input[type="date"] { padding: 4px 6px; }
 
-    .toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 12px;flex-wrap:wrap}
-    .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none;cursor:pointer}
-    .btn.secondary{background:#374151}
-    .btn.ghost{background:#e5e7eb;color:#111827}
-    input[type="date"]{padding:4px 6px}
-
-    table{border-collapse:collapse;width:100%}
-    th,td{border:1px solid var(--border);padding:8px;text-align:left}
-    th{background:#f3f4f6}
-    .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
-    .badge-success{background:#16a34a}
-    .badge-info{background:#0ea5e9}
-    .chip{display:inline-block;background:#111827;color:#fff;border-radius:999px;padding:2px 8px;font-size:12px}
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 6px;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background: #f3f4f6;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      color: #fff;
+    }
+    .badge-success { background: #16a34a; }
+    .badge-info { background: #0ea5e9; }
+    .chip {
+      display: inline-block;
+      background: #111827;
+      color: #fff;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+    }
   </style>
-  <script>
-    function fetchRange(){
-      const s=document.getElementById('start').value;
-      const e=document.getElementById('end').value;
-      const u=new URL('/qa-dashboard', window.location.origin);
-      if(s) u.searchParams.set('start', s);
-      if(e) u.searchParams.set('end', e);
-      window.location.href=u.toString();
-    }
-    function todayOnly(){
-      const t=document.getElementById('todayIso').value;
-      document.getElementById('start').value=t;
-      document.getElementById('end').value=t;
-      fetchRange();
-    }
-    function resetRange(){
-      const u=new URL('/qa-dashboard', window.location.origin);
-      u.searchParams.set('reset','1');
-      window.location.href=u.toString();
-    }
-    function downloadCSV(){
-      const s=document.getElementById('start').value;
-      const e=document.getElementById('end').value;
-      const u=new URL('/qa-dashboard/export', window.location.origin);
-      if(s) u.searchParams.set('start', s);
-      if(e) u.searchParams.set('end', e);
-      window.location.href=u.toString();
-    }
-  </script>
 </head>
 <body>
-  <div class="brand">
-    <div class="name">KRN Alloys Pvt. Ltd</div>
-    <img src="/static/KRN_Logo.png" alt="KRN">
-  </div>
+  <div class="container">
+    <div class="brand">
+      <div class="name">KRN Alloys Pvt. Ltd</div>
+      <img src="/static/KRN_Logo.png" alt="KRN">
+    </div>
 
-  <h1>QA Dashboard</h1>
-  <p><a class="btn-link" href="/">Home</a></p>
+    <h1>QA Dashboard</h1>
+    <p><a class="btn-link" href="/">Home</a></p>
 
-  <!-- KPI row -->
-  <div class="grid">
-    <!-- Left: month KPIs -->
-    <div class="card">
+    <!-- KPI Row -->
+    <div class="grid">
+      <!-- KPIs -->
       <div class="card">
-  <h2>KPIs (This Month)</h2>
-  <div class="kpi" style="grid-template-columns:repeat(3,1fr)">
-    <!-- Heats -->
-    <div class="box">
-      <div class="muted">Heats — Approved</div>
-      <div class="val">{{ '%.1f' % ((kpi_heats.approved) if kpi_heats else 0) }}</div>
-      <div class="muted">Hold: {{ '%.1f' % ((kpi_heats.hold) if kpi_heats else 0) }} |
-        Rej: {{ '%.1f' % ((kpi_heats.rejected) if kpi_heats else 0) }}</div>
+        <h2>KPIs (This Month)</h2>
+        <div class="kpi">
+          <div class="box">
+            <div class="muted">Heats — Approved</div>
+            <div class="val">{{ '%.1f' % ((kpi_heats.approved) if kpi_heats else 0) }}</div>
+            <div class="muted">Hold: {{ '%.1f' % ((kpi_heats.hold) if kpi_heats else 0) }} | Rej: {{ '%.1f' % ((kpi_heats.rejected) if kpi_heats else 0) }}</div>
+          </div>
+
+          <div class="box">
+            <div class="muted">Atomization — Approved</div>
+            <div class="val">{{ '%.1f' % ((kpi_lots.approved) if kpi_lots else 0) }}</div>
+            <div class="muted">Hold: {{ '%.1f' % ((kpi_lots.hold) if kpi_lots else 0) }} | Rej: {{ '%.1f' % ((kpi_lots.rejected) if kpi_lots else 0) }}</div>
+          </div>
+
+          <div class="box">
+            <div class="muted">Annealing — Approved</div>
+            <div class="val">{{ '%.1f' % ((kpi_anneal.approved) if kpi_anneal else 0) }}</div>
+            <div class="muted">Hold: {{ '%.1f' % ((kpi_anneal.hold) if kpi_anneal else 0) }} | Rej: {{ '%.1f' % ((kpi_anneal.rejected) if kpi_anneal else 0) }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- QA Queue -->
+      <div class="card">
+        <h2>QA Queue</h2>
+        <div class="kpi">
+          <div class="box">
+            <div class="muted">Pending — Heats / Lots / Anneal</div>
+            <div class="val">{{ queue_pending.heats or 0 }} / {{ queue_pending.lots or 0 }} / {{ queue_pending.anneal or 0 }}</div>
+            <div class="muted">Total: {{ queue_pending.total or 0 }}</div>
+          </div>
+          <div class="box">
+            <div class="muted">Today Completed — Heats / Lots / Anneal</div>
+            <div class="val">{{ queue_today.heats or 0 }} / {{ queue_today.lots or 0 }} / {{ queue_today.anneal or 0 }}</div>
+            <div class="muted">Total: {{ queue_today.total or 0 }}</div>
+          </div>
+          <div class="box">
+            <div class="muted">Today</div>
+            <div class="val">{{ today_iso }}</div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- Atomization Lots -->
-    <div class="box">
-      <div class="muted">Atomization — Approved</div>
-      <div class="val">{{ '%.1f' % ((kpi_lots.approved) if kpi_lots else 0) }}</div>
-      <div class="muted">Hold: {{ '%.1f' % ((kpi_lots.hold) if kpi_lots else 0) }} |
-        Rej: {{ '%.1f' % ((kpi_lots.rejected) if kpi_lots else 0) }}</div>
-    </div>
-
-    <!-- Annealing Lots -->
-    <div class="box">
-      <div class="muted">Annealing — Approved</div>
-      <div class="val">{{ '%.1f' % ((kpi_anneal.approved) if kpi_anneal else 0) }}</div>
-      <div class="muted">Hold: {{ '%.1f' % ((kpi_anneal.hold) if kpi_anneal else 0) }} |
-        Rej: {{ '%.1f' % ((kpi_anneal.rejected) if kpi_anneal else 0) }}</div>
-    </div>
-  </div>
-</div>
-
-    <!-- Right: queue KPIs -->
+    <!-- Filter -->
     <div class="card">
-  <h2>QA Queue</h2>
-  <div class="kpi" style="grid-template-columns:repeat(3,1fr)">
-    <div class="box">
-      <div class="muted">Pending — Heats / Lots / Anneal</div>
-      <div class="val">
-        {{ (queue_pending.heats or 0) }} / {{ (queue_pending.lots or 0) }} / {{ (queue_pending.anneal or 0) }}
-      </div>
-      <div class="muted">Total: {{ (queue_pending.total or 0) }}</div>
+      <h3 style="margin:0 0 8px 0;">Filter</h3>
+      <form class="toolbar" method="get" action="/qa-dashboard">
+        <span>From</span>
+        <input name="start" type="date" value="{{ start or today_iso }}">
+        <span>To</span>
+        <input name="end" type="date" value="{{ end or today_iso }}">
+
+        <button class="btn" type="submit">Fetch</button>
+        <a class="btn secondary" href="/qa-dashboard?start={{ today_iso }}&end={{ today_iso }}">Today</a>
+        <a class="btn ghost" href="/qa-dashboard?all=1">Reset</a>
+        <a class="btn" href="/qa/export?start={{ start or today_iso }}&end={{ end or today_iso }}">Download CSV</a>
+      </form>
     </div>
 
-    <div class="box">
-      <div class="muted">Today Completed — Heats / Lots / Anneal</div>
-      <div class="val">
-        {{ (queue_today.heats or 0) }} / {{ (queue_today.lots or 0) }} / {{ (queue_today.anneal or 0) }}
-      </div>
-      <div class="muted">Total: {{ (queue_today.total or 0) }}</div>
-    </div>
-
-    <div class="box">
-      <div class="muted">Today</div>
-      <div class="val">{{ today_iso }}</div>
-    </div>
-  </div>
-  <div class="muted" style="margin-top:6px">
-    Now split per entity (Heats / Atomization / Annealing).
-  </div>
-</div>
-
-  <!-- Toolbar -->
-<div class="card">
-  <h3 style="margin:0 0 8px 0;">Filter</h3>
-  <form class="toolbar" method="get" action="/qa-dashboard">
-    <span>From</span>
-    <input name="start" type="date" value="{{ start or today_iso }}">
-    <span>To</span>
-    <input name="end" type="date" value="{{ end or today_iso }}">
-
-    <button class="btn" type="submit">Fetch</button>
-    <a class="btn secondary" href="/qa-dashboard?start={{ today_iso }}&end={{ today_iso }}">Today</a>
-    <a class="btn ghost" href="/qa-dashboard?all=1">Reset</a>
-    <a class="btn" href="/qa/export?start={{ start or today_iso }}&end={{ end or today_iso }}">Download CSV</a>
-    <input type="hidden" value="{{ today_iso }}">
-  </form>
-</div>
-
-
-  <!-- Melting Heat QA list -->
-  <div class="card">
-    <h2>Melting – Heats</h2>
-    <table>
-      <thead>
-        <tr><th>Heat</th><th>Type</th><th>Output (kg)</th><th>QA</th><th>Actions</th></tr>
-      </thead>
-      <tbody>
-        {% for h in heats %}
+    <!-- Heats Table -->
+    <div class="card">
+      <h2>Melting – Heats</h2>
+      <table>
+        <thead>
+          <tr><th>Heat</th><th>Type</th><th>Output (kg)</th><th>QA</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          {% for h in heats %}
           <tr>
             <td>{{ h.heat_no }}</td>
             <td>
@@ -175,20 +224,20 @@
             <td><span class="chip">{{ h.qa_status or 'PENDING' }}</span></td>
             <td><a href="/qa/heat/{{ h.id }}">QA</a></td>
           </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
 
-  <!-- Atomization Lot QA list -->
-  <div class="card" style="margin-top:12px">
-    <h2>Atomization – Lots</h2>
-    <table>
-      <thead>
-        <tr><th>Lot</th><th>Grade</th><th>Weight (kg)</th><th>QA</th><th>Actions</th></tr>
-      </thead>
-      <tbody>
-        {% for lot in lots %}
+    <!-- Atomization Table -->
+    <div class="card">
+      <h2>Atomization – Lots</h2>
+      <table>
+        <thead>
+          <tr><th>Lot</th><th>Grade</th><th>Weight (kg)</th><th>QA</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          {% for lot in lots %}
           <tr>
             <td>{{ lot.lot_no }}</td>
             <td>{{ lot.grade }}</td>
@@ -199,96 +248,45 @@
               <a href="/traceability/lot/{{ lot.id }}">Trace</a>
             </td>
           </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <div class="muted" style="margin-top:6px">
-      Chemistry in the Lot QA form is pre-filled by the server: dominant-heat (&gt;=60%) chemistry, else allocation-weighted average.
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Annealing Table -->
+    <div class="card">
+      <h2>Annealing – Lots</h2>
+      {% if anneals and anneals|length > 0 %}
+      <table>
+        <thead>
+          <tr>
+            <th>Lot No</th><th>Date</th><th>Grade</th><th>Weight (kg)</th>
+            <th>Oxygen</th><th>QA Status</th><th>Remarks</th><th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for al in anneals %}
+          <tr>
+            <td>{{ al.lot_no }}</td>
+            <td>{{ al.lot_date }}</td>
+            <td>{{ al.grade or '' }}</td>
+            <td>{{ '%.1f' % (al.weight_kg or 0) }}</td>
+            <td>{% if al.oxygen and (al.oxygen|float != 0) %}{{ '%.3f' % (al.oxygen|float) }}{% endif %}</td>
+            <td><span class="chip">{{ al.qa_status or 'PENDING' }}</span></td>
+            <td>{{ al.remarks or '' }}</td>
+            <td>
+              <a href="/anneal/qa/{{ al.id }}">QA</a>
+              <a href="/anneal/trace/{{ al.id }}" target="_blank">Trace</a>
+              <a href="/anneal/pdf/{{ al.id }}" target="_blank">PDF</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="muted">No anneal lots in this date range.</p>
+      {% endif %}
     </div>
   </div>
-
-  <!-- Annealing Lot QA list (read-only on dashboard, link to Anneal QA form) -->
-<div class="card" style="margin-top:12px">
-  <h2>Annealing – Lots</h2>
-
-  {% if anneals and anneals|length > 0 %}
-  <table>
-    <thead>
-      <tr>
-        <th>Lot No</th>
-        <th>Date</th>
-        <th>Grade</th>
-        <th>Weight (kg)</th>
-        <th>Oxygen</th>
-        <th>QA Status</th>
-        <th>Remarks</th>
-        <th>Action</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for al in anneals %}
-      <tr>
-        <td>{{ al.lot_no }}</td>
-        <td>{{ al.lot_date }}</td>
-        <td>{{ al.grade or '' }}</td>
-        <td>{{ '%.1f' % (al.weight_kg or 0) }}</td>
-        <td>
-          {% if al.oxygen and (al.oxygen|float != 0) %}
-            {{ '%.3f' % (al.oxygen|float) }}
-          {% else %}
-            <!-- blank when 0.0 or missing -->
-          {% endif %}
-        </td>
-        <td><span class="chip">{{ al.qa_status or 'PENDING' }}</span></td>
-        <td>{{ al.remarks or '' }}</td>
-        <td>
-        <a href="/anneal/qa/{{ al.id }}">QA</a> 
-        <a href="/anneal/trace/{{ al.id }}" target="_blank">Trace</a> 
-        <a href="/anneal/pdf/{{ al.id }}" target="_blank">PDF</a>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-    <tr><td colspan="8" class="muted">No anneal lots in this date range.</td></tr>
-  {% endif %}
-</div>
-  
-  <script>
-(function(){
-  const sEl = document.getElementById('qa_start');
-  const eEl = document.getElementById('qa_end');
-  const today = new Date().toISOString().slice(0,10);
-
-  // Fetch
-  const fetchBtn = document.getElementById('qaFetch');
-  if (fetchBtn) fetchBtn.addEventListener('click', function(){
-    const s = (sEl && sEl.value) || today;
-    const e = (eEl && eEl.value) || today;
-    window.location.href = `/qa-dashboard?start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`;
-  });
-
-  // Today
-  const todayBtn = document.getElementById('qaToday');
-  if (todayBtn) todayBtn.addEventListener('click', function(){
-    window.location.href = `/qa-dashboard?start=${today}&end=${today}`;
-  });
-
-  // Reset → reset to today
-  const resetBtn = document.getElementById('qaReset');
-  if (resetBtn) resetBtn.addEventListener('click', function(){
-    window.location.href = `/qa-dashboard?start=${today}&end=${today}`;
-  });
-
-  // Download CSV
-  const csvBtn = document.getElementById('qaCsv');
-  if (csvBtn) csvBtn.addEventListener('click', function(){
-    const s = (sEl && sEl.value) || today;
-    const e = (eEl && eEl.value) || today;
-    window.location.href = `/qa/export?start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`;
-  });
-})();
-</script>
 </body>
-</html> 
+</html>
