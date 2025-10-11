@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Grinding Lots</h2>
+
+<div class="toolbar" style="margin-bottom:10px; gap:8px; display:flex; flex-wrap:wrap; align-items:center">
+  <a class="btn" href="/grind/">← Back to Grinding</a>
+
+  <form method="get" action="/grind/lots" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+    <label>From</label><input type="date" name="from_date" value="{{ from_date or '' }}">
+    <label>To</label><input type="date" name="to_date" value="{{ to_date or '' }}">
+    <button class="btn" type="submit">Fetch</button>
+    <a class="btn" href="/grind/lots?from_date={{ today }}&to_date={{ today }}">Today</a>
+    <a class="btn" href="/grind/lots">Reset</a>
+    <a class="btn" href="/grind/lots?csv=1{% if from_date %}&from_date={{ from_date }}{% endif %}{% if to_date %}&to_date={{ to_date }}{% endif %}">Download CSV</a>
+  </form>
+</div>
+
+<table class="table">
+  <tr>
+    <th>Date</th><th>Lot</th><th>Grade</th><th>Weight (kg)</th>
+    <th>+80 (kg)</th><th>+40 (kg)</th>
+    <th>Proc Cost/kg (₹)</th><th>Final Cost/kg (₹)</th>
+    <th>QA</th><th>Docs</th><th>Action</th>
+  </tr>
+  {% set valsum = namespace(v=0.0) %}
+  {% for x in lots %}
+  <tr class="{% if x.grade and x.grade.startswith('KIP') %} bg-info-subtle {% elif x.grade and x.grade.startswith('KFS') %} bg-warning-subtle {% endif %}">
+    <td>{{ x.date }}</td>
+    <td>{{ x.lot_no }}</td>
+    <td>{{ x.grade }}</td>
+    <td>{{ '%.0f'|format(x.weight_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.oversize_p80_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.oversize_p40_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.process_cost_per_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.cost_per_kg or 0) }}</td>
+    <td>{{ x.qa_status or '' }}</td>
+    <td>
+      <a href="/grind/trace/{{ x.id }}">Trace</a> |
+      <a href="/grind/pdf/{{ x.id }}" target="_blank">PDF</a>
+    </td>
+    <td><a class="btn btn-small" href="/grind/qa/{{ x.id }}">QA</a></td>
+  </tr>
+  {% endfor %}
+  <tr class="table-info">
+    <th colspan="3">TOTAL</th>
+    <th>{{ '%.2f'|format(total_weight or 0) }}</th>
+    <th colspan="2">{{ '%.2f'|format(oversize_total or 0) }}</th>
+    <th></th>
+    <th>{{ '%.2f'|format(weighted_cost or 0) }}</th>
+    <th colspan="3"></th>
+  </tr>
+</table>
+
+<style>
+  .bg-info-subtle { background-color:#e6f4ff; }
+  .bg-warning-subtle { background-color:#fff3e0; }
+</style>
+{% endblock %}
