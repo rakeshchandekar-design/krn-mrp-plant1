@@ -2177,49 +2177,56 @@ def qa_dashboard(
 
     heat_grades = {h.id: heat_grade(h) for h in heats_vis}
 
+    # --- per-entity queue counts as variables ---
+    queue_pending = {
+        "heats":  int(pending_heats),
+        "lots":   int(pending_lots),
+        "anneal": int(pending_anneal),
+    }
+    queue_today = {
+        "heats":  int(today_heats),
+        "lots":   int(today_lots),
+        "anneal": int(today_anneal),
+    }
+
+    # totals = sum of parts
+    queue_pending["total"] = queue_pending["heats"] + queue_pending["lots"] + queue_pending["anneal"]
+    queue_today["total"]   = queue_today["heats"]   + queue_today["lots"]   + queue_today["anneal"]
+
     return templates.TemplateResponse(
-          "qa_dashboard.html",
-        {
-            "request": request,
-            "role": current_role(request),
-            "heats": heats_vis,
-            "lots": lots_vis,
-            "heat_grades": heat_grades,
+    "qa_dashboard.html",
+    {
+        "request": request,
+        "role": current_role(request),
+        "heats": heats_vis,
+        "lots": lots_vis,
+        "heat_grades": heat_grades,
 
-            # ---- NEW: pass anneal lots (your template can render a table for these) ----
-            "anneals": anneals_vis,
+        # Anneal lots
+        "anneals": anneals_vis,
 
-            # ---- KPIs expected by the template ----
-            "kpi_approved_month": float(kpi.get("approved_kg", 0.0)),
-            "kpi_hold_month":     float(kpi.get("hold_kg", 0.0)),
-            "kpi_rejected_month": float(kpi.get("rejected_kg", 0.0)),
-            "kpi_pending_count":  int(pending_count),
-            "kpi_today_count":    int(todays_count),
-            # ---- NEW: per-entity KPIs ----
-            "kpi_heats":   kpi_heats,
-            "kpi_lots":    kpi_lots,
-            "kpi_anneal":  kpi_anneal,
+        # Existing combined KPIs
+        "kpi_approved_month": float(kpi.get("approved_kg", 0.0)),
+        "kpi_hold_month":     float(kpi.get("hold_kg", 0.0)),
+        "kpi_rejected_month": float(kpi.get("rejected_kg", 0.0)),
+        "kpi_pending_count":  int(pending_count),
+        "kpi_today_count":    int(todays_count),
 
-            # ---- NEW: per-entity queue counts ----
-            "queue_pending": {
-                "heats":  int(pending_heats),
-                "lots":   int(pending_lots),
-                "anneal": int(pending_anneal),
-                "total":  int(pending_count),
-            },
-            "queue_today": {
-                "heats":  int(today_heats),
-                "lots":   int(today_lots),
-                "anneal": int(today_anneal),
-                "total":  int(todays_count),
-            },
+        # New per-entity KPIs
+        "kpi_heats":  kpi_heats,
+        "kpi_lots":   kpi_lots,
+        "kpi_anneal": kpi_anneal,
 
-            # toolbar defaults
-            "start": "" if show_all else s_iso,
-            "end": "" if show_all else e_iso,
-            "today_iso": today.isoformat(),
-        },
-    )
+        # New per-entity queue dicts (already computed above)
+        "queue_pending": queue_pending,
+        "queue_today":   queue_today,
+
+        # toolbar defaults
+        "start": "" if show_all else s_iso,
+        "end": "" if show_all else e_iso,
+        "today_iso": today.isoformat(),
+    },
+)
 
 # ---------- CSV export for QA (heats + lots + anneal, by date range) ----------
 @app.get("/qa/export")
