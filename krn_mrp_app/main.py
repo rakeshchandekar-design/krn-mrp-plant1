@@ -2126,6 +2126,55 @@ def qa_dashboard(
         sum(1 for l in lots_all  if _ld(l) == today and (l.qa_status or "").upper() != "PENDING")
     )
 
+    # === EXTRA: separate KPIs for Heats / Atomization Lots / Anneal Lots ===
+    heats_this_month   = [h for h in heats_all if month_start <= (_hd(h) or today) <= month_end]
+    anneals_this_month = _anneal_rows_in_range(db, month_start, month_end)
+
+    def _sum_heats(status: str) -> float:
+        s = status.upper()
+        return sum(float(h.actual_output or 0.0)
+                for h in heats_this_month
+                if (h.qa_status or "").upper() == s)
+
+    def _sum_anneals(status: str) -> float:
+        s = status.upper()
+        return sum(float(a["weight_kg"] or 0.0)
+                for a in anneals_this_month
+                if (a["qa_status"] or "").upper() == s)
+
+    # per-entity KPI buckets (keep your existing combined 'kpi' below untouched)
+    kpi_heats = {
+        "approved": _sum_heats("APPROVED"),
+        "hold":     _sum_heats("HOLD"),
+        "rejected": _sum_heats("REJECTED"),
+    }
+    kpi_lots = {
+        "approved": float(kpi.get("approved_kg", 0.0)),  # reuse your existing lot totals
+        "hold":     float(kpi.get("hold_kg", 0.0)),
+        "rejected": float(kpi.get("rejected_kg", 0.0)),
+    }
+    kpi_anneal = {
+        "approved": _sum_anneals("APPROVED"),
+        "hold":     _sum_anneals("HOLD"),
+        "rejected": _sum_anneals("REJECTED"),
+    }
+
+    # === EXTRA: separate queue counts ===
+    anneals_all   = _anneal_rows_in_range(db, dt.date(1970, 1, 1), dt.date(2100, 1, 1))
+    anneals_today = _anneal_rows_in_range(db, today, today)
+
+    pending_heats  = sum(1 for h in heats_all   if (h.qa_status or "").upper() == "PENDING")
+    pending_lots   = sum(1 for l in lots_all    if (l.qa_status or "").upper() == "PENDING")
+    pending_anneal = sum(1 for a in anneals_all if (a["qa_status"] or "").upper() == "PENDING")
+
+    today_heats  = sum(1 for h in heats_all     if _hd(h) == today and (h.qa_status or "").upper() != "PENDING")
+    today_lots   = sum(1 for l in lots_all      if _ld(l) == today and (l.qa_status or "").upper() != "PENDING")
+    today_anneal = sum(1 for a in anneals_today if (a["qa_status"] or "").upper() != "PENDING")
+
+    # keep your existing combined counters intact
+    pending_count = pending_count  # (unchanged)
+    todays_count  = todays_count   # (unchanged)
+
     heat_grades = {h.id: heat_grade(h) for h in heats_vis}
 
     return templates.TemplateResponse(
@@ -2146,6 +2195,24 @@ def qa_dashboard(
             "kpi_rejected_month": float(kpi.get("rejected_kg", 0.0)),
             "kpi_pending_count":  int(pending_count),
             "kpi_today_count":    int(todays_count),
+            # ---- NEW: per-entity KPIs ----
+            "kpi_heats":   kpi_heats,
+            "kpi_lots":    kpi_lots,
+            "kpi_anneal":  kpi_anneal,
+
+            # ---- NEW: per-entity queue counts ----
+            "queue_pending": {
+                "heats":  int(pending_heats),
+                "lots":   int(pending_lots),
+                "anneal": int(pending_anneal),
+                "total":  int(pending_count),
+            },
+            "queue_today": {
+                "heats":  int(today_heats),
+                "lots":   int(today_lots),
+                "anneal": int(today_anneal),
+                "total":  int(todays_count),
+            },
 
             # toolbar defaults
             "start": "" if show_all else s_iso,
