@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Create Grinding Lot (Allocate from APPROVED Anneal)</h2>
+
+<div class="toolbar" style="margin-bottom:10px">
+  <a class="btn" href="/grind/">← Back to Grinding</a>
+</div>
+
+{% if err %}<div class="alert alert-danger" style="margin:10px 0">{{ err }}</div>{% endif %}
+
+<form method="post" id="createForm">
+  <label>Lot Weight (kg)</label>
+  <input id="lot_weight" name="lot_weight" type="number" step="0.01" min="0.01" required>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+    <div>
+      <label>Oversize +80 (kg)</label>
+      <input id="oversize_p80" name="oversize_p80" type="number" step="0.01" min="0" value="0">
+    </div>
+    <div>
+      <label>Oversize +40 (kg)</label>
+      <input id="oversize_p40" name="oversize_p40" type="number" step="0.01" min="0" value="0">
+    </div>
+  </div>
+  <div class="muted" style="margin:4px 0 10px">
+    Oversize total (+80 + +40) must be <b>≥ 7%</b> of Lot Weight.
+  </div>
+
+  <table class="table">
+    <tr>
+      <th>Anneal Lot</th>
+      <th>Grade</th>
+      <th>Available (kg)</th>
+      <th>Anneal Cost/kg (₹)</th>
+      <th>Allocate (kg)</th>
+    </tr>
+    {% for r in anneal_rows %}
+    <tr class="{% if r.grade.startswith('KIP') %} bg-info-subtle {% elif r.grade.startswith('KFS') %} bg-warning-subtle {% endif %}">
+      <td>{{ r.lot_no }}</td>
+      <td>{{ r.grade }}</td>
+      <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(r.anneal_cost_per_kg or 0) }}</td>
+      <td>
+        <input type="number" step="0.01" min="0" max="{{ r.available_kg }}"
+               name="alloc_{{ r.lot_no }}" data-grade="{{ r.grade }}">
+      </td>
+    </tr>
+    {% endfor %}
+    <tr class="table-info">
+      <th colspan="4" style="text-align:right">Total Alloc</th>
+      <th><span id="total_alloc">0.00</span></th>
+    </tr>
+  </table>
+
+  <div id="client_err" class="alert alert-danger" style="display:none;margin:10px 0"></div>
+
+  <p class="muted" style="margin-top:6px">
+    Cost rule: <strong>Grinding Cost/kg = Weighted Anneal Cost/kg + ₹6</strong>. Family lock: KIP or KFS (single).
+  </p>
+
+  <button id="submitBtn" class="btn btn-primary" type="submit" disabled>Create Lot</button>
+</form>
+
+<style>
+  .bg-info-subtle { background-color: #e6f4ff; }
+  .bg-warning-subtle { background-color: #fff3e0; }
+</style>
+
+<script>
+(function () {
+  const form = document.getElementById('createForm');
+  const lotWeightEl = document.getElementById('lot_weight');
+  const p80El = document.getElementById('oversize_p80');
+  const p40El = document.getElementById('oversize_p40');
+  const totalSpan = document.getElementById('total_alloc');
+  const errBox = document.getElementById('client_err');
+  const submitBtn = document.getElementById('submitBtn');
+
+  const allocInputs = Array.from(document.querySelectorAll('input[name^="alloc_"]'));
+
+  function sumAlloc() {
+    let s = 0;
+    for (const el of allocInputs) {
+      const v = parseFloat(el.value);
+      if (!isNaN(v)) s += v;
+    }
+    return s;
+  }
+  function gradesSelected() {
+    const g = new Set();
+    for (const el of allocInputs) {
+      const v = parseFloat(el.value);
+      if (!isNaN(v) && v > 0) g.add((el.dataset.grade || '').toUpperCase());
+    }
+    return g;
+  }
+  function fmt(n,d=2){ return (isFinite(n)?n:0).toFixed(d); }
+
+  function recompute() {
+    const total = sumAlloc();
+    totalSpan.textContent = fmt(total,2);
+
+    const lw = parseFloat(lotWeightEl.value||'0');
+    const p80 = parseFloat(p80El.value||'0');
+    const p40 = parseFloat(p40El.value||'0');
+    const oversize = (isFinite(p80)?p80:0) + (isFinite(p40)?p40:0);
+    const oversizeMin = (isFinite(lw)? lw*0.07 : 0);
+
+    let msg = '';
+    if (!isFinite(lw) || lw <= 0) msg = 'Enter Lot Weight (> 0).';
+    else if (Math.abs(total - lw) > 0.01) msg = `Lot Weight must equal total allocated (diff ${fmt(Math.abs(total-lw),2)} kg).`;
+    else if (gradesSelected().size > 1) msg = 'Only one family (KIP or KFS) may be allocated.';
+    else if (oversize < oversizeMin) msg = `Oversize total must be ≥ ${fmt(oversizeMin,2)} kg.`;
+
+    if (msg) { errBox.style.display=''; errBox.textContent=msg; submitBtn.disabled=true; }
+    else { errBox.style.display='none'; submitBtn.disabled=false; }
+  }
+
+  [...allocInputs, lotWeightEl, p80El, p40El].forEach(el => el.addEventListener('input', recompute));
+  form.addEventListener('submit', (e)=>{ recompute(); if (submitBtn.disabled) e.preventDefault(); });
+  recompute();
+})();
+</script>
+{% endblock %}
