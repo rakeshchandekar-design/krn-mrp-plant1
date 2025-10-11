@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Grinding Trace — {{ header.lot_no }}</h2>
+
+<div class="toolbar" style="margin:8px 0 12px;">
+  <a class="btn" href="/grind/lots">← Back to Lots</a>
+  <a class="btn" href="/grind/pdf/{{ header.id }}" target="_blank">Open PDF</a>
+</div>
+
+<p class="muted">
+  Date: {{ header.date }} | Grade: {{ header.grade }} |
+  Weight: {{ '%.0f'|format(header.weight_kg or 0) }} kg |
+  Oversize: {{ '%.2f'|format((header.oversize_p80_kg or 0) + (header.oversize_p40_kg or 0)) }} kg
+</p>
+
+<table class="table">
+  <tr>
+    <th>Anneal Lot</th><th>Grade</th>
+    <th class="right">Qty (kg)</th>
+    <th class="right">Anneal Cost/kg (₹)</th>
+    <th class="right">Value (₹)</th>
+  </tr>
+  {% for r in anneal_rows %}
+    {% set val = (r.allocated_kg or 0) * (r.anneal_cost_per_kg or 0) %}
+    <tr>
+      <td>{{ r.anneal_lot_no }}</td>
+      <td>{{ r.anneal_grade }}</td>
+      <td class="right">{{ '%.2f'|format(r.allocated_kg or 0) }}</td>
+      <td class="right">{{ '%.2f'|format(r.anneal_cost_per_kg or 0) }}</td>
+      <td class="right">{{ '%.2f'|format(val) }}</td>
+    </tr>
+  {% endfor %}
+</table>
+
+<h3>Grind Cost Summary</h3>
+<ul>
+  <li>Input (Anneal) Cost/kg: ₹{{ '%.2f'|format(header.input_cost_per_kg or 0) }}</li>
+  <li>Process Cost/kg: ₹{{ '%.2f'|format(header.process_cost_per_kg or 0) }}</li>
+  <li>Final Cost/kg: ₹{{ '%.2f'|format(header.cost_per_kg or 0) }}</li>
+</ul>
+
+<hr style="margin:16px 0;">
+
+<h3>QA (Latest)</h3>
+<table class="table" style="width:auto">
+  <tr><th>Status</th><td>{{ qa and qa.header.decision or '' }}</td></tr>
+  <tr><th>Oxygen</th><td>{{ (qa and qa.header and qa.header.oxygen) and ('%.2f'|format(qa.header.oxygen)) or '' }}</td></tr>
+  <tr><th>Compressibility</th><td>{{ (qa and qa.header and qa.header.compressibility) and ('%.2f'|format(qa.header.compressibility)) or '' }}</td></tr>
+  <tr><th>Remarks</th><td>{{ qa and qa.header.remarks or '' }}</td></tr>
+</table>
+
+{% endblock %}
