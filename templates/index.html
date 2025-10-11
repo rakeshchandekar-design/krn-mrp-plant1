@@ -210,6 +210,20 @@
         </div>
       </div>
 
+      <!-- GRINDING & SCREENING -->
+    {% set allow = role in ['admin','grind','view'] %}
+    <div class="card">
+      <h3>Grinding & Screening</h3>
+      <div class="sub">Admin, Grind</div>
+      <div class="foot">
+        {% if allow %}
+          <a class="open" href="/grind">Open</a>
+        {% else %}
+          <button class="open" disabled>Open</button><span class="deny">✗</span>
+        {% endif %}
+      </div>
+    </div>
+
       <!-- QA -->
       {% set allow = role in ['admin','qa','view'] %}
       <div class="card">
