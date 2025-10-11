@@ -675,6 +675,7 @@ USER_DB = {
     "atom":    {"password": "atom",    "role": "atom"},
     "rap":     {"password": "rap",     "role": "rap"},
     "anneal": {"password": "anneal", "role": "anneal"},
+    "grind": {"password": "grind", "role": "grind"},
     "qa":      {"password": "qa",      "role": "qa"},
     "krn":    {"password": "krn",    "role": "view"},
 }
