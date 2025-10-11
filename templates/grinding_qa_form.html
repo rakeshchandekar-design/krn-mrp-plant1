@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block content %}
+{% set has_header = header is defined and header %}
+{% set q = qa if qa is defined else {'oxygen':'','compressibility':'','decision':'APPROVED','remarks':''} %}
+{% set p = params if params is defined else {} %}
+
+<h2>Grinding QA — {{ has_header and header.lot_no or '' }}</h2>
+
+<div class="toolbar" style="margin:10px 0; display:flex; gap:8px; flex-wrap:wrap">
+  <a class="btn" href="/qa-dashboard">← Back to QA Dashboard</a>
+  {% if has_header %}
+    <a class="btn" href="/grind/lots">Grinding Lots</a>
+    <a class="btn" href="/grind/trace/{{ header.id }}" target="_blank">Trace</a>
+    <a class="btn" href="/grind/pdf/{{ header.id }}" target="_blank">PDF</a>
+  {% endif %}
+</div>
+
+<p class="muted">
+  {% if has_header %}
+    Date: {{ header.date }} | Grade: {{ header.grade }} |
+    Weight: {{ '%.0f'|format(header.weight_kg or 0) }} kg |
+    Oversize: {{ '%.2f'|format((header.oversize_p80_kg or 0)+(header.oversize_p40_kg or 0)) }} kg
+  {% endif %}
+</p>
+
+<form method="post" action="/grind/qa/{{ has_header and header.id or 0 }}">
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px">
+    <div>
+      <h3>Chemistry</h3>
+      <table class="table" style="width:auto">
+        {% for a,b in [('C','Si'),('S','P'),('Cu','Ni'),('Mn','Fe')] %}
+        <tr><th>{{a}}</th><td><input name="{{a}}" value="{{ p[a] or '' }}"></td>
+            <th>{{b}}</th><td><input name="{{b}}" value="{{ p[b] or '' }}"></td></tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <div>
+      <h3>Physical / PSD</h3>
+      <table class="table" style="width:auto">
+        <tr>
+          <th>AD</th><td><input name="ad" value="{{ p['ad'] or '' }}"></td>
+          <th>Flow</th><td><input name="flow" value="{{ p['flow'] or '' }}"></td>
+        </tr>
+        <tr>
+          <th>Compressibility</th><td><input name="compressibility" value="{{ q.compressibility or p['compressibility'] or '' }}"></td>
+          <td colspan="2"></td>
+        </tr>
+      </table>
+
+      <h4 style="margin-top:10px">PSD</h4>
+      <table class="table" style="width:auto">
+        <tr><th>+212</th><td><input name="p212" value="{{ p['p212'] or '' }}"></td></tr>
+        <tr><th>+180</th><td><input name="p180" value="{{ p['p180'] or '' }}"></td></tr>
+        <tr><th>-180+150</th><td><input name="n180p150" value="{{ p['n180p150'] or '' }}"></td></tr>
+        <tr><th>-150+75</th><td><input name="n150p75" value="{{ p['n150p75'] or '' }}"></td></tr>
+        <tr><th>-75+45</th><td><input name="n75p45" value="{{ p['n75p45'] or '' }}"></td></tr>
+        <tr><th>-45</th><td><input name="n45" value="{{ p['n45'] or '' }}"></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div style="margin-top:12px">
+    <h3>QA</h3>
+    <table class="table" style="width:auto">
+      <tr>
+        <th>Oxygen</th><td><input name="oxygen" value="{{ q.oxygen }}"></td>
+        <th>Decision</th>
+        <td>
+          {% set dec = (q.decision or 'APPROVED')|upper %}
+          <select name="decision">
+            <option value="APPROVED" {{ 'selected' if dec=='APPROVED' else '' }}>APPROVED</option>
+            <option value="HOLD" {{ 'selected' if dec=='HOLD' else '' }}>HOLD</option>
+            <option value="REJECTED" {{ 'selected' if dec=='REJECTED' else '' }}>REJECTED</option>
+          </select>
+        </td>
+      </tr>
+      <tr><th>Remarks</th><td colspan="3"><input name="remarks" style="width:100%" value="{{ q.remarks }}"></td></tr>
+    </table>
+  </div>
+
+  <div style="margin-top:12px">
+    <button class="btn" type="submit">Save QA</button>
+    <a class="btn" href="/qa-dashboard">Cancel</a>
+    <a class="btn" href="/grind/trace/{{ header.id }}" target="_blank">Trace</a>
+    <a class="btn" href="/grind/pdf/{{ header.id }}" target="_blank">PDF</a>
+  </div>
+
+  {% if error_text %}
+    <div style="margin-top:8px;color:#b91c1c;font-size:13px;">{{ error_text }}</div>
+  {% endif %}
+{% endblock %}
