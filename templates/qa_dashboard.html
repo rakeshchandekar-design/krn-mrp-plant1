@@ -5,20 +5,21 @@
   <title>QA Dashboard</title>
   <style>
     :root {
-      --border: #e5e7eb;
+      --border: #d1d5db;
       --muted: #6b7280;
-      --bg: #f9fafb;
+      --bg: #ffffff;
       --chip: #111827;
+      --shadow: rgba(0, 0, 0, 0.05);
     }
     body {
       font-family: system-ui, Arial, sans-serif;
       margin: 0;
-      background: #f3f4f6;
+      background: var(--bg);
     }
     .container {
       max-width: 1200px;
       margin: 20px auto;
-      padding: 0 12px;
+      padding: 0 16px;
     }
     .brand {
       display: flex;
@@ -38,6 +39,11 @@
     a.btn-link {
       display: inline-block;
       margin: 4px 0 12px 0;
+      color: #4f46e5;
+      text-decoration: none;
+    }
+    a.btn-link:hover {
+      text-decoration: underline;
     }
 
     .grid {
@@ -48,20 +54,22 @@
     }
     .card {
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
+      border-radius: 10px;
+      padding: 14px;
       background: #fff;
-      margin-bottom: 12px;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px var(--shadow);
     }
     .card h2 {
       margin: 0 0 8px 0;
       font-size: 18px;
+      font-weight: 600;
     }
     .muted {
       color: var(--muted);
       font-size: 12px;
     }
+
     .kpi {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -70,8 +78,12 @@
     .kpi .box {
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 10px;
-      background: var(--bg);
+      padding: 10px 12px;
+      background: #fafafa;
+      transition: background 0.2s ease;
+    }
+    .kpi .box:hover {
+      background: #f3f4f6;
     }
     .kpi .val {
       font-weight: 700;
@@ -93,10 +105,19 @@
       border: none;
       cursor: pointer;
       text-decoration: none;
+      font-size: 14px;
     }
     .btn.secondary { background: #374151; }
-    .btn.ghost { background: #e5e7eb; color: #111827; }
-    input[type="date"] { padding: 4px 6px; }
+    .btn.ghost {
+      background: #e5e7eb;
+      color: #111827;
+      border: 1px solid #d1d5db;
+    }
+    input[type="date"] {
+      padding: 4px 6px;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+    }
 
     table {
       border-collapse: collapse;
@@ -109,7 +130,8 @@
       text-align: left;
     }
     th {
-      background: #f3f4f6;
+      background: #f9fafb;
+      font-weight: 600;
     }
     .badge {
       display: inline-block;
@@ -128,8 +150,23 @@
       padding: 2px 8px;
       font-size: 12px;
     }
+    /* --- Section title with icons --- */
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 8px 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .section-title .icon {
+      font-size: 20px;
+      line-height: 1;
+      opacity: 0.9;
+    }
   </style>
 </head>
+
 <body>
   <div class="container">
     <div class="brand">
@@ -137,10 +174,10 @@
       <img src="/static/KRN_Logo.png" alt="KRN">
     </div>
 
-    <h1>QA Dashboard</h1>
+    <h1 style="margin-bottom:10px;">QA Dashboard</h1>
     <p><a class="btn-link" href="/">Home</a></p>
 
-    <!-- KPI Row -->
+    <!-- KPI & Queue Row -->
     <div class="grid">
       <!-- KPIs -->
       <div class="card">
@@ -196,7 +233,6 @@
         <input name="start" type="date" value="{{ start or today_iso }}">
         <span>To</span>
         <input name="end" type="date" value="{{ end or today_iso }}">
-
         <button class="btn" type="submit">Fetch</button>
         <a class="btn secondary" href="/qa-dashboard?start={{ today_iso }}&end={{ today_iso }}">Today</a>
         <a class="btn ghost" href="/qa-dashboard?all=1">Reset</a>
@@ -206,7 +242,7 @@
 
     <!-- Heats Table -->
     <div class="card">
-      <h2>Melting – Heats</h2>
+      <h2 class="section-title"><span class="icon">🔥</span><span>Melting — Heats</span></h2>
       <table>
         <thead>
           <tr><th>Heat</th><th>Type</th><th>Output (kg)</th><th>QA</th><th>Actions</th></tr>
@@ -231,7 +267,7 @@
 
     <!-- Atomization Table -->
     <div class="card">
-      <h2>Atomization – Lots</h2>
+      <h2 class="section-title"><span class="icon">💧</span><span>Atomization — Lots</span></h2>
       <table>
         <thead>
           <tr><th>Lot</th><th>Grade</th><th>Weight (kg)</th><th>QA</th><th>Actions</th></tr>
@@ -255,7 +291,7 @@
 
     <!-- Annealing Table -->
     <div class="card">
-      <h2>Annealing – Lots</h2>
+      <h2 class="section-title"><span class="icon">♨️</span><span>Annealing — Lots</span></h2>
       {% if anneals and anneals|length > 0 %}
       <table>
         <thead>
