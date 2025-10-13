@@ -17,8 +17,7 @@
   <tr>
     <th>Anneal Lot</th><th>Grade</th>
     <th class="right">Qty (kg)</th>
-    <th class="right">Anneal Cost/kg (₹)</th>
-    <th class="right">Value (₹)</th>
+    {% if admin %}<th class="right">Anneal Cost/kg (₹)</th><th class="right">Value (₹)</th>{% endif %}
   </tr>
   {% for r in anneal_rows %}
     {% set val = (r.allocated_kg or 0) * (r.anneal_cost_per_kg or 0) %}
@@ -26,18 +25,21 @@
       <td>{{ r.anneal_lot_no }}</td>
       <td>{{ r.anneal_grade }}</td>
       <td class="right">{{ '%.2f'|format(r.allocated_kg or 0) }}</td>
-      <td class="right">{{ '%.2f'|format(r.anneal_cost_per_kg or 0) }}</td>
-      <td class="right">{{ '%.2f'|format(val) }}</td>
+      {% if admin %}<td class="right">{{ '%.2f'|format(r.anneal_cost_per_kg or 0) }}</td>{% endif %}
+      {% if admin %}<td class="right">{{ '%.2f'|format(val) }}</td>{% endif %}
     </tr>
   {% endfor %}
 </table>
 
+{% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
+{% if admin %}
 <h3>Grind Cost Summary</h3>
 <ul>
   <li>Input (Anneal) Cost/kg: ₹{{ '%.2f'|format(header.input_cost_per_kg or 0) }}</li>
   <li>Process Cost/kg: ₹{{ '%.2f'|format(header.process_cost_per_kg or 0) }}</li>
   <li>Final Cost/kg: ₹{{ '%.2f'|format(header.cost_per_kg or 0) }}</li>
 </ul>
+{% endif %}
 
 <hr style="margin:16px 0;">
 
