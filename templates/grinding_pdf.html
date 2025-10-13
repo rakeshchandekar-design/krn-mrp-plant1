@@ -48,8 +48,8 @@
   <h3 style="margin:0 0 6px 0;">QA</h3>
   <table style="width:auto">
     <tr><th>Status</th><td>{{ qa and qa.header.decision or '' }}</td></tr>
-    <tr><th>Oxygen</th><td>{{ (qa and qa.header and qa.header.oxygen) and ('%.2f'|format(qa.header.oxygen)) or '' }}</td></tr>
-    <tr><th>Compressibility</th><td>{{ (qa and qa.header and qa.header.compressibility) and ('%.2f'|format(qa.header.compressibility)) or '' }}</td></tr>
+    <tr><th>Oxygen</th><td>{{ (qa and qa.header and qa.header.oxygen is not none) and ('%.2f'|format(qa.header.oxygen)) or '' }}</td></tr>
+    <tr><th>Compressibility</th><td>{{ (qa and qa.header and qa.header.compressibility is not none) and ('%.2f'|format(qa.header.compressibility)) or '' }}</td></tr>
     <tr><th>Remarks</th><td>{{ qa and qa.header.remarks or '' }}</td></tr>
   </table>
 </div>
