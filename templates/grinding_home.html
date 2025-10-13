@@ -2,13 +2,13 @@
 {% block content %}
 {% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
 
-<h1>Grinding & Screening</h1>
+<h1>Grinding &amp; Screening</h1>
 
 <div class="grid-2">
   <div class="card">
     <h3>KPIs (Today)</h3>
     <table class="table small">
-      <tr><th>Lots Today</th><td>{{ lots_today }}</td></tr>
+      <tr><th>Lots Today</th><td>{{ lots_today or 0 }}</td></tr>
       <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
       <tr><th>Oversize Today (kg)</th><td>{{ '%.0f'|format(oversize_today or 0) }}</td></tr>
       {% if admin %}
