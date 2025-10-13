@@ -10,6 +10,8 @@
   th.right, td.right { text-align:right }
 </style>
 
+{% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
+
 <h2>Grinding Lot Report — {{ header.lot_no }}</h2>
 <p class="muted">
   Date: {{ header.date }} |
@@ -18,6 +20,7 @@
   Oversize: {{ '%.2f'|format((header.oversize_p80_kg or 0)+(header.oversize_p40_kg or 0)) }} kg
 </p>
 
+{% if admin %}
 <div class="card">
   <h3 style="margin:0 0 6px 0;">Cost Summary</h3>
   <table style="width:auto">
@@ -26,19 +29,30 @@
     <tr><th>Final Cost/kg</th><td class="right">₹{{ '%.2f'|format(header.cost_per_kg or 0) }}</td></tr>
   </table>
 </div>
+{% endif %}
 
 <div class="card">
   <h3 style="margin:0 0 6px 0;">Anneal Allocations</h3>
   <table>
-    <tr><th>Anneal Lot</th><th>Grade</th><th class="right">Qty (kg)</th><th class="right">Anneal Cost/kg (₹)</th><th class="right">Value (₹)</th></tr>
+    <tr>
+      <th>Anneal Lot</th>
+      <th>Grade</th>
+      <th class="right">Qty (kg)</th>
+      {% if admin %}
+        <th class="right">Anneal Cost/kg (₹)</th>
+        <th class="right">Value (₹)</th>
+      {% endif %}
+    </tr>
     {% for r in anneal_rows %}
       {% set row_val = (r.allocated_kg or 0) * (r.anneal_cost_per_kg or 0) %}
       <tr>
         <td>{{ r.anneal_lot_no }}</td>
         <td>{{ r.anneal_grade }}</td>
         <td class="right">{{ '%.2f'|format(r.allocated_kg or 0) }}</td>
-        <td class="right">{{ '%.2f'|format(r.anneal_cost_per_kg or 0) }}</td>
-        <td class="right">{{ '%.2f'|format(row_val) }}</td>
+        {% if admin %}
+          <td class="right">{{ '%.2f'|format(r.anneal_cost_per_kg or 0) }}</td>
+          <td class="right">{{ '%.2f'|format(row_val) }}</td>
+        {% endif %}
       </tr>
     {% endfor %}
   </table>
