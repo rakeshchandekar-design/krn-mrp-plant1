@@ -503,6 +503,40 @@ def migrate_schema(engine):
                     sql = coldef.replace("REAL", "DOUBLE PRECISION")
                     conn.execute(text(f"ALTER TABLE grinding_lots ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
 
+                # --- Grinding Downtime table ---
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS grinding_downtime(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL,
+                    minutes INTEGER NOT NULL,
+                    area TEXT NOT NULL,
+                    reason TEXT NOT NULL
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS grinding_downtime(
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    minutes INT NOT NULL,
+                    area TEXT NOT NULL,
+                    reason TEXT NOT NULL
+                )
+            """))
+
+# --- Safety: ensure grinding_downtime has expected columns ---
+for coldef in [
+    "area TEXT",
+    "reason TEXT"
+]:
+    col = coldef.split()[0]
+    if not _table_has_column(conn, "grinding_downtime", col):
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text(f"ALTER TABLE grinding_downtime ADD COLUMN {coldef}"))
+        else:
+            conn.execute(text(f"ALTER TABLE grinding_downtime ADD COLUMN IF NOT EXISTS {col} {coldef.split(' ',1)[1]}"))
+
 # -------------------------------------------------
 # Constants
 # -------------------------------------------------
