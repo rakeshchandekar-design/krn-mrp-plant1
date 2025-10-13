@@ -388,98 +388,118 @@ def migrate_schema(engine):
                 else:
                     conn.execute(text(f"ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS {col} {coldef.split(' ',1)[1]}"))
 
-                # --- Grinding tables ---
+        # ================================
+        # --- Grinding & Screening (DDL + safety) ---
+        # Matches krn_mrp_app/grinding/routes.py
+        # ================================
         if str(engine.url).startswith("sqlite"):
-            # Base table
+            # Main header table
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS grinding_lots(
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     lot_no TEXT UNIQUE NOT NULL,
                     date DATE NOT NULL,
-                    src_anneal_id INTEGER NOT NULL,
-                    grade TEXT,
-                    weight_kg REAL NOT NULL,
-                    oversize_80_kg REAL NOT NULL DEFAULT 0,
-                    oversize_40_kg REAL NOT NULL DEFAULT 0,
-                    oversize_value REAL NOT NULL DEFAULT 0,
-                    anneal_cost_per_kg REAL NOT NULL DEFAULT 0,
-                    cost_per_kg REAL NOT NULL DEFAULT 0,
-                    qa_status TEXT NOT NULL DEFAULT 'PENDING'
+                    anneal_lot_id INTEGER,                 -- optional FK to anneal_lots.id
+                    src_alloc_json TEXT NOT NULL,          -- {"ANL-20251011-001": 500.0, ...}
+                    grade TEXT NOT NULL,                   -- KIP / KFS family
+                    weight_kg REAL NOT NULL,               -- final lot weight after G&S
+                    oversize_p80_kg REAL NOT NULL DEFAULT 0,  -- +80 kg
+                    oversize_p40_kg REAL NOT NULL DEFAULT 0,  -- +40 kg
+                    input_cost_per_kg REAL NOT NULL DEFAULT 0,   -- weighted input (anneal) cost
+                    process_cost_per_kg REAL NOT NULL DEFAULT 0, -- fixed process cost (₹6/kg)
+                    cost_per_kg REAL NOT NULL DEFAULT 0,          -- final: input + process
+                    qa_status TEXT NOT NULL DEFAULT 'PENDING',
+                    compressibility REAL,                  -- extra QA parameter
+                    remarks TEXT,
+                    created_by TEXT,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """))
-            # QA table
+            # QA header
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS grinding_qa(
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     grinding_lot_id INTEGER NOT NULL,
                     decision TEXT NOT NULL,
+                    oxygen REAL,
                     compressibility REAL,
                     remarks TEXT,
-                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            # QA parameters (name/value pairs)
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS grinding_qa_params(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    grinding_qa_id INTEGER NOT NULL,
+                    param_name TEXT NOT NULL,
+                    param_value TEXT
                 )
             """))
         else:
-            # Base table
+            # Postgres
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS grinding_lots(
                     id SERIAL PRIMARY KEY,
                     lot_no TEXT UNIQUE NOT NULL,
                     date DATE NOT NULL,
-                    src_anneal_id INTEGER NOT NULL REFERENCES anneal_lots(id) ON DELETE RESTRICT,
-                    grade TEXT,
+                    anneal_lot_id INT,
+                    src_alloc_json TEXT NOT NULL,
+                    grade TEXT NOT NULL,
                     weight_kg DOUBLE PRECISION NOT NULL,
-                    oversize_80_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    oversize_40_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    oversize_value DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    anneal_cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    oversize_p80_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    oversize_p40_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    input_cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    process_cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
                     cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    qa_status TEXT NOT NULL DEFAULT 'PENDING'
+                    qa_status TEXT NOT NULL DEFAULT 'PENDING',
+                    compressibility DOUBLE PRECISION,
+                    remarks TEXT,
+                    created_by TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """))
-            # QA table
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS grinding_qa(
                     id SERIAL PRIMARY KEY,
-                    grinding_lot_id INTEGER NOT NULL REFERENCES grinding_lots(id) ON DELETE CASCADE,
+                    grinding_lot_id INT NOT NULL,
                     decision TEXT NOT NULL,
+                    oxygen DOUBLE PRECISION,
                     compressibility DOUBLE PRECISION,
                     remarks TEXT,
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """))
-
-        # --- Indexes (safe to run repeatedly) ---
-        try:
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grinding_lots_date   ON grinding_lots(date)"))
-        except Exception:
-            pass
-        try:
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grinding_lots_src    ON grinding_lots(src_anneal_id)"))
-        except Exception:
-            pass
-        try:
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grinding_lots_status ON grinding_lots(qa_status)"))
-        except Exception:
-            pass
-        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS grinding_qa_params(
+                    id SERIAL PRIMARY KEY,
+                    grinding_qa_id INT NOT NULL,
+                    param_name TEXT NOT NULL,
+                    param_value TEXT
+                )
+            """))
+            # Helpful indexes (no-op if already there)
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grinding_lots_date ON grinding_lots(date)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grinding_lots_qa ON grinding_lots(qa_status)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grinding_qa_lot ON grinding_qa(grinding_lot_id)"))
-        except Exception:
-            pass
 
-        # --- Safety: ensure grinding_lots has expected columns (for older DBs) ---
+        # --- Safety: make sure any missing columns are added (works for both SQLite/Postgres)
         for coldef in [
-            "oversize_80_kg REAL DEFAULT 0",
-            "oversize_40_kg REAL DEFAULT 0",
-            "oversize_value REAL DEFAULT 0",
-            "anneal_cost_per_kg REAL DEFAULT 0",
+            "anneal_lot_id INT",
+            "src_alloc_json TEXT",
+            "oversize_p80_kg REAL DEFAULT 0",
+            "oversize_p40_kg REAL DEFAULT 0",
+            "input_cost_per_kg REAL DEFAULT 0",
+            "process_cost_per_kg REAL DEFAULT 0",
             "cost_per_kg REAL DEFAULT 0",
-            "qa_status TEXT"
+            "compressibility REAL",
         ]:
             col = coldef.split()[0]
             if not _table_has_column(conn, "grinding_lots", col):
                 if str(engine.url).startswith("sqlite"):
                     conn.execute(text(f"ALTER TABLE grinding_lots ADD COLUMN {coldef}"))
                 else:
+                    # map REAL -> DOUBLE PRECISION for Postgres
                     sql = coldef.replace("REAL", "DOUBLE PRECISION")
                     conn.execute(text(f"ALTER TABLE grinding_lots ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
 
