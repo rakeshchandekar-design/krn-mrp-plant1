@@ -2202,8 +2202,56 @@ def _anneal_latest_params_map(db, anneal_ids: list[int]) -> dict[int, dict[str, 
             out[lot_id][nm] = val
     return out
 
+# ---------- Grinding helpers used by QA dashboard / export ----------
+from sqlalchemy import text
+from datetime import date as _date
+
+def _grind_rows_in_range(start_d: _date, end_d: _date):
+    """Return simple rows for dashboard tables (portable SQL: works on SQLite/PG)."""
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT id, date, lot_no, grade, COALESCE(weight_kg,0) AS weight_kg,
+                   COALESCE(qa_status,'') AS qa_status
+            FROM grinding_lots
+            WHERE date >= :s AND date <= :e
+            ORDER BY date, id
+        """), {"s": start_d, "e": end_d}).mappings().all()
+        return [dict(r) for r in rows]
+
+def _grind_all_rows():
+    """All grinding rows (for queue counts when 'all' is requested)."""
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT id, date, lot_no, grade, COALESCE(weight_kg,0) AS weight_kg,
+                   COALESCE(qa_status,'') AS qa_status
+            FROM grinding_lots
+            ORDER BY id DESC
+        """)).mappings().all()
+        return [dict(r) for r in rows]
+
+def _grind_latest_qa_header_map(lot_ids: list[int]):
+    """
+    Get latest Grinding QA header (oxygen, compressibility, decision) per grinding lot.
+    Portable two-step (no DISTINCT ON / ANY required).
+    """
+    out = {}
+    if not lot_ids:
+        return out
+    with engine.begin() as conn:
+        for gid in lot_ids:
+            row = conn.execute(text("""
+                SELECT id, grinding_lot_id, decision, oxygen, compressibility, remarks
+                FROM grinding_qa
+                WHERE grinding_lot_id = :gid
+                ORDER BY id DESC
+                LIMIT 1
+            """), {"gid": gid}).mappings().first()
+            if row:
+                out[gid] = dict(row)
+    return out
+
 # -------------------------------------------------
-# QA Dashboard
+# QA Dashboard (Expanded, includes Grinding)
 # -------------------------------------------------
 @app.get("/qa-dashboard", response_class=HTMLResponse)
 def qa_dashboard(
@@ -2216,10 +2264,9 @@ def qa_dashboard(
         return RedirectResponse("/login", status_code=303)
 
     today = dt.date.today()
-    # detect reset (show all lots) if ?all=1
     show_all = (request.query_params.get("all") == "1")
 
-    # resolve range (default = today)
+    # ---------------- Date Range Setup ----------------
     s_iso = start or today.isoformat()
     e_iso = end or today.isoformat()
     try:
@@ -2229,154 +2276,162 @@ def qa_dashboard(
         s_date = e_date = today
         s_iso = e_iso = today.isoformat()
 
-    # load all, then filter by date for table sections
+    # ---------------- Data Loading ----------------
     heats_all = db.query(Heat).order_by(Heat.id.desc()).all()
     lots_all  = db.query(Lot).order_by(Lot.id.desc()).all()
+    grinds_all = _grinding_rows_in_range(db, dt.date(1970, 1, 1), dt.date(2100, 1, 1))
 
     def _hd(h: Heat) -> dt.date:
         return heat_date_from_no(h.heat_no) or today
-
     def _ld(l: Lot) -> dt.date:
         return lot_date_from_no(l.lot_no) or today
+    def _gd(g: dict) -> dt.date:
+        return g.get("date") or today
 
+    # ---------------- Visible Rows ----------------
     if show_all:
         heats_vis = heats_all
-        lots_vis  = lots_all
-        anneals_vis = _anneal_rows_in_range(db, dt.date(1900, 1, 1), dt.date(3000, 1, 1))
+        lots_vis = lots_all
+        anneals_vis = _anneal_rows_in_range(db, dt.date(1900,1,1), dt.date(3000,1,1))
+        grinds_vis = _grinding_rows_in_range(db, dt.date(1900,1,1), dt.date(3000,1,1))
     else:
         heats_vis = [h for h in heats_all if s_date <= _hd(h) <= e_date]
-        lots_vis  = [l for l in lots_all  if s_date <= _ld(l) <= e_date]
+        lots_vis  = [l for l in lots_all if s_date <= _ld(l) <= e_date]
         anneals_vis = _anneal_rows_in_range(db, s_date, e_date)
-    
-    # KPI (This Month) – based on the month of the END date
+        grinds_vis = _grinding_rows_in_range(db, s_date, e_date)
+
+    # ---------------- Monthly KPIs ----------------
     month_start = e_date.replace(day=1)
-    month_end   = (month_start + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
+    month_end = (month_start + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
     lots_this_month = [l for l in lots_all if month_start <= _ld(l) <= month_end]
+    grinds_this_month = _grinding_rows_in_range(db, month_start, month_end)
 
     def _sum_lots(status: str) -> float:
         s = status.upper()
         return sum(float(l.weight or 0.0) for l in lots_this_month if (l.qa_status or "").upper() == s)
 
+    def _sum_grinds(status: str) -> float:
+        s = status.upper()
+        return sum(float(g["weight_kg"] or 0.0)
+                   for g in grinds_this_month
+                   if (g["qa_status"] or "").upper() == s)
+
+    def _sum_heats(status: str) -> float:
+        s = status.upper()
+        return sum(float(h.actual_output or 0.0)
+                   for h in heats_all
+                   if month_start <= (_hd(h) or today) <= month_end and (h.qa_status or "").upper() == s)
+
+    def _sum_anneals(status: str) -> float:
+        s = status.upper()
+        return sum(float(a["weight_kg"] or 0.0)
+                   for a in _anneal_rows_in_range(db, month_start, month_end)
+                   if (a["qa_status"] or "").upper() == s)
+
+    # ---------------- KPI Buckets ----------------
     kpi = {
         "approved_kg": _sum_lots("APPROVED"),
         "hold_kg": _sum_lots("HOLD"),
         "rejected_kg": _sum_lots("REJECTED"),
     }
-
-    # QA queue counters
-    pending_count = (
-        sum(1 for h in heats_all if (h.qa_status or "").upper() == "PENDING") +
-        sum(1 for l in lots_all  if (l.qa_status or "").upper() == "PENDING")
-        # (Anneal queue cards/logic can be added later if you want)
-    )
-    todays_count = (
-        sum(1 for h in heats_all if _hd(h) == today and (h.qa_status or "").upper() != "PENDING") +
-        sum(1 for l in lots_all  if _ld(l) == today and (l.qa_status or "").upper() != "PENDING")
-    )
-
-    # === EXTRA: separate KPIs for Heats / Atomization Lots / Anneal Lots ===
-    heats_this_month   = [h for h in heats_all if month_start <= (_hd(h) or today) <= month_end]
-    anneals_this_month = _anneal_rows_in_range(db, month_start, month_end)
-
-    def _sum_heats(status: str) -> float:
-        s = status.upper()
-        return sum(float(h.actual_output or 0.0)
-                for h in heats_this_month
-                if (h.qa_status or "").upper() == s)
-
-    def _sum_anneals(status: str) -> float:
-        s = status.upper()
-        return sum(float(a["weight_kg"] or 0.0)
-                for a in anneals_this_month
-                if (a["qa_status"] or "").upper() == s)
-
-    # per-entity KPI buckets (keep your existing combined 'kpi' below untouched)
     kpi_heats = {
         "approved": _sum_heats("APPROVED"),
-        "hold":     _sum_heats("HOLD"),
+        "hold": _sum_heats("HOLD"),
         "rejected": _sum_heats("REJECTED"),
     }
     kpi_lots = {
-        "approved": float(kpi.get("approved_kg", 0.0)),  # reuse your existing lot totals
-        "hold":     float(kpi.get("hold_kg", 0.0)),
+        "approved": float(kpi.get("approved_kg", 0.0)),
+        "hold": float(kpi.get("hold_kg", 0.0)),
         "rejected": float(kpi.get("rejected_kg", 0.0)),
     }
     kpi_anneal = {
         "approved": _sum_anneals("APPROVED"),
-        "hold":     _sum_anneals("HOLD"),
+        "hold": _sum_anneals("HOLD"),
         "rejected": _sum_anneals("REJECTED"),
     }
+    kpi_grind = {
+        "approved": _sum_grinds("APPROVED"),
+        "hold": _sum_grinds("HOLD"),
+        "rejected": _sum_grinds("REJECTED"),
+    }
 
-    # === EXTRA: separate queue counts ===
-    anneals_all   = _anneal_rows_in_range(db, dt.date(1970, 1, 1), dt.date(2100, 1, 1))
+    # ---------------- QA Queue Counts ----------------
+    anneals_all   = _anneal_rows_in_range(db, dt.date(1970,1,1), dt.date(2100,1,1))
     anneals_today = _anneal_rows_in_range(db, today, today)
+    grinds_today  = _grinding_rows_in_range(db, today, today)
 
-    pending_heats  = sum(1 for h in heats_all   if (h.qa_status or "").upper() == "PENDING")
-    pending_lots   = sum(1 for l in lots_all    if (l.qa_status or "").upper() == "PENDING")
+    pending_heats  = sum(1 for h in heats_all if (h.qa_status or "").upper() == "PENDING")
+    pending_lots   = sum(1 for l in lots_all if (l.qa_status or "").upper() == "PENDING")
     pending_anneal = sum(1 for a in anneals_all if (a["qa_status"] or "").upper() == "PENDING")
+    pending_grind  = sum(1 for g in grinds_all if (g["qa_status"] or "").upper() == "PENDING")
 
-    today_heats  = sum(1 for h in heats_all     if _hd(h) == today and (h.qa_status or "").upper() != "PENDING")
-    today_lots   = sum(1 for l in lots_all      if _ld(l) == today and (l.qa_status or "").upper() != "PENDING")
+    today_heats  = sum(1 for h in heats_all if _hd(h) == today and (h.qa_status or "").upper() != "PENDING")
+    today_lots   = sum(1 for l in lots_all if _ld(l) == today and (l.qa_status or "").upper() != "PENDING")
     today_anneal = sum(1 for a in anneals_today if (a["qa_status"] or "").upper() != "PENDING")
+    today_grind  = sum(1 for g in grinds_today if (g["qa_status"] or "").upper() != "PENDING")
 
-    # keep your existing combined counters intact
-    pending_count = pending_count  # (unchanged)
-    todays_count  = todays_count   # (unchanged)
+    # Combined counters
+    pending_count = pending_heats + pending_lots + pending_anneal + pending_grind
+    todays_count  = today_heats + today_lots + today_anneal + today_grind
 
     heat_grades = {h.id: heat_grade(h) for h in heats_vis}
 
-    # --- per-entity queue counts as variables ---
+    # ---------------- Queue Dictionaries ----------------
     queue_pending = {
-        "heats":  int(pending_heats),
-        "lots":   int(pending_lots),
+        "heats": int(pending_heats),
+        "lots": int(pending_lots),
         "anneal": int(pending_anneal),
+        "grind": int(pending_grind),
     }
     queue_today = {
-        "heats":  int(today_heats),
-        "lots":   int(today_lots),
+        "heats": int(today_heats),
+        "lots": int(today_lots),
         "anneal": int(today_anneal),
+        "grind": int(today_grind),
     }
 
-    # totals = sum of parts
-    queue_pending["total"] = queue_pending["heats"] + queue_pending["lots"] + queue_pending["anneal"]
-    queue_today["total"]   = queue_today["heats"]   + queue_today["lots"]   + queue_today["anneal"]
+    queue_pending["total"] = sum(queue_pending.values())
+    queue_today["total"]   = sum(queue_today.values())
 
+    # ---------------- Render Template ----------------
     return templates.TemplateResponse(
-    "qa_dashboard.html",
-    {
-        "request": request,
-        "role": current_role(request),
-        "heats": heats_vis,
-        "lots": lots_vis,
-        "heat_grades": heat_grades,
+        "qa_dashboard.html",
+        {
+            "request": request,
+            "role": current_role(request),
 
-        # Anneal lots
-        "anneals": anneals_vis,
+            "heats": heats_vis,
+            "lots": lots_vis,
+            "heat_grades": heat_grades,
 
-        # Existing combined KPIs
-        "kpi_approved_month": float(kpi.get("approved_kg", 0.0)),
-        "kpi_hold_month":     float(kpi.get("hold_kg", 0.0)),
-        "kpi_rejected_month": float(kpi.get("rejected_kg", 0.0)),
-        "kpi_pending_count":  int(pending_count),
-        "kpi_today_count":    int(todays_count),
+            # Add Anneal and Grinding Lists
+            "anneals": anneals_vis,
+            "grinds": grinds_vis,
 
-        # New per-entity KPIs
-        "kpi_heats":  kpi_heats,
-        "kpi_lots":   kpi_lots,
-        "kpi_anneal": kpi_anneal,
+            # KPI Combined + Per Section
+            "kpi_approved_month": float(kpi.get("approved_kg", 0.0)),
+            "kpi_hold_month": float(kpi.get("hold_kg", 0.0)),
+            "kpi_rejected_month": float(kpi.get("rejected_kg", 0.0)),
+            "kpi_pending_count": int(pending_count),
+            "kpi_today_count": int(todays_count),
 
-        # New per-entity queue dicts (already computed above)
-        "queue_pending": queue_pending,
-        "queue_today":   queue_today,
+            "kpi_heats": kpi_heats,
+            "kpi_lots": kpi_lots,
+            "kpi_anneal": kpi_anneal,
+            "kpi_grind": kpi_grind,
 
-        # toolbar defaults
-        "start": "" if show_all else s_iso,
-        "end": "" if show_all else e_iso,
-        "today_iso": today.isoformat(),
-    },
-)
+            "queue_pending": queue_pending,
+            "queue_today": queue_today,
 
-# ---------- CSV export for QA (heats + lots + anneal, by date range) ----------
+            "start": "" if show_all else s_iso,
+            "end": "" if show_all else e_iso,
+            "today_iso": today.isoformat(),
+        },
+    )
+
+# -------------------------------------------------
+# QA Export (Expanded, includes Grinding)
+# -------------------------------------------------
 @app.get("/qa/export")
 def qa_export(
     start: Optional[str] = None,
@@ -2384,85 +2439,63 @@ def qa_export(
     db: Session = Depends(get_db),
 ):
     heats = db.query(Heat).order_by(Heat.id.asc()).all()
-    lots  = db.query(Lot ).order_by(Lot.id.asc()).all()
-
+    lots  = db.query(Lot).order_by(Lot.id.asc()).all()
     today = dt.date.today()
     s = dt.date.fromisoformat(start) if start else today
     e = dt.date.fromisoformat(end)   if end   else today
 
-    def _hdate(h: Heat) -> dt.date:
-        return heat_date_from_no(h.heat_no) or today
-    def _ldate(l: Lot) -> dt.date:
-        return lot_date_from_no(l.lot_no) or today
-
-    heats_in = [h for h in heats if s <= _hdate(h) <= e]
-    lots_in  = [l for l in lots  if s <= _ldate(l) <= e]
-
-    # ---- NEW: Anneal lots in range ----
+    # Ranges
+    heats_in = [h for h in heats if s <= (heat_date_from_no(h.heat_no) or today) <= e]
+    lots_in  = [l for l in lots if s <= (lot_date_from_no(l.lot_no) or today) <= e]
     anneals_in = _anneal_rows_in_range(db, s, e)
-    
-    # Pull latest param snapshot for these anneal lots
+    grinds_in  = _grinding_rows_in_range(db, s, e)
+
+    # Param maps
     anneal_ids = [a["id"] for a in anneals_in]
     anneal_params = _anneal_latest_params_map(db, anneal_ids)
+    grind_ids = [g["id"] for g in grinds_in]
+    grind_params = _grind_latest_params_map(db, grind_ids)
 
+    # Write CSV
     out = io.StringIO()
     w = out.write
-    # unified header (kept same shape you had)
-    w("Type,ID,Date,Grade/Type,Weight/Output (kg),QA Status,C,Si,S,P,Cu,Ni,Mn,Fe\n")
+    w("Type,ID,Date,Grade/Type,Weight/Output (kg),QA Status,Oxygen,Compressibility,C,Si,S,P,Cu,Ni,Mn,Fe\n")
 
     # Heats
     for h in heats_in:
         chem = h.chemistry
         w(
-            f"HEAT,{h.heat_no},{_hdate(h).isoformat()},"
-            f"{('KRFS' if heat_grade(h)=='KRFS' else 'KRIP')},"
-            f"{float(h.actual_output or 0.0):.1f},{h.qa_status or ''},"
-            f"{(chem.c  if chem else '')},"
-            f"{(chem.si if chem else '')},"
-            f"{(chem.s  if chem else '')},"
-            f"{(chem.p  if chem else '')},"
-            f"{(chem.cu if chem else '')},"
-            f"{(chem.ni if chem else '')},"
-            f"{(chem.mn if chem else '')},"
-            f"{(chem.fe if chem else '')}\n"
+            f"HEAT,{h.heat_no},{(heat_date_from_no(h.heat_no) or today).isoformat()},"
+            f"{heat_grade(h) or ''},{float(h.actual_output or 0.0):.1f},{h.qa_status or ''},,,,,,,,\n"
         )
 
     # Atomization Lots
     for l in lots_in:
         chem = l.chemistry
         w(
-            f"LOT,{l.lot_no},{_ldate(l).isoformat()},{l.grade or ''},"
-            f"{float(l.weight or 0.0):.1f},{l.qa_status or ''},"
-            f"{(chem.c  if chem else '')},"
-            f"{(chem.si if chem else '')},"
-            f"{(chem.s  if chem else '')},"
-            f"{(chem.p  if chem else '')},"
-            f"{(chem.cu if chem else '')},"
-            f"{(chem.ni if chem else '')},"
-            f"{(chem.mn if chem else '')},"
-            f"{(chem.fe if chem else '')}\n"
+            f"LOT,{l.lot_no},{(lot_date_from_no(l.lot_no) or today).isoformat()},{l.grade or ''},"
+            f"{float(l.weight or 0.0):.1f},{l.qa_status or ''},,,,,,,,\n"
         )
 
-   # ---- NEW: Anneal Lots ----
+    # Anneal Lots
     for a in anneals_in:
         p = anneal_params.get(a["id"], {})
-
-        oxygen_str = ""
-        if a.get("oxygen") and float(a["oxygen"]) != 0.0:
-            oxygen_str = f"{float(a['oxygen']):.3f}"
-
+        oxygen = f"{float(a.get('oxygen', 0) or 0):.3f}" if a.get("oxygen") else ""
         w(
             f"ANNEAL,{a['lot_no']},{(a['lot_date'] or today).isoformat()},{a.get('grade','')},"
-            f"{float(a['weight_kg'] or 0.0):.1f},{a.get('qa_status','')},"
-            f"{oxygen_str},"
-            f"{p.get('C','')},"
-            f"{p.get('Si','')},"
-            f"{p.get('S','')},"
-            f"{p.get('P','')},"
-            f"{p.get('Cu','')},"
-            f"{p.get('Ni','')},"
-            f"{p.get('Mn','')},"
-            f"{p.get('Fe','')}\n"
+            f"{float(a['weight_kg'] or 0.0):.1f},{a.get('qa_status','')},{oxygen},,,"
+            f"{p.get('C','')},{p.get('Si','')},{p.get('S','')},{p.get('P','')},{p.get('Cu','')},{p.get('Ni','')},{p.get('Mn','')},{p.get('Fe','')}\n"
+        )
+
+    # Grinding Lots
+    for g in grinds_in:
+        p = grind_params.get(g["id"], {})
+        oxygen = f"{float(g.get('oxygen', 0) or 0):.3f}" if g.get("oxygen") else ""
+        comp = f"{float(g.get('compressibility', 0) or 0):.2f}" if g.get("compressibility") else ""
+        w(
+            f"GRIND,{g['lot_no']},{(g.get('date') or today).isoformat()},{g.get('grade','')},"
+            f"{float(g['weight_kg'] or 0.0):.1f},{g.get('qa_status','')},{oxygen},{comp},"
+            f"{p.get('C','')},{p.get('Si','')},{p.get('S','')},{p.get('P','')},{p.get('Cu','')},{p.get('Ni','')},{p.get('Mn','')},{p.get('Fe','')}\n"
         )
 
     data = out.getvalue().encode("utf-8")
