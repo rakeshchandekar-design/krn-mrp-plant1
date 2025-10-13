@@ -388,6 +388,100 @@ def migrate_schema(engine):
                 else:
                     conn.execute(text(f"ALTER TABLE anneal_downtime ADD COLUMN IF NOT EXISTS {col} {coldef.split(' ',1)[1]}"))
 
+                # --- Grinding tables ---
+        if str(engine.url).startswith("sqlite"):
+            # Base table
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS grinding_lots(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lot_no TEXT UNIQUE NOT NULL,
+                    date DATE NOT NULL,
+                    src_anneal_id INTEGER NOT NULL,
+                    grade TEXT,
+                    weight_kg REAL NOT NULL,
+                    oversize_80_kg REAL NOT NULL DEFAULT 0,
+                    oversize_40_kg REAL NOT NULL DEFAULT 0,
+                    oversize_value REAL NOT NULL DEFAULT 0,
+                    anneal_cost_per_kg REAL NOT NULL DEFAULT 0,
+                    cost_per_kg REAL NOT NULL DEFAULT 0,
+                    qa_status TEXT NOT NULL DEFAULT 'PENDING'
+                )
+            """))
+            # QA table
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS grinding_qa(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    grinding_lot_id INTEGER NOT NULL,
+                    decision TEXT NOT NULL,
+                    compressibility REAL,
+                    remarks TEXT,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+        else:
+            # Base table
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS grinding_lots(
+                    id SERIAL PRIMARY KEY,
+                    lot_no TEXT UNIQUE NOT NULL,
+                    date DATE NOT NULL,
+                    src_anneal_id INTEGER NOT NULL REFERENCES anneal_lots(id) ON DELETE RESTRICT,
+                    grade TEXT,
+                    weight_kg DOUBLE PRECISION NOT NULL,
+                    oversize_80_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    oversize_40_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    oversize_value DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    anneal_cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    qa_status TEXT NOT NULL DEFAULT 'PENDING'
+                )
+            """))
+            # QA table
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS grinding_qa(
+                    id SERIAL PRIMARY KEY,
+                    grinding_lot_id INTEGER NOT NULL REFERENCES grinding_lots(id) ON DELETE CASCADE,
+                    decision TEXT NOT NULL,
+                    compressibility DOUBLE PRECISION,
+                    remarks TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+
+        # --- Indexes (safe to run repeatedly) ---
+        try:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grinding_lots_date   ON grinding_lots(date)"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grinding_lots_src    ON grinding_lots(src_anneal_id)"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grinding_lots_status ON grinding_lots(qa_status)"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grinding_qa_lot ON grinding_qa(grinding_lot_id)"))
+        except Exception:
+            pass
+
+        # --- Safety: ensure grinding_lots has expected columns (for older DBs) ---
+        for coldef in [
+            "oversize_80_kg REAL DEFAULT 0",
+            "oversize_40_kg REAL DEFAULT 0",
+            "oversize_value REAL DEFAULT 0",
+            "anneal_cost_per_kg REAL DEFAULT 0",
+            "cost_per_kg REAL DEFAULT 0",
+            "qa_status TEXT"
+        ]:
+            col = coldef.split()[0]
+            if not _table_has_column(conn, "grinding_lots", col):
+                if str(engine.url).startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE grinding_lots ADD COLUMN {coldef}"))
+                else:
+                    sql = coldef.replace("REAL", "DOUBLE PRECISION")
+                    conn.execute(text(f"ALTER TABLE grinding_lots ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
 
 # -------------------------------------------------
 # Constants
