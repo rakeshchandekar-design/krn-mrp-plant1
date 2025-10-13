@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Grinding Downtime</h2>
+
+<div class="toolbar" style="margin-bottom:10px">
+  <a class="btn" href="/grind/">← Back to Grinding</a>
+</div>
+
+{% if err %}
+  <div class="alert alert-danger" style="margin-bottom:10px">{{ err }}</div>
+{% endif %}
+
+<form method="post">
+  <label>Date</label>
+  <input type="date" name="date" required max="{{ today }}" min="{{ min_date }}">
+
+  <label>Minutes</label>
+  <input type="number" name="minutes" min="1" required>
+
+  <label>Type</label>
+  <select name="area" required>
+    <option value="Production">Production</option>
+    <option value="Maintenance">Maintenance</option>
+    <option value="Power">Power</option>
+    <option value="Other">Other</option>
+  </select>
+
+  <label>Reason</label>
+  <input type="text" name="reason" required>
+
+  <button class="btn btn-primary" type="submit">Log</button>
+</form>
+
+<div class="toolbar" style="margin-top:12px">
+  <a class="btn" href="/grind/downtime.csv">Download CSV</a>
+</div>
+
+<h3 style="margin-top:14px">Recent</h3>
+<table class="table">
+  <tr><th>Date</th><th>Minutes</th><th>Type</th><th>Reason</th></tr>
+  {% for r in logs %}
+    <tr>
+      <td>{{ r.date }}</td>
+      <td>{{ r.minutes }}</td>
+      <td>{{ r.area }}</td>
+      <td>{{ r.reason }}</td>
+    </tr>
+  {% endfor %}
+</table>
+{% endblock %}
