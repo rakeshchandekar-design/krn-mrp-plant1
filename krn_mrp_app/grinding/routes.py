@@ -6,6 +6,7 @@ from sqlalchemy import text
 from starlette.templating import Jinja2Templates
 from typing import Any, Dict, List
 import json, io, csv
+from datetime import date, timedelta, datetime
 
 from krn_mrp_app.deps import engine, require_roles
 
@@ -251,21 +252,36 @@ async def grind_lots(request: Request, dep: None = Depends(require_roles("admin"
     )
     oversize_total = sum((r["oversize_p80_kg"] or 0) + (r["oversize_p40_kg"] or 0) for r in rows)
 
+    is_admin = _is_admin(request)
+
     if csv:
         out = io.StringIO(); w = csv.writer(out)
-        w.writerow(["Date","Lot","Grade","Weight (kg)","+80 (kg)","+40 (kg)","Proc Cost/kg (₹)","Final Cost/kg (₹)","QA"])
+        if is_admin:
+            w.writerow(["Date","Lot","Grade","Weight (kg)","+80 (kg)","+40 (kg)",
+                        "Proc Cost/kg (₹)","Final Cost/kg (₹)","QA"])
+        else:
+            w.writerow(["Date","Lot","Grade","Weight (kg)","+80 (kg)","+40 (kg)","QA"])
+
         for r in rows:
-            w.writerow([
+            base = [
                 r["date"], r["lot_no"], r["grade"],
                 f"{(r['weight_kg'] or 0):.0f}",
                 f"{(r['oversize_p80_kg'] or 0):.2f}",
                 f"{(r['oversize_p40_kg'] or 0):.2f}",
-                f"{(r['process_cost_per_kg'] or 0):.2f}",
-                f"{(r['cost_per_kg'] or 0):.2f}",
-                r["qa_status"] or ""
-            ])
-        return Response(out.getvalue(), media_type="text/csv",
-                        headers={"Content-Disposition":"attachment; filename=grinding_lots.csv"})
+            ]
+            if is_admin:
+                base += [
+                    f"{(r['process_cost_per_kg'] or 0):.2f}",
+                    f"{(r['cost_per_kg'] or 0):.2f}",
+                ]
+            base += [r["qa_status"] or ""]
+            w.writerow(base)
+
+        return Response(
+            out.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition":"attachment; filename=grinding_lots.csv"}
+        )
 
     return templates.TemplateResponse("grinding_lot_list.html", {
         "request": request, "lots": rows,
@@ -494,3 +510,67 @@ async def grind_qa_save(
         conn.execute(text("UPDATE grinding_lots SET qa_status=:st WHERE id=:id"), {"st": dnorm, "id": grind_id})
 
     return RedirectResponse("/qa-dashboard", status_code=303)
+
+# ---------------- DOWNTIME ----------------
+@router.get("/downtime", response_class=HTMLResponse)
+async def grind_downtime_get(request: Request, dep: None = Depends(require_roles("admin","grind"))):
+    today = date.today().isoformat()
+    min_date = (date.today() - timedelta(days=90)).isoformat()
+    with engine.begin() as conn:
+        logs = conn.execute(text("""
+            SELECT date, minutes, area, reason
+            FROM grinding_downtime
+            ORDER BY date DESC, id DESC
+            LIMIT 200
+        """)).mappings().all()
+    return templates.TemplateResponse("grinding_downtime.html", {
+        "request": request,
+        "today": today,
+        "min_date": min_date,
+        "logs": logs,
+        "err": request.query_params.get("err", "")
+    })
+
+@router.post("/downtime", response_class=HTMLResponse)
+async def grind_downtime_post(
+    request: Request,
+    dep: None = Depends(require_roles("admin","grind")),
+    date: str = Form(...),
+    minutes: int = Form(...),
+    area: str = Form(...),
+    reason: str = Form(...)
+):
+    try:
+        d = datetime.strptime(date, "%Y-%m-%d").date()
+    except Exception:
+        return RedirectResponse("/grind/downtime?err=Invalid+date", status_code=303)
+    if (minutes or 0) <= 0:
+        return RedirectResponse("/grind/downtime?err=Minutes+must+be+%3E+0", status_code=303)
+    if not area or not reason:
+        return RedirectResponse("/grind/downtime?err=Area+and+Reason+are+required", status_code=303)
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO grinding_downtime(date, minutes, area, reason)
+            VALUES (:d, :m, :a, :r)
+        """), {"d": d, "m": minutes, "a": area, "r": reason})
+
+    return RedirectResponse("/grind/downtime", status_code=303)
+
+@router.get("/downtime.csv")
+async def grind_downtime_csv(request: Request, dep: None = Depends(require_roles("admin","grind"))):
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT date, minutes, area, reason
+            FROM grinding_downtime
+            ORDER BY date DESC, id DESC
+        """)).mappings().all()
+    out = io.StringIO(); w = csv.writer(out)
+    w.writerow(["Date","Minutes","Type","Reason"])
+    for r in rows:
+        w.writerow([r["date"], r["minutes"], r["area"], r["reason"]])
+    return Response(
+        out.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition":"attachment; filename=grinding_downtime.csv"}
+    )
