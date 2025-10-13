@@ -29,8 +29,10 @@
       <h3>Chemistry</h3>
       <table class="table" style="width:auto">
         {% for a,b in [('C','Si'),('S','P'),('Cu','Ni'),('Mn','Fe')] %}
-        <tr><th>{{a}}</th><td><input name="{{a}}" value="{{ p[a] or '' }}"></td>
-            <th>{{b}}</th><td><input name="{{b}}" value="{{ p[b] or '' }}"></td></tr>
+        <tr>
+          <th>{{a}}</th><td><input name="{{a}}" value="{{ p.get(a, '') }}"></td>
+          <th>{{b}}</th><td><input name="{{b}}" value="{{ p.get(b, '') }}"></td>
+        </tr>
         {% endfor %}
       </table>
     </div>
@@ -39,23 +41,24 @@
       <h3>Physical / PSD</h3>
       <table class="table" style="width:auto">
         <tr>
-          <th>AD</th><td><input name="ad" value="{{ p['ad'] or '' }}"></td>
-          <th>Flow</th><td><input name="flow" value="{{ p['flow'] or '' }}"></td>
+          <th>AD</th><td><input name="ad" value="{{ p.get('ad','') }}"></td>
+          <th>Flow</th><td><input name="flow" value="{{ p.get('flow','') }}"></td>
         </tr>
         <tr>
-          <th>Compressibility</th><td><input name="compressibility" value="{{ q.compressibility or p['compressibility'] or '' }}"></td>
+          <th>Compressibility</th>
+          <td><input name="compressibility" value="{{ q.compressibility or p.get('compressibility','') }}"></td>
           <td colspan="2"></td>
         </tr>
       </table>
 
       <h4 style="margin-top:10px">PSD</h4>
       <table class="table" style="width:auto">
-        <tr><th>+212</th><td><input name="p212" value="{{ p['p212'] or '' }}"></td></tr>
-        <tr><th>+180</th><td><input name="p180" value="{{ p['p180'] or '' }}"></td></tr>
-        <tr><th>-180+150</th><td><input name="n180p150" value="{{ p['n180p150'] or '' }}"></td></tr>
-        <tr><th>-150+75</th><td><input name="n150p75" value="{{ p['n150p75'] or '' }}"></td></tr>
-        <tr><th>-75+45</th><td><input name="n75p45" value="{{ p['n75p45'] or '' }}"></td></tr>
-        <tr><th>-45</th><td><input name="n45" value="{{ p['n45'] or '' }}"></td></tr>
+        <tr><th>+212</th><td><input name="p212" value="{{ p.get('p212','') }}"></td></tr>
+        <tr><th>+180</th><td><input name="p180" value="{{ p.get('p180','') }}"></td></tr>
+        <tr><th>-180+150</th><td><input name="n180p150" value="{{ p.get('n180p150','') }}"></td></tr>
+        <tr><th>-150+75</th><td><input name="n150p75" value="{{ p.get('n150p75','') }}"></td></tr>
+        <tr><th>-75+45</th><td><input name="n75p45" value="{{ p.get('n75p45','') }}"></td></tr>
+        <tr><th>-45</th><td><input name="n45" value="{{ p.get('n45','') }}"></td></tr>
       </table>
     </div>
   </div>
