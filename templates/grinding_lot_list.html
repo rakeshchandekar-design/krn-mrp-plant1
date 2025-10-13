@@ -22,7 +22,6 @@
     <th>Proc Cost/kg (₹)</th><th>Final Cost/kg (₹)</th>
     <th>QA</th><th>Docs</th><th>Action</th>
   </tr>
-  {% set valsum = namespace(v=0.0) %}
   {% for x in lots %}
   <tr class="{% if x.grade and x.grade.startswith('KIP') %} bg-info-subtle {% elif x.grade and x.grade.startswith('KFS') %} bg-warning-subtle {% endif %}">
     <td>{{ x.date }}</td>
