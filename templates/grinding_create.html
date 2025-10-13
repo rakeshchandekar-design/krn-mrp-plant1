@@ -36,7 +36,7 @@
       <th>Allocate (kg)</th>
     </tr>
     {% for r in anneal_rows %}
-    <tr class="{% if r.grade.startswith('KIP') %} bg-info-subtle {% elif r.grade.startswith('KFS') %} bg-warning-subtle {% endif %}">
+    <tr class="{% if r.grade and r.grade.startswith('KIP') %} bg-info-subtle {% elif r.grade and r.grade.startswith('KFS') %} bg-warning-subtle {% endif %}">
       <td>{{ r.lot_no }}</td>
       <td>{{ r.grade }}</td>
       <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
