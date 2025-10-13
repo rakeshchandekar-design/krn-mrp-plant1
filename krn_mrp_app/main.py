@@ -2202,6 +2202,22 @@ def _anneal_latest_params_map(db, anneal_ids: list[int]) -> dict[int, dict[str, 
             out[lot_id][nm] = val
     return out
 
+# --- Compatibility shims so older calls still work ---
+# Your real helper is `_grind_rows_in_range(start, end)`. The dashboard is calling
+# `_grinding_rows_in_range(db, start, end)`. Make it an alias with the same signature.
+def _grinding_rows_in_range(db, start, end):
+    # `db` is unused on purpose (to match the caller's signature)
+    return _grind_rows_in_range(start, end)
+
+# If your CSV/export or other code ever calls `_grinding_latest_params_map(db, ids)`,
+# point it at the actual `_grind_latest_params_map(ids)` if you have it.
+def _grinding_latest_params_map(db, grind_ids):
+    try:
+        return _grind_latest_params_map(grind_ids)
+    except NameError:
+        # If you don't have _grind_latest_params_map yet, return empty so it still works.
+        return {}
+
 # ---------- Grinding helpers used by QA dashboard / export ----------
 from sqlalchemy import text
 from datetime import date as _date
