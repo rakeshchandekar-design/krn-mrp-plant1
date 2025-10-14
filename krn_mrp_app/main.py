@@ -757,7 +757,249 @@ def _ensure_fg_schema(conn):
             else:
                 sql_tail = coldef.replace("REAL", "DOUBLE PRECISION").split(' ', 1)[1]
                 conn.execute(text(f"ALTER TABLE fg_lots ADD COLUMN IF NOT EXISTS {col} {sql_tail}"))
-                
+
+# ================================
+# --- Dispatch (DDL + safety)
+# ================================
+with engine.begin() as conn:
+
+    if str(engine.url).startswith("sqlite"):
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS dispatch_orders(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_no TEXT UNIQUE NOT NULL,
+                date DATE NOT NULL,
+                customer_name TEXT NOT NULL,
+                customer_gstin TEXT,
+                customer_address TEXT,
+                transporter TEXT,
+                vehicle_no TEXT,
+                lr_no TEXT,
+                contact TEXT,
+                remarks TEXT,
+                created_by TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS dispatch_items(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dispatch_id INTEGER NOT NULL,
+                fg_lot_id INTEGER NOT NULL,
+                fg_lot_no TEXT NOT NULL,
+                fg_grade TEXT NOT NULL,
+                qty_kg REAL NOT NULL,
+                -- costing snapshot (admin-only UI)
+                cost_per_kg REAL NOT NULL DEFAULT 0,
+                value REAL NOT NULL DEFAULT 0
+            )
+        """))
+    else:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS dispatch_orders(
+                id SERIAL PRIMARY KEY,
+                order_no TEXT UNIQUE NOT NULL,
+                date DATE NOT NULL,
+                customer_name TEXT NOT NULL,
+                customer_gstin TEXT,
+                customer_address TEXT,
+                transporter TEXT,
+                vehicle_no TEXT,
+                lr_no TEXT,
+                contact TEXT,
+                remarks TEXT,
+                created_by TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS dispatch_items(
+                id SERIAL PRIMARY KEY,
+                dispatch_id INT NOT NULL,
+                fg_lot_id INT NOT NULL,
+                fg_lot_no TEXT NOT NULL,
+                fg_grade TEXT NOT NULL,
+                qty_kg DOUBLE PRECISION NOT NULL,
+                cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                value DOUBLE PRECISION NOT NULL DEFAULT 0
+            )
+        """))
+        # Helpful indexes
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dispatch_orders_date ON dispatch_orders(date)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dispatch_items_dispatch ON dispatch_items(dispatch_id)"))
+
+    # --- Safety: add any missing columns
+    for coldef in [
+        "customer_gstin TEXT",
+        "customer_address TEXT",
+        "transporter TEXT",
+        "vehicle_no TEXT",
+        "lr_no TEXT",
+        "contact TEXT",
+        "remarks TEXT",
+    ]:
+        col = coldef.split()[0]
+        if not _table_has_column(conn, "dispatch_orders", col):
+            if str(engine.url).startswith("sqlite"):
+                conn.execute(text(f"ALTER TABLE dispatch_orders ADD COLUMN {coldef}"))
+            else:
+                conn.execute(text(f"ALTER TABLE dispatch_orders ADD COLUMN IF NOT EXISTS {col} {coldef.split(' ',1)[1]}"))
+
+    for coldef in [
+        "cost_per_kg REAL DEFAULT 0",
+        "value REAL DEFAULT 0",
+    ]:
+        col = coldef.split()[0]
+        if not _table_has_column(conn, "dispatch_items", col):
+            if str(engine.url).startswith("sqlite"):
+                conn.execute(text(f"ALTER TABLE dispatch_items ADD COLUMN {coldef}"))
+            else:
+                sql = coldef.replace("REAL", "DOUBLE PRECISION")
+                conn.execute(text(f"ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
+
+# ================================
+# --- Dispatch helpers (read-only)
+# ================================
+
+def _is_admin_request(request: Request) -> bool:
+    s = getattr(request, "state", None)
+    if not s: return False
+    if getattr(s, "is_admin", False): return True
+    role = getattr(s, "role", None)
+    if isinstance(role, str) and role.lower() == "admin": return True
+    roles = getattr(s, "roles", None)
+    return isinstance(roles, (list, set, tuple)) and "admin" in roles
+
+def _fg_available_rows() -> list[dict]:
+    """
+    Returns APPROVED FG lots with available balance:
+    avail = fg_lots.weight_kg - SUM(dispatch_items.qty_kg for that fg_lot_id)
+    """
+    with engine.begin() as conn:
+        lots = conn.execute(text("""
+            SELECT id, lot_no, date, family, fg_grade,
+                   COALESCE(weight_kg,0)::float AS weight_kg,
+                   COALESCE(cost_per_kg,0)::float AS cost_per_kg,
+                   qa_status, remarks
+            FROM fg_lots
+            WHERE UPPER(COALESCE(qa_status,''))='APPROVED'
+            ORDER BY date DESC, id DESC
+        """)).mappings().all()
+        used_by_fg = dict(conn.execute(text("""
+            SELECT fg_lot_id, COALESCE(SUM(qty_kg),0) AS used
+            FROM dispatch_items
+            GROUP BY fg_lot_id
+        """)).all() or [])
+    out = []
+    for r in lots:
+        used = float(used_by_fg.get(r["id"], 0.0))
+        avail = float(r["weight_kg"] or 0.0) - used
+        if avail > 0.0001:
+            out.append({
+                "fg_lot_id": r["id"],
+                "fg_lot_no": r["lot_no"],
+                "date": r["date"],
+                "family": r["family"],
+                "fg_grade": r["fg_grade"],
+                "available_kg": avail,
+                "cost_per_kg": float(r["cost_per_kg"] or 0.0),
+                "remarks": r.get("remarks",""),
+            })
+    return out
+
+def _dispatch_rows_in_range(start: dt.date, end: dt.date) -> list[dict]:
+    with engine.begin() as conn:
+        orders = conn.execute(text("""
+            SELECT id, order_no, date, customer_name, transporter, vehicle_no, lr_no, remarks
+            FROM dispatch_orders
+            WHERE date BETWEEN :s AND :e
+            ORDER BY date DESC, id DESC
+        """), {"s": start, "e": end}).mappings().all()
+        # attach totals
+        out = []
+        for o in orders:
+            totals = conn.execute(text("""
+                SELECT COALESCE(SUM(qty_kg),0) AS qty,
+                       COALESCE(SUM(value),0) AS val
+                FROM dispatch_items WHERE dispatch_id=:d
+            """), {"d": o["id"]}).mappings().first() or {"qty":0,"val":0}
+            dct = dict(o); dct["total_qty_kg"] = float(totals["qty"] or 0.0); dct["total_value"] = float(totals["val"] or 0.0)
+            out.append(dct)
+    return out
+
+def _dispatch_fetch_order(order_id: int) -> tuple[dict|None, list[dict]]:
+    with engine.begin() as conn:
+        head = conn.execute(text("""
+            SELECT * FROM dispatch_orders WHERE id=:id
+        """), {"id": order_id}).mappings().first()
+        items = conn.execute(text("""
+            SELECT * FROM dispatch_items WHERE dispatch_id=:id ORDER BY id
+        """), {"id": order_id}).mappings().all()
+    return (dict(head) if head else None, [dict(i) for i in items])
+
+def _fg_latest_coa_for_lot(fg_lot_id: int) -> dict|None:
+    """
+    Compose a CoA payload for an FG lot:
+    - Prefer FG QA+params (fg_qa / fg_qa_params)
+    - Fallback: dominant Grinding lot in fg_lots.src_alloc_json -> (grinding_qa, grinding_qa_params)
+    Returns:
+      {
+        "header": {"decision": "...", "remarks": "..."},
+        "params": [{"name":"C","value":"0.02","unit":"","spec_min":"","spec_max":""}, ...]
+      }  or None
+    """
+    with engine.begin() as conn:
+        # FG QA (latest)
+        fgqa = conn.execute(text("""
+            SELECT id, decision, remarks
+            FROM fg_qa WHERE fg_lot_id=:id
+            ORDER BY id DESC LIMIT 1
+        """), {"id": fg_lot_id}).mappings().first()
+        if fgqa:
+            params = conn.execute(text("""
+                SELECT param_name, param_value
+                FROM fg_qa_params WHERE fg_qa_id=:qid ORDER BY id
+            """), {"qid": fgqa["id"]}).mappings().all()
+            return {
+                "header": {"decision": fgqa["decision"], "remarks": fgqa.get("remarks","")},
+                "params": [{"name":p["param_name"], "value":p["param_value"], "unit":"","spec_min":"","spec_max":""} for p in params]
+            }
+
+        # fallback to Grinding from src_alloc_json
+        fg = conn.execute(text("SELECT src_alloc_json FROM fg_lots WHERE id=:id"), {"id": fg_lot_id}).scalar()
+        if not fg: return None
+        try:
+            amap = json.loads(fg)
+        except Exception:
+            amap = {}
+        if not amap: return None
+        # pick the grinding lot with largest allocation
+        top = max(amap.items(), key=lambda kv: float(kv[1] or 0.0))
+        grd_lot_no = top[0]
+        grd = conn.execute(text("SELECT id FROM grinding_lots WHERE lot_no=:ln"), {"ln": grd_lot_no}).mappings().first()
+        if not grd: return None
+
+        grqa = conn.execute(text("""
+            SELECT id, decision, remarks, oxygen, compressibility
+            FROM grinding_qa WHERE grinding_lot_id=:gid
+            ORDER BY id DESC LIMIT 1
+        """), {"gid": grd["id"]}).mappings().first()
+        if not grqa: return None
+        params = conn.execute(text("""
+            SELECT param_name, param_value
+            FROM grinding_qa_params WHERE grinding_qa_id=:qid ORDER BY id
+        """), {"qid": grqa["id"]}).mappings().all()
+        payload = {
+            "header": {"decision": grqa["decision"], "remarks": grqa.get("remarks","")},
+            "params": [{"name":p["param_name"], "value":p["param_value"], "unit":"","spec_min":"","spec_max":""} for p in params]
+        }
+        # include O2 and compressibility if present
+        if grqa.get("oxygen") is not None:
+            payload["params"].insert(0, {"name":"Oxygen","value":f"{float(grqa['oxygen']):.3f}","unit":"","spec_min":"","spec_max":""})
+        if grqa.get("compressibility") is not None:
+            payload["params"].insert(1, {"name":"Compressibility","value":f"{float(grqa['compressibility']):.2f}","unit":"","spec_min":"","spec_max":""})
+        return payload
+
 # -------------------------------------------------
 # Constants
 # -------------------------------------------------
@@ -996,6 +1238,9 @@ from krn_mrp_app.grinding import router as grind_router
 app.include_router(grind_router, prefix="/grind", tags=["Grinding & Screening"])
 from krn_mrp_app.fg.routes import router as fg_router
 app.include_router(fg_router, prefix="/fg", tags=["FG"])
+# -------------- include Dispatch router --------------
+from krn_mrp_app.dispatch import routes as dispatch_routes
+app.include_router(dispatch_routes.router, prefix="/dispatch", tags=["Dispatch"])
 
 # expose python builtins to Jinja
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
