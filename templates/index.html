@@ -4,6 +4,12 @@
   <meta charset="utf-8" />
   <title>KRN – Home</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Favicon (preferred) -->
+  <link rel="icon" type="image/png" href="{{ url_for('static', path='favicon.png') }}">
+  <!-- Fallback to logo if favicon.png isn't present -->
+  <link rel="icon" type="image/png" href="{{ url_for('static', path='KRN_Logo.png') }}">
+
   <style>
     :root{
       --krn-blue:#0e2a47;      /* brand dark blue */
@@ -47,6 +53,8 @@
     .lead{margin:0 0 6px;font-size:16px}
     .small{margin:0;color:var(--muted);font-size:13px}
     .welcome strong{color:var(--krn-blue)}
+    .bullets{margin:8px 0 0 0; padding-left:18px; color:#374151; font-size:14px}
+    .bullets li{margin:4px 0}
 
     /* Modules */
     h2{margin:20px 0 10px 0;font-size:28px}
@@ -62,9 +70,10 @@
       flex-direction:column;
       gap:10px
     }
-    .card h3{margin:2px 0 4px 0;font-size:22px}
+    .card h3{margin:2px 0 4px 0;font-size:22px;display:flex;align-items:center;gap:8px}
     .sub{color:var(--muted);font-size:13px}
     .foot{display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+    .icon{font-size:18px; opacity:.9}
 
     /* Module Open buttons */
     .open{
@@ -93,7 +102,6 @@
   <!-- Top bar -->
   <header class="head">
     <div class="brand">
-      {# ✅ polished: dynamic static reference #}
       <img src="{{ url_for('static', path='KRN_Logo.png') }}" alt="KRN">
       <div>
         <div class="t1">KRN Alloys Pvt. Ltd.</div>
@@ -113,12 +121,19 @@
     <!-- Welcome/Hero -->
     <section class="hero">
       <p class="lead welcome">
-        Welcome to the <strong>KRN MRP/QA application</strong>. The suite unifies GRN tracking, Melting and Atomization production,
-        RAP availability, and QA certification—so every lot and heat stays traceable from raw material to dispatch.
+        <strong>KRN MRP/QA</strong> connects every stage of production—GRN, Melting, Atomization, RAP, Annealing,
+        Grinding, Packing/FG, QA and Dispatch—so each heat and lot remains <strong>end-to-end traceable</strong>
+        with reliable costing and quality records.
       </p>
-      <p class="small">
-        Designed for KRN Alloys operations, it reduces manual effort, safeguards costing &amp; QA data, and provides every team a focused workspace.
-        Your current role is <span class="badge role">{{ role or 'guest' }}</span>. Modules below are enabled based on your permissions.
+      <ul class="bullets">
+        <li>📦 <strong>Material to Dispatch:</strong> single source of truth from receipt to shipment.</li>
+        <li>✅ <strong>QA Integrity:</strong> consistent parameters, decisions and auto-generated CoA.</li>
+        <li>💰 <strong>Cost Control:</strong> secure visibility (Admin only) across process & FG.</li>
+        <li>📈 <strong>Productivity:</strong> daily KPIs and grade-wise outputs for quick decisions.</li>
+      </ul>
+      <p class="small" style="margin-top:8px">
+        Current role: <span class="badge role">{{ role or 'guest' }}</span>.
+        Modules below are enabled based on your permissions.
       </p>
     </section>
 
@@ -128,7 +143,7 @@
       <!-- Dashboard -->
       {% set allow = role in ['admin','view'] %}
       <div class="card">
-        <h3>Dashboard</h3>
+        <h3><span class="icon">📊</span>Dashboard</h3>
         <div class="sub">Admin, View</div>
         <div class="foot">
           {% if allow %}
@@ -143,7 +158,7 @@
       <!-- GRN -->
       {% set allow = role in ['admin','store','view'] %}
       <div class="card">
-        <h3>GRN</h3>
+        <h3><span class="icon">📥</span>GRN</h3>
         <div class="sub">Admin, Store</div>
         <div class="foot">
           {% if allow %}
@@ -157,7 +172,7 @@
       <!-- Melting -->
       {% set allow = role in ['admin','melting','view'] %}
       <div class="card">
-        <h3>Melting</h3>
+        <h3><span class="icon">🔥</span>Melting</h3>
         <div class="sub">Admin, Melting</div>
         <div class="foot">
           {% if allow %}
@@ -171,7 +186,7 @@
       <!-- Atomization -->
       {% set allow = role in ['admin','atom','view'] %}
       <div class="card">
-        <h3>Atomization</h3>
+        <h3><span class="icon">💧</span>Atomization</h3>
         <div class="sub">Admin, Atom</div>
         <div class="foot">
           {% if allow %}
@@ -185,7 +200,7 @@
       <!-- RAP -->
       {% set allow = role in ['admin','rap','view'] %}
       <div class="card">
-        <h3>RAP</h3>
+        <h3><span class="icon">♻️</span>RAP</h3>
         <div class="sub">Admin, RAP</div>
         <div class="foot">
           {% if allow %}
@@ -196,10 +211,10 @@
         </div>
       </div>
 
-      <!-- ANNEALING -->
+      <!-- Annealing -->
       {% set allow = role in ['admin','anneal','view'] %}
       <div class="card">
-        <h3>Annealing</h3>
+        <h3><span class="icon">♨️</span>Annealing</h3>
         <div class="sub">Admin, Anneal</div>
         <div class="foot">
           {% if allow %}
@@ -210,24 +225,24 @@
         </div>
       </div>
 
-      <!-- GRINDING & SCREENING -->
-    {% set allow = role in ['admin','grind','view'] %}
-    <div class="card">
-      <h3>Grinding & Screening</h3>
-      <div class="sub">Admin, Grind</div>
-      <div class="foot">
-        {% if allow %}
-          <a class="open" href="/grind">Open</a>
-        {% else %}
-          <button class="open" disabled>Open</button><span class="deny">✗</span>
-        {% endif %}
+      <!-- Grinding & Screening -->
+      {% set allow = role in ['admin','grind','view'] %}
+      <div class="card">
+        <h3><span class="icon">⚙️</span>Grinding &amp; Screening</h3>
+        <div class="sub">Admin, Grind</div>
+        <div class="foot">
+          {% if allow %}
+            <a class="open" href="/grind">Open</a>
+          {% else %}
+            <button class="open" disabled>Open</button><span class="deny">✗</span>
+          {% endif %}
+        </div>
       </div>
-    </div>
-      
-      <!-- FG / PACKING -->
+
+      <!-- FG / Packing -->
       {% set allow = role in ['admin','fg','view'] %}
       <div class="card">
-        <h3>Packing & FG</h3>
+        <h3><span class="icon">📦</span>Packing &amp; FG</h3>
         <div class="sub">Admin, FG</div>
         <div class="foot">
           {% if allow %}
@@ -238,24 +253,24 @@
         </div>
       </div>
 
-      <!-- DISPATCH -->
-{% set allow = role in ['admin','dispatch','store','view'] %}
-<div class="card">
-  <h3>Dispatch</h3>
-  <div class="sub">Admin, Dispatch, Store, View</div>
-  <div class="foot">
-    {% if allow %}
-      <a class="open" href="/dispatch">Open</a>
-    {% else %}
-      <button class="open" disabled>Open</button><span class="deny">✗</span>
-    {% endif %}
-  </div>
-</div>
+      <!-- Dispatch -->
+      {% set allow = role in ['admin','dispatch','store','view'] %}
+      <div class="card">
+        <h3><span class="icon">🚚</span>Dispatch</h3>
+        <div class="sub">Admin, Dispatch, Store, View</div>
+        <div class="foot">
+          {% if allow %}
+            <a class="open" href="/dispatch">Open</a>
+          {% else %}
+            <button class="open" disabled>Open</button><span class="deny">✗</span>
+          {% endif %}
+        </div>
+      </div>
 
       <!-- QA -->
       {% set allow = role in ['admin','qa','view'] %}
       <div class="card">
-        <h3>QA</h3>
+        <h3><span class="icon">✅</span>QA</h3>
         <div class="sub">Admin, QA</div>
         <div class="foot">
           {% if allow %}
@@ -265,11 +280,12 @@
           {% endif %}
         </div>
       </div>
-   
     </section>
 
     {% if role == 'guest' %}
-      <p class="small" style="margin-top:16px">Tip: sign in with your department. Contact Admin in case of any issue - rakesh@krnalloys.co.in.</p>
+      <p class="small" style="margin-top:16px">
+        Tip: sign in with your department. Contact Admin for access issues — rakesh@krnalloys.co.in.
+      </p>
     {% endif %}
   </main>
 
