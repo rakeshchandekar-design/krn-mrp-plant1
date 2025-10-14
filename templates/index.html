@@ -238,6 +238,20 @@
         </div>
       </div>
 
+      <!-- DISPATCH -->
+{% set allow = role in ['admin','dispatch','store','view'] %}
+<div class="card">
+  <h3>Dispatch</h3>
+  <div class="sub">Admin, Dispatch, Store, View</div>
+  <div class="foot">
+    {% if allow %}
+      <a class="open" href="/dispatch">Open</a>
+    {% else %}
+      <button class="open" disabled>Open</button><span class="deny">✗</span>
+    {% endif %}
+  </div>
+</div>
+
       <!-- QA -->
       {% set allow = role in ['admin','qa','view'] %}
       <div class="card">
