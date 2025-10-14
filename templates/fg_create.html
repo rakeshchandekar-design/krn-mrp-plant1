@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Create FG Lot</h2>
+<div class="toolbar" style="margin-bottom:10px"><a class="btn" href="/fg/">← Back to FG</a></div>
+{% if err %}<div class="alert alert-danger" style="margin:10px 0">{{ err }}</div>{% endif %}
+
+<form method="post" id="createForm">
+  <label>FG Grade</label>
+  <select name="fg_grade" id="fg_grade" required>
+    <option value="">-- select --</option>
+    {% for g in grades %}
+      <option value="{{ g }}">{{ g }}</option>
+    {% endfor %}
+  </select>
+
+  <label style="margin-top:6px">Lot Weight (kg)</label>
+  <input id="lot_weight" name="lot_weight" type="number" step="0.01" min="0.01" required>
+
+  <p class="muted">Daily capacity: {{ '%.0f'|format(cap or 0) }} kg</p>
+
+  <h3 style="margin-top:10px">Allocate from APPROVED Grinding</h3>
+  <table class="table">
+    <tr>
+      <th>Grinding Lot</th><th>Family</th><th>Avail (kg)</th><th>Cost/kg (₹)</th><th>Allocate (kg)</th>
+    </tr>
+    {% for r in src_rows %}
+      <tr>
+        <td>{{ r.lot_no }}</td>
+        <td>{{ r.grade }}</td>
+        <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
+        <td>{{ '%.2f'|format(r.grind_cost_per_kg or 0) }}</td>
+        <td><input name="alloc_{{ r.lot_no }}" type="number" step="0.01" min="0" max="{{ r.available_kg }}"></td>
+      </tr>
+    {% endfor %}
+    <tr class="table-info">
+      <th colspan="4" style="text-align:right">Total Alloc</th>
+      <th><span id="total_alloc">0.00</span></th>
+    </tr>
+  </table>
+
+  <div id="client_err" class="alert alert-danger" style="display:none;margin:10px 0"></div>
+  <button id="submitBtn" class="btn btn-primary" type="submit" disabled>Create FG Lot</button>
+</form>
+
+<script>
+(function(){
+  const lotWeightEl = document.getElementById('lot_weight');
+  const totalSpan = document.getElementById('total_alloc');
+  const errBox = document.getElementById('client_err');
+  const submitBtn = document.getElementById('submitBtn');
+  const allocInputs = Array.from(document.querySelectorAll('input[name^="alloc_"]'));
+  function fmt(n){return (isFinite(n)?n:0).toFixed(2);}
+  function total(){
+    let s=0; for(const el of allocInputs){const v=parseFloat(el.value); if(!isNaN(v)) s+=v;}
+    return s;
+  }
+  function recompute(){
+    const t = total(); totalSpan.textContent = fmt(t);
+    const lw = parseFloat(lotWeightEl.value||'0');
+    let msg='';
+    if(!(lw>0)) msg='Enter Lot Weight (> 0).';
+    else if(Math.abs(t-lw)>0.01) msg='Lot Weight must equal total allocated.';
+    if(msg){errBox.style.display=''; errBox.textContent=msg; submitBtn.disabled=true;}
+    else {errBox.style.display='none'; submitBtn.disabled=false;}
+  }
+  [...allocInputs, lotWeightEl].forEach(el=>el.addEventListener('input',recompute));
+  recompute();
+})();
+</script>
+{% endblock %}
