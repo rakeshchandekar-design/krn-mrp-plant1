@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  @media print { .no-print { display:none } }
+  .right { text-align:right }
+  .muted { color:#6b7280 }
+  .card { border:1px solid #e5e7eb; border-radius:8px; padding:10px; margin:10px 0 }
+  table { border-collapse:collapse; width:100% }
+  th, td { border:1px solid #e5e7eb; padding:6px 8px; text-align:left }
+  th.right, td.right { text-align:right }
+</style>
+
+<h2>Dispatch Challan — {{ head.order_no }}</h2>
+<p class="muted">
+  Date: {{ head.date }} |
+  Customer: {{ head.customer_name }} |
+  Transporter: {{ head.transporter or '' }} |
+  Vehicle: {{ head.vehicle_no or '' }} |
+  LR: {{ head.lr_no or '' }}
+</p>
+
+<div class="card">
+  <h3 style="margin:0 0 6px 0;">Customer</h3>
+  <div>{{ head.customer_name }}</div>
+  {% if head.customer_gstin %}<div>GSTIN: {{ head.customer_gstin }}</div>{% endif %}
+  {% if head.customer_address %}<div>Address: {{ head.customer_address }}</div>{% endif %}
+  {% if head.contact %}<div>Contact: {{ head.contact }}</div>{% endif %}
+</div>
+
+<div class="card">
+  <h3 style="margin:0 0 6px 0;">Items</h3>
+  <table>
+    <tr>
+      <th>FG Lot</th><th>FG Grade</th><th class="right">Qty (kg)</th>
+      {% if is_admin %}<th class="right">Cost/kg (₹)</th><th class="right">Value (₹)</th>{% endif %}
+    </tr>
+    {% for it in items %}
+    <tr>
+      <td>{{ it.fg_lot_no }}</td>
+      <td>{{ it.fg_grade }}</td>
+      <td class="right">{{ '%.2f'|format(it.qty_kg or 0) }}</td>
+      {% if is_admin %}<td class="right">{{ '%.2f'|format(it.cost_per_kg or 0) }}</td>
+      <td class="right">{{ '%.2f'|format(it.value or 0) }}</td>{% endif %}
+    </tr>
+    {% endfor %}
+    <tr class="table-info">
+      <th colspan="2" style="text-align:right">TOTAL</th>
+      <th class="right">{{ '%.2f'|format(total_qty or 0) }}</th>
+      {% if is_admin %}<th></th><th class="right">{{ '%.2f'|format(total_val or 0) }}</th>{% endif %}
+    </tr>
+  </table>
+</div>
+
+<p class="no-print"><button class="btn" onclick="window.print()">Print / Save as PDF</button></p>
+{% endblock %}
