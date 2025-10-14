@@ -29,7 +29,10 @@
     <td class="right">{{ '%.2f'|format(it.qty_kg or 0) }}</td>
     {% if is_admin %}<td class="right">{{ '%.2f'|format(it.cost_per_kg or 0) }}</td>
     <td class="right">{{ '%.2f'|format(it.value or 0) }}</td>{% endif %}
-    <td><a href="/dispatch/coa/{{ it.fg_lot_id }}" target="_blank">CoA</a></td>
+    <td>
+    <a href="/dispatch/coa/{{ it.fg_lot_id }}" target="_blank">CoA</a> 
+    <a href="/dispatch/trace/{{ it.fg_lot_no }}" target="_blank">Trace</a>
+    </td>
   </tr>
   {% endfor %}
   <tr class="table-info">
