@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+{% set has_header = header is defined and header %}
+{% set q = qa if qa is defined else {'decision':'PENDING','remarks':''} %}
+<h2>FG QA — {{ has_header and header.lot_no or '' }}</h2>
+<div class="toolbar" style="margin:10px 0; display:flex; gap:8px; flex-wrap:wrap">
+  <a class="btn" href="/qa-dashboard">← Back to QA Dashboard</a>
+  {% if has_header %}
+    <a class="btn" href="/fg/lots">FG Lots</a>
+    <a class="btn" href="/fg/trace/{{ header.id }}" target="_blank">Trace</a>
+    <a class="btn" href="/fg/pdf/{{ header.id }}" target="_blank">CoA</a>
+  {% endif %}
+</div>
+
+<p class="muted">
+  {% if has_header %}
+    Date: {{ header.date }} | Family: {{ header.family }} | Grade: {{ header.fg_grade }} |
+    Weight: {{ '%.0f'|format(header.weight_kg or 0) }} kg
+  {% endif %}
+</p>
+
+<form method="post" action="/fg/qa/{{ has_header and header.id or 0 }}">
+  <table class="table" style="width:auto">
+    <tr>
+      <th>Decision</th>
+      <td>
+        {% set dec = (q.decision or 'PENDING')|upper %}
+        <select name="decision">
+          <option value="APPROVED" {{ 'selected' if dec=='APPROVED' else '' }}>APPROVED</option>
+          <option value="HOLD" {{ 'selected' if dec=='HOLD' else '' }}>HOLD</option>
+          <option value="REJECTED" {{ 'selected' if dec=='REJECTED' else '' }}>REJECTED</option>
+          <option value="PENDING" {{ 'selected' if dec=='PENDING' else '' }}>PENDING</option>
+        </select>
+      </td>
+    </tr>
+    <tr><th>Remarks</th><td><input name="remarks" style="width:100%" value="{{ q.remarks or '' }}"></td></tr>
+  </table>
+  <div style="margin-top:12px">
+    <button class="btn" type="submit">Save QA</button>
+    <a class="btn" href="/qa-dashboard">Cancel</a>
+    <a class="btn" href="/fg/trace/{{ header.id }}" target="_blank">Trace</a>
+    <a class="btn" href="/fg/pdf/{{ header.id }}" target="_blank">CoA</a>
+  </div>
+</form>
+{% endblock %}
