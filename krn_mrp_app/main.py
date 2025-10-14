@@ -2387,8 +2387,45 @@ def _grind_latest_qa_header_map(lot_ids: list[int]):
                 out[gid] = dict(row)
     return out
 
+def _fg_rows_in_range(db, s_date, e_date):
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT id, lot_no, date, family, fg_grade, weight_kg, qa_status
+            FROM fg_lots
+            WHERE date BETWEEN :s AND :e
+            ORDER BY date DESC, id DESC
+        """), {"s": s_date, "e": e_date}).mappings().all()
+        return [dict(r) for r in rows]
+
 # -------------------------------------------------
-# QA Dashboard (Expanded, includes Grinding)
+# FG Helpers (non-destructive)
+# -------------------------------------------------
+def _fg_rows_in_range(db, s_date, e_date):
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT id, lot_no, date, family, fg_grade, weight_kg, qa_status
+            FROM fg_lots
+            WHERE date BETWEEN :s AND :e
+            ORDER BY date DESC, id DESC
+        """), {"s": s_date, "e": e_date}).mappings().all()
+    return [dict(r) for r in rows]
+
+def _fg_latest_params_map(db, fg_ids: list[int]):
+    if not fg_ids: return {}
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT fgp.fg_qa_id, fgp.param_name, fgp.param_value, fq.fg_lot_id
+            FROM fg_qa_params fgp
+            JOIN fg_qa fq ON fq.id = fgp.fg_qa_id
+            WHERE fq.fg_lot_id = ANY(:ids)
+        """), {"ids": fg_ids}).mappings().all()
+    out: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        out.setdefault(r["fg_lot_id"], {})[r["param_name"]] = r["param_value"]
+    return out
+
+# -------------------------------------------------
+# QA Dashboard (Expanded, includes Grinding + FG)
 # -------------------------------------------------
 @app.get("/qa-dashboard", response_class=HTMLResponse)
 def qa_dashboard(
@@ -2417,6 +2454,7 @@ def qa_dashboard(
     heats_all = db.query(Heat).order_by(Heat.id.desc()).all()
     lots_all  = db.query(Lot).order_by(Lot.id.desc()).all()
     grinds_all = _grinding_rows_in_range(db, dt.date(1970, 1, 1), dt.date(2100, 1, 1))
+    fgs_all    = _fg_rows_in_range(db, dt.date(1970, 1, 1), dt.date(2100, 1, 1))
 
     def _hd(h: Heat) -> dt.date:
         return heat_date_from_no(h.heat_no) or today
@@ -2424,41 +2462,48 @@ def qa_dashboard(
         return lot_date_from_no(l.lot_no) or today
     def _gd(g: dict) -> dt.date:
         return g.get("date") or today
+    def _fd(f: dict) -> dt.date:
+        return f.get("date") or today
 
     # ---------------- Visible Rows ----------------
     if show_all:
         heats_vis = heats_all
-        lots_vis = lots_all
+        lots_vis  = lots_all
         anneals_vis = _anneal_rows_in_range(db, dt.date(1900,1,1), dt.date(3000,1,1))
-        grinds_vis = _grinding_rows_in_range(db, dt.date(1900,1,1), dt.date(3000,1,1))
+        grinds_vis  = _grinding_rows_in_range(db, dt.date(1900,1,1), dt.date(3000,1,1))
+        fgs_vis     = _fg_rows_in_range(db, dt.date(1900,1,1), dt.date(3000,1,1))
     else:
         heats_vis = [h for h in heats_all if s_date <= _hd(h) <= e_date]
         lots_vis  = [l for l in lots_all if s_date <= _ld(l) <= e_date]
         anneals_vis = _anneal_rows_in_range(db, s_date, e_date)
-        grinds_vis = _grinding_rows_in_range(db, s_date, e_date)
+        grinds_vis  = _grinding_rows_in_range(db, s_date, e_date)
+        fgs_vis     = _fg_rows_in_range(db, s_date, e_date)
 
     # ---------------- Monthly KPIs ----------------
     month_start = e_date.replace(day=1)
     month_end = (month_start + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
     lots_this_month = [l for l in lots_all if month_start <= _ld(l) <= month_end]
     grinds_this_month = _grinding_rows_in_range(db, month_start, month_end)
+    fgs_this_month    = _fg_rows_in_range(db, month_start, month_end)
 
     def _sum_lots(status: str) -> float:
         s = status.upper()
         return sum(float(l.weight or 0.0) for l in lots_this_month if (l.qa_status or "").upper() == s)
-
     def _sum_grinds(status: str) -> float:
         s = status.upper()
         return sum(float(g["weight_kg"] or 0.0)
                    for g in grinds_this_month
                    if (g["qa_status"] or "").upper() == s)
-
+    def _sum_fgs(status: str) -> float:
+        s = status.upper()
+        return sum(float(f["weight_kg"] or 0.0)
+                   for f in fgs_this_month
+                   if (f["qa_status"] or "").upper() == s)
     def _sum_heats(status: str) -> float:
         s = status.upper()
         return sum(float(h.actual_output or 0.0)
                    for h in heats_all
                    if month_start <= (_hd(h) or today) <= month_end and (h.qa_status or "").upper() == s)
-
     def _sum_anneals(status: str) -> float:
         s = status.upper()
         return sum(float(a["weight_kg"] or 0.0)
@@ -2491,83 +2536,85 @@ def qa_dashboard(
         "hold": _sum_grinds("HOLD"),
         "rejected": _sum_grinds("REJECTED"),
     }
+    kpi_fg = {
+        "approved": _sum_fgs("APPROVED"),
+        "hold": _sum_fgs("HOLD"),
+        "rejected": _sum_fgs("REJECTED"),
+    }
 
     # ---------------- QA Queue Counts ----------------
     anneals_all   = _anneal_rows_in_range(db, dt.date(1970,1,1), dt.date(2100,1,1))
     anneals_today = _anneal_rows_in_range(db, today, today)
     grinds_today  = _grinding_rows_in_range(db, today, today)
+    fgs_today     = _fg_rows_in_range(db, today, today)
 
     pending_heats  = sum(1 for h in heats_all if (h.qa_status or "").upper() == "PENDING")
     pending_lots   = sum(1 for l in lots_all if (l.qa_status or "").upper() == "PENDING")
     pending_anneal = sum(1 for a in anneals_all if (a["qa_status"] or "").upper() == "PENDING")
     pending_grind  = sum(1 for g in grinds_all if (g["qa_status"] or "").upper() == "PENDING")
+    pending_fg     = sum(1 for f in fgs_all if (f["qa_status"] or "").upper() == "PENDING")
 
     today_heats  = sum(1 for h in heats_all if _hd(h) == today and (h.qa_status or "").upper() != "PENDING")
     today_lots   = sum(1 for l in lots_all if _ld(l) == today and (l.qa_status or "").upper() != "PENDING")
     today_anneal = sum(1 for a in anneals_today if (a["qa_status"] or "").upper() != "PENDING")
     today_grind  = sum(1 for g in grinds_today if (g["qa_status"] or "").upper() != "PENDING")
+    today_fg     = sum(1 for f in fgs_today if (f["qa_status"] or "").upper() != "PENDING")
 
-    # Combined counters
-    pending_count = pending_heats + pending_lots + pending_anneal + pending_grind
-    todays_count  = today_heats + today_lots + today_anneal + today_grind
+    pending_count = pending_heats + pending_lots + pending_anneal + pending_grind + pending_fg
+    todays_count  = today_heats + today_lots + today_anneal + today_grind + today_fg
 
     heat_grades = {h.id: heat_grade(h) for h in heats_vis}
 
-    # ---------------- Queue Dictionaries ----------------
     queue_pending = {
         "heats": int(pending_heats),
         "lots": int(pending_lots),
         "anneal": int(pending_anneal),
         "grind": int(pending_grind),
+        "fg": int(pending_fg),
     }
     queue_today = {
         "heats": int(today_heats),
         "lots": int(today_lots),
         "anneal": int(today_anneal),
         "grind": int(today_grind),
+        "fg": int(today_fg),
     }
 
     queue_pending["total"] = sum(queue_pending.values())
     queue_today["total"]   = sum(queue_today.values())
 
-    # ---------------- Render Template ----------------
     return templates.TemplateResponse(
         "qa_dashboard.html",
         {
             "request": request,
             "role": current_role(request),
-
             "heats": heats_vis,
             "lots": lots_vis,
             "heat_grades": heat_grades,
-
-            # Add Anneal and Grinding Lists
             "anneals": anneals_vis,
             "grinds": grinds_vis,
-
-            # KPI Combined + Per Section
+            "fgs": fgs_vis,
             "kpi_approved_month": float(kpi.get("approved_kg", 0.0)),
             "kpi_hold_month": float(kpi.get("hold_kg", 0.0)),
             "kpi_rejected_month": float(kpi.get("rejected_kg", 0.0)),
             "kpi_pending_count": int(pending_count),
             "kpi_today_count": int(todays_count),
-
             "kpi_heats": kpi_heats,
             "kpi_lots": kpi_lots,
             "kpi_anneal": kpi_anneal,
             "kpi_grind": kpi_grind,
-
+            "kpi_fg": kpi_fg,
             "queue_pending": queue_pending,
             "queue_today": queue_today,
-
             "start": "" if show_all else s_iso,
             "end": "" if show_all else e_iso,
             "today_iso": today.isoformat(),
         },
     )
 
+
 # -------------------------------------------------
-# QA Export (Expanded, includes Grinding)
+# QA Export (Expanded, includes Grinding + FG)
 # -------------------------------------------------
 @app.get("/qa/export")
 def qa_export(
@@ -2581,40 +2628,36 @@ def qa_export(
     s = dt.date.fromisoformat(start) if start else today
     e = dt.date.fromisoformat(end)   if end   else today
 
-    # Ranges
     heats_in = [h for h in heats if s <= (heat_date_from_no(h.heat_no) or today) <= e]
     lots_in  = [l for l in lots if s <= (lot_date_from_no(l.lot_no) or today) <= e]
     anneals_in = _anneal_rows_in_range(db, s, e)
     grinds_in  = _grinding_rows_in_range(db, s, e)
+    fgs_in     = _fg_rows_in_range(db, s, e)
 
-    # Param maps
     anneal_ids = [a["id"] for a in anneals_in]
-    anneal_params = _anneal_latest_params_map(db, anneal_ids)
-    grind_ids = [g["id"] for g in grinds_in]
-    grind_params = _grind_latest_params_map(db, grind_ids)
+    grind_ids  = [g["id"] for g in grinds_in]
+    fg_ids     = [f["id"] for f in fgs_in]
 
-    # Write CSV
+    anneal_params = _anneal_latest_params_map(db, anneal_ids)
+    grind_params  = _grind_latest_params_map(db, grind_ids)
+    fg_params     = _fg_latest_params_map(db, fg_ids)
+
     out = io.StringIO()
     w = out.write
     w("Type,ID,Date,Grade/Type,Weight/Output (kg),QA Status,Oxygen,Compressibility,C,Si,S,P,Cu,Ni,Mn,Fe\n")
 
-    # Heats
     for h in heats_in:
-        chem = h.chemistry
         w(
             f"HEAT,{h.heat_no},{(heat_date_from_no(h.heat_no) or today).isoformat()},"
             f"{heat_grade(h) or ''},{float(h.actual_output or 0.0):.1f},{h.qa_status or ''},,,,,,,,\n"
         )
 
-    # Atomization Lots
     for l in lots_in:
-        chem = l.chemistry
         w(
             f"LOT,{l.lot_no},{(lot_date_from_no(l.lot_no) or today).isoformat()},{l.grade or ''},"
             f"{float(l.weight or 0.0):.1f},{l.qa_status or ''},,,,,,,,\n"
         )
 
-    # Anneal Lots
     for a in anneals_in:
         p = anneal_params.get(a["id"], {})
         oxygen = f"{float(a.get('oxygen', 0) or 0):.3f}" if a.get("oxygen") else ""
@@ -2624,7 +2667,6 @@ def qa_export(
             f"{p.get('C','')},{p.get('Si','')},{p.get('S','')},{p.get('P','')},{p.get('Cu','')},{p.get('Ni','')},{p.get('Mn','')},{p.get('Fe','')}\n"
         )
 
-    # Grinding Lots
     for g in grinds_in:
         p = grind_params.get(g["id"], {})
         oxygen = f"{float(g.get('oxygen', 0) or 0):.3f}" if g.get("oxygen") else ""
@@ -2635,13 +2677,22 @@ def qa_export(
             f"{p.get('C','')},{p.get('Si','')},{p.get('S','')},{p.get('P','')},{p.get('Cu','')},{p.get('Ni','')},{p.get('Mn','')},{p.get('Fe','')}\n"
         )
 
+    for f in fgs_in:
+        p = fg_params.get(f["id"], {})
+        w(
+            f"FG,{f['lot_no']},{(f.get('date') or today).isoformat()},{f.get('fg_grade','')},"
+            f"{float(f['weight_kg'] or 0.0):.1f},{f.get('qa_status','')},,,"
+            f"{p.get('C','')},{p.get('Si','')},{p.get('S','')},{p.get('P','')},{p.get('Cu','')},{p.get('Ni','')},{p.get('Mn','')},{p.get('Fe','')}\n"
+        )
+
     data = out.getvalue().encode("utf-8")
     fname = f"qa_export_{s.isoformat()}_{e.isoformat()}.csv"
     return StreamingResponse(
         io.BytesIO(data),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'}
+        headers={"Content-Disposition": f'attachment; filename=\"{fname}\"'}
     )
+
 
 # -------------------------------------------------
 # Traceability - LOT (existing)
