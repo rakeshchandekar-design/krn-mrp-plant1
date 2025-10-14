@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>FG Trace — {{ header.lot_no }}</h2>
+<div class="toolbar" style="margin:8px 0 12px;">
+  <a class="btn" href="/fg/lots">← Back to Lots</a>
+  <a class="btn" href="/fg/pdf/{{ header.id }}" target="_blank">Open CoA</a>
+</div>
+
+<p class="muted">
+  Date: {{ header.date }} | Family: {{ header.family }} | Grade: {{ header.fg_grade }} |
+  Weight: {{ '%.0f'|format(header.weight_kg or 0) }} kg
+</p>
+
+<table class="table">
+  <tr>
+    <th>Grinding Lot</th><th>Family</th>
+    <th class="right">Qty (kg)</th>
+    <th class="right">Cost/kg (₹)</th>
+    <th class="right">Value (₹)</th>
+  </tr>
+  {% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
+  {% for r in grind_rows %}
+    {% set val = (r.allocated_kg or 0) * (r.grind_cost_per_kg or 0) %}
+    <tr>
+      <td>{{ r.grind_lot_no }}</td>
+      <td>{{ r.grind_grade }}</td>
+      <td class="right">{{ '%.2f'|format(r.allocated_kg or 0) }}</td>
+      <td class="right">{{ '%.2f'|format(r.grind_cost_per_kg or 0) }}</td>
+      <td class="right">{{ admin and ('%.2f'|format(val)) or '-' }}</td>
+    </tr>
+  {% endfor %}
+</table>
+{% endblock %}
