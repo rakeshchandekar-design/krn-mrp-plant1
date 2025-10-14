@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Dispatch Orders</h2>
+
+<div class="toolbar" style="margin:8px 0 12px; gap:8px; display:flex; flex-wrap:wrap">
+  <a class="btn" href="/dispatch">← Back</a>
+  <form method="get" action="/dispatch/orders" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+    <label>From</label><input type="date" name="from_date" value="{{ from_date or today }}">
+    <label>To</label><input type="date" name="to_date" value="{{ to_date or today }}">
+    <button class="btn" type="submit">Fetch</button>
+    <a class="btn" href="/dispatch/orders?from_date={{ today }}&to_date={{ today }}">Today</a>
+    <a class="btn" href="/dispatch/orders">Reset</a>
+    <a class="btn" href="/dispatch/orders?csv_export=1{% if from_date %}&from_date={{ from_date }}{% endif %}{% if to_date %}&to_date={{ to_date }}{% endif %}">Download CSV</a>
+  </form>
+</div>
+
+<table class="table">
+  <tr>
+    <th>Date</th><th>Order No</th><th>Customer</th><th>Transporter</th><th>Vehicle</th><th>LR No</th>
+    <th class="right">Qty (kg)</th>
+    {% if is_admin %}<th class="right">Value (₹)</th>{% endif %}
+    <th>Actions</th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.date }}</td>
+    <td>{{ r.order_no }}</td>
+    <td>{{ r.customer_name }}</td>
+    <td>{{ r.transporter or '' }}</td>
+    <td>{{ r.vehicle_no or '' }}</td>
+    <td>{{ r.lr_no or '' }}</td>
+    <td class="right">{{ '%.1f'|format(r.total_qty_kg or 0) }}</td>
+    {% if is_admin %}<td class="right">{{ '%.2f'|format(r.total_value or 0) }}</td>{% endif %}
+    <td>
+      <a href="/dispatch/view/{{ r.id }}">View</a> |
+      <a href="/dispatch/pdf/{{ r.id }}" target="_blank">PDF</a>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% endblock %}
