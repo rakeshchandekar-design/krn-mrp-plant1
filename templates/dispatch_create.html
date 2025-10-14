@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Create Dispatch</h2>
+
+<div class="toolbar" style="margin:8px 0 12px;">
+  <a class="btn" href="/dispatch">← Back</a>
+  <a class="btn" href="/dispatch/orders">Orders</a>
+</div>
+
+{% if err %}<div class="alert alert-danger" style="margin:8px 0">{{ err }}</div>{% endif %}
+
+<form method="post">
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
+    <div>
+      <label>Date</label>
+      <input type="date" name="date" value="{{ today }}" required>
+    </div>
+    <div>
+      <label>Customer Name</label>
+      <input type="text" name="customer_name" required>
+    </div>
+    <div>
+      <label>Customer GSTIN</label>
+      <input type="text" name="customer_gstin">
+    </div>
+    <div>
+      <label>Contact</label>
+      <input type="text" name="contact">
+    </div>
+    <div style="grid-column: 1 / -1;">
+      <label>Customer Address</label>
+      <input type="text" name="customer_address" style="width:100%">
+    </div>
+    <div>
+      <label>Transporter</label>
+      <input type="text" name="transporter">
+    </div>
+    <div>
+      <label>Vehicle No</label>
+      <input type="text" name="vehicle_no">
+    </div>
+    <div>
+      <label>LR No</label>
+      <input type="text" name="lr_no">
+    </div>
+    <div style="grid-column: 1 / -1;">
+      <label>Remarks</label>
+      <input type="text" name="remarks" style="width:100%">
+    </div>
+  </div>
+
+  <h3 style="margin-top:12px">Allocate FG Lots</h3>
+  <table class="table">
+    <tr>
+      <th>Date</th><th>FG Lot</th><th>Family</th><th>FG Grade</th>
+      <th>Available (kg)</th>
+      {% if is_admin %}<th>Cost/kg (₹)</th>{% endif %}
+      <th>Dispatch Qty (kg)</th>
+    </tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.date }}</td>
+      <td>{{ r.fg_lot_no }}</td>
+      <td>{{ r.family }}</td>
+      <td>{{ r.fg_grade }}</td>
+      <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
+      {% if is_admin %}<td>{{ '%.2f'|format(r.cost_per_kg or 0) }}</td>{% endif %}
+      <td>
+        <input type="number" step="0.01" min="0" max="{{ r.available_kg }}" name="q_{{ r.fg_lot_id }}">
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <button class="btn" type="submit">Save Dispatch</button>
+</form>
+
+{% endblock %}
