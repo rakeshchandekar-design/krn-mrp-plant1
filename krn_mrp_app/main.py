@@ -533,6 +533,124 @@ with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE grinding_downtime ADD COLUMN {coldef}"))
             else:
                 conn.execute(text(f"ALTER TABLE grinding_downtime ADD COLUMN IF NOT EXISTS {col} {coldef.split(' ',1)[1]}"))
+# ================================
+# --- Packing & FG (DDL + safety)
+# ================================
+if str(engine.url).startswith("sqlite"):
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS fg_lots(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lot_no TEXT UNIQUE NOT NULL,
+            date DATE NOT NULL,
+            family TEXT NOT NULL,                  -- 'KIP' or 'KFS' or 'OVERSIZE'
+            fg_grade TEXT NOT NULL,                -- e.g. 'KIP 80.29', 'KFS 15/45', 'Premixes 01.01', etc.
+            weight_kg REAL NOT NULL,
+            -- costing
+            base_cost_per_kg REAL NOT NULL DEFAULT 0,   -- weighted avg source Grinding cost/kg
+            surcharge_per_kg REAL NOT NULL DEFAULT 0,   -- per-grade surcharge
+            cost_per_kg REAL NOT NULL DEFAULT 0,        -- base + surcharge
+            -- linkage
+            src_alloc_json TEXT NOT NULL,          -- {"GRD-20251011-001": 500.0, ...}
+            qa_status TEXT NOT NULL DEFAULT 'PENDING',
+            remarks TEXT,
+            created_by TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS fg_qa(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fg_lot_id INTEGER NOT NULL,
+            decision TEXT NOT NULL,
+            remarks TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS fg_qa_params(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fg_qa_id INTEGER NOT NULL,
+            param_name TEXT NOT NULL,
+            param_value TEXT
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS fg_downtime(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date DATE NOT NULL,
+            minutes INTEGER NOT NULL,
+            area TEXT NOT NULL,
+            reason TEXT NOT NULL
+        )
+    """))
+else:
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS fg_lots(
+            id SERIAL PRIMARY KEY,
+            lot_no TEXT UNIQUE NOT NULL,
+            date DATE NOT NULL,
+            family TEXT NOT NULL,
+            fg_grade TEXT NOT NULL,
+            weight_kg DOUBLE PRECISION NOT NULL,
+            base_cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+            surcharge_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+            cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+            src_alloc_json TEXT NOT NULL,
+            qa_status TEXT NOT NULL DEFAULT 'PENDING',
+            remarks TEXT,
+            created_by TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS fg_qa(
+            id SERIAL PRIMARY KEY,
+            fg_lot_id INT NOT NULL,
+            decision TEXT NOT NULL,
+            remarks TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS fg_qa_params(
+            id SERIAL PRIMARY KEY,
+            fg_qa_id INT NOT NULL,
+            param_name TEXT NOT NULL,
+            param_value TEXT
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS fg_downtime(
+            id SERIAL PRIMARY KEY,
+            date DATE NOT NULL,
+            minutes INT NOT NULL,
+            area TEXT NOT NULL,
+            reason TEXT NOT NULL
+        )
+    """))
+    # helpful indexes
+    conn.execute(text("CREATE INDEX IF NOT EXISTS idx_fg_lots_date ON fg_lots(date)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS idx_fg_lots_qa ON fg_lots(qa_status)"))
+
+# --- Safety: add any missing columns (both engines) ---
+for coldef in [
+    "family TEXT",
+    "fg_grade TEXT",
+    "weight_kg REAL",
+    "base_cost_per_kg REAL DEFAULT 0",
+    "surcharge_per_kg REAL DEFAULT 0",
+    "cost_per_kg REAL DEFAULT 0",
+    "src_alloc_json TEXT",
+    "qa_status TEXT",
+    "remarks TEXT",
+]:
+    col = coldef.split()[0]
+    if not _table_has_column(conn, "fg_lots", col):
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text(f"ALTER TABLE fg_lots ADD COLUMN {coldef}"))
+        else:
+            sql = coldef.replace("REAL", "DOUBLE PRECISION")
+            conn.execute(text(f"ALTER TABLE fg_lots ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
 
 # -------------------------------------------------
 # Constants
@@ -819,10 +937,11 @@ USER_DB = {
     "melting": {"password": "melting", "role": "melting"},
     "atom":    {"password": "atom",    "role": "atom"},
     "rap":     {"password": "rap",     "role": "rap"},
-    "anneal": {"password": "anneal", "role": "anneal"},
-    "grind": {"password": "grind", "role": "grind"},
+    "anneal":  {"password": "anneal", "role": "anneal"},
+    "grind":   {"password": "grind", "role": "grind"},
+    "fg":      {"password": "fg", "role": "fg"},
     "qa":      {"password": "qa",      "role": "qa"},
-    "krn":    {"password": "krn",    "role": "view"},
+    "krn":     {"password": "krn",    "role": "view"},
 }
 
 def current_username(request: Request) -> str:
