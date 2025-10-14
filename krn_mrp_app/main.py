@@ -652,6 +652,109 @@ for coldef in [
             sql = coldef.replace("REAL", "DOUBLE PRECISION")
             conn.execute(text(f"ALTER TABLE fg_lots ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
 
+# --- FG schema bootstrap ---
+def _ensure_fg_schema(conn):
+    is_sqlite = (conn.dialect.name == "sqlite")
+
+    if is_sqlite:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fg_lots(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date DATE NOT NULL,
+                lot_no TEXT UNIQUE NOT NULL,
+                source_grind_id INTEGER,             -- optional FK to grinding_lots.id
+                src_grind_json TEXT,                 -- {"GRD-20241014-001": 500.0, ...}
+                fg_grade TEXT NOT NULL,              -- e.g. KIP 80.29, Premixes 01.01, KFS 15/45
+                weight_kg REAL NOT NULL DEFAULT 0,
+                input_cost_per_kg REAL NOT NULL DEFAULT 0,   -- from grinding
+                surcharge_per_kg REAL NOT NULL DEFAULT 0,    -- FG surcharge by grade
+                cost_per_kg REAL NOT NULL DEFAULT 0,         -- input + surcharge
+                qa_status TEXT NOT NULL DEFAULT 'PENDING',
+                remarks TEXT,
+                created_by TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fg_qa(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fg_lot_id INTEGER NOT NULL,
+                decision TEXT NOT NULL,
+                oxygen REAL,
+                compressibility REAL,
+                remarks TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fg_qa_params(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fg_qa_id INTEGER NOT NULL,
+                param_name TEXT NOT NULL,
+                param_value TEXT
+            )
+        """))
+    else:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fg_lots(
+                id SERIAL PRIMARY KEY,
+                date DATE NOT NULL,
+                lot_no TEXT UNIQUE NOT NULL,
+                source_grind_id INT,
+                src_grind_json TEXT,
+                fg_grade TEXT NOT NULL,
+                weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                input_cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                surcharge_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                qa_status TEXT NOT NULL DEFAULT 'PENDING',
+                remarks TEXT,
+                created_by TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fg_qa(
+                id SERIAL PRIMARY KEY,
+                fg_lot_id INT NOT NULL,
+                decision TEXT NOT NULL,
+                oxygen DOUBLE PRECISION,
+                compressibility DOUBLE PRECISION,
+                remarks TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fg_qa_params(
+                id SERIAL PRIMARY KEY,
+                fg_qa_id INT NOT NULL,
+                param_name TEXT NOT NULL,
+                param_value TEXT
+            )
+        """))
+        # helpful indexes
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_fg_lots_date ON fg_lots(date)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_fg_lots_qa ON fg_lots(qa_status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_fg_qa_lot ON fg_qa(fg_lot_id)"))
+
+    # Safety: add any columns that might be missing (works for both backends)
+    for coldef in [
+        "source_grind_id INT",
+        "src_grind_json TEXT",
+        "input_cost_per_kg REAL DEFAULT 0",
+        "surcharge_per_kg REAL DEFAULT 0",
+        "cost_per_kg REAL DEFAULT 0",
+        "remarks TEXT",
+        "created_by TEXT",
+    ]:
+        col = coldef.split()[0]
+        if not _table_has_column(conn, "fg_lots", col):
+            if conn.dialect.name == "sqlite":
+                conn.execute(text(f"ALTER TABLE fg_lots ADD COLUMN {coldef}"))
+            else:
+                sql_tail = coldef.replace("REAL", "DOUBLE PRECISION").split(' ', 1)[1]
+                conn.execute(text(f"ALTER TABLE fg_lots ADD COLUMN IF NOT EXISTS {col} {sql_tail}"))
+                
 # -------------------------------------------------
 # Constants
 # -------------------------------------------------
