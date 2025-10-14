@@ -327,3 +327,79 @@ async def dispatch_coa_pdf(request: Request, fg_lot_id: int, dep: None = Depends
         "coa": coa,
         "is_admin": _is_admin(request),
     })
+
+# ---------------- TRACE CHAIN ----------------
+@router.get("/trace/{fg_lot_no}", response_class=HTMLResponse)
+async def dispatch_trace(request: Request, fg_lot_no: str, dep: None = Depends(require_roles("admin","qa","dispatch","view"))):
+    """Trace full flow of a given FG Lot → Grinding → Annealing → Atomization → Melting → GRN"""
+    fg_lot_no = fg_lot_no.strip().upper()
+    trace = {"FG": None, "Grinding": None, "Annealing": None, "Atomization": None, "Melting": None, "GRN": None}
+    with engine.begin() as conn:
+        # 1. FG lot
+        fg = conn.execute(text("SELECT * FROM fg_lots WHERE UPPER(lot_no)=:ln"), {"ln": fg_lot_no}).mappings().first()
+        if not fg:
+            raise HTTPException(status_code=404, detail=f"FG Lot {fg_lot_no} not found")
+        trace["FG"] = dict(fg)
+
+        # 2. Grinding lots (from FG src_alloc_json)
+        try:
+            src_alloc = json.loads(fg["src_alloc_json"] or "{}")
+        except Exception:
+            src_alloc = {}
+        grinding_keys = list(src_alloc.keys())
+        grind_rows = []
+        for glot in grinding_keys:
+            g = conn.execute(text("SELECT * FROM grinding_lots WHERE lot_no=:ln"), {"ln": glot}).mappings().first()
+            if g: grind_rows.append(dict(g))
+        trace["Grinding"] = grind_rows
+
+        # 3. Annealing → via grinding_lots.src_alloc_json
+        anneal_rows = []
+        for g in grind_rows:
+            try:
+                amap = json.loads(g["src_alloc_json"] or "{}")
+            except Exception:
+                amap = {}
+            for al in amap.keys():
+                a = conn.execute(text("SELECT * FROM annealing_lots WHERE lot_no=:ln"), {"ln": al}).mappings().first()
+                if a: anneal_rows.append(dict(a))
+        trace["Annealing"] = anneal_rows
+
+        # 4. Atomization → via annealing_lots.src_alloc_json
+        atom_rows = []
+        for a in anneal_rows:
+            try:
+                amap = json.loads(a["src_alloc_json"] or "{}")
+            except Exception:
+                amap = {}
+            for at in amap.keys():
+                atm = conn.execute(text("SELECT * FROM atomization_lots WHERE lot_no=:ln"), {"ln": at}).mappings().first()
+                if atm: atom_rows.append(dict(atm))
+        trace["Atomization"] = atom_rows
+
+        # 5. Melting → via atomization_lots.src_alloc_json
+        melt_rows = []
+        for m in atom_rows:
+            try:
+                amap = json.loads(m["src_alloc_json"] or "{}")
+            except Exception:
+                amap = {}
+            for ml in amap.keys():
+                mel = conn.execute(text("SELECT * FROM melting_lots WHERE lot_no=:ln"), {"ln": ml}).mappings().first()
+                if mel: melt_rows.append(dict(mel))
+        trace["Melting"] = melt_rows
+
+        # 6. GRN — from melting_lots.grn_no
+        grn_rows = []
+        for mel in melt_rows:
+            grn_no = mel.get("grn_no")
+            if grn_no:
+                grn = conn.execute(text("SELECT * FROM grn_headers WHERE grn_no=:no"), {"no": grn_no}).mappings().first()
+                if grn: grn_rows.append(dict(grn))
+        trace["GRN"] = grn_rows
+
+    return templates.TemplateResponse("dispatch_trace.html", {
+        "request": request,
+        "fg_lot_no": fg_lot_no,
+        "trace": trace
+    })
