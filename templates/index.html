@@ -223,6 +223,20 @@
         {% endif %}
       </div>
     </div>
+      
+      <!-- FG / PACKING -->
+      {% set allow = role in ['admin','fg','view'] %}
+      <div class="card">
+        <h3>Packing & FG</h3>
+        <div class="sub">Admin, FG</div>
+        <div class="foot">
+          {% if allow %}
+            <a class="open" href="/fg">Open</a>
+          {% else %}
+            <button class="open" disabled>Open</button><span class="deny">✗</span>
+          {% endif %}
+        </div>
+      </div>
 
       <!-- QA -->
       {% set allow = role in ['admin','qa','view'] %}
