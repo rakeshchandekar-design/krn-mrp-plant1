@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  @media print { .no-print { display:none } }
+  .right { text-align:right }
+  .muted { color:#6b7280 }
+  .card { border:1px solid #e5e7eb; border-radius:8px; padding:12px; margin:12px 0 }
+  table { border-collapse:collapse; width:100% }
+  th, td { border:1px solid #e5e7eb; padding:6px 8px; text-align:left }
+  th.right, td.right { text-align:right }
+  .head { display:flex; align-items:center; justify-content:space-between }
+  .brand { display:flex; align-items:center; gap:10px }
+  .brand img { height:48px }
+  .title { font-size:20px; font-weight:700 }
+</style>
+
+<div class="head">
+  <div class="brand">
+    <img src="{{ url_for('static', path='KRN_Logo.png') }}" alt="KRN">
+    <div>
+      <div class="title">KRN Alloys Pvt. Ltd.</div>
+      <div class="muted">Certificate of Analysis</div>
+    </div>
+  </div>
+  <div class="muted">Date: {{ (fg.date or '') }}</div>
+</div>
+
+<div class="card">
+  <table style="width:auto">
+    <tr><th>FG Lot</th><td>{{ fg.lot_no }}</td></tr>
+    <tr><th>FG Grade</th><td>{{ fg.fg_grade }}</td></tr>
+    <tr><th>Family</th><td>{{ fg.family }}</td></tr>
+    <tr><th>Weight (kg)</th><td>{{ '%.0f'|format(fg.weight_kg or 0) }}</td></tr>
+    <tr><th>QA Status</th><td>{{ fg.qa_status or '' }}</td></tr>
+    {% if is_admin %}<tr><th>Cost/kg (₹)</th><td>{{ '%.2f'|format(fg.cost_per_kg or 0) }}</td></tr>{% endif %}
+    <tr><th>Remarks</th><td>{{ fg.remarks or '' }}</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3 style="margin:0 0 6px 0;">Parameters</h3>
+  {% if coa and coa.params and coa.params|length > 0 %}
+  <table>
+    <tr><th>Parameter</th><th class="right">Value</th></tr>
+    {% for p in coa.params %}
+      <tr><td>{{ p.name }}</td><td class="right">{{ p.value }}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">No QA parameters available for this FG lot.</p>
+  {% endif %}
+</div>
+
+<p class="no-print"><button class="btn" onclick="window.print()">Print / Save as PDF</button></p>
+{% endblock %}
