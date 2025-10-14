@@ -6,20 +6,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>KRN Alloys Pvt Ltd</title>
 
-  {# ✅ polished: dynamic URL for CSS #}
+  {# ✅ Add favicon here - applies globally to all pages #}
+  <link rel="icon" type="image/png" href="{{ url_for('static', path='favicon.png') }}"/>
+
+  {# ✅ Dynamic URL for CSS #}
   <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}"/>
 
   <style>
-    /* make brand text visually equal to page H1 */
-    nav .header-brand h1{font-size:2.25rem; font-weight:800; line-height:1.1; margin:0}
-    nav .header-brand img{height:48px}
-    footer { text-align:center; font-size:0.75rem; color:#666; margin-top:20px; }
+    nav .header-brand h1 {
+      font-size: 2.25rem;
+      font-weight: 800;
+      line-height: 1.1;
+      margin: 0;
+    }
+    nav .header-brand img { height: 48px; }
+    footer {
+      text-align: center;
+      font-size: 0.75rem;
+      color: #666;
+      margin-top: 20px;
+    }
   </style>
 </head>
 <body>
 <nav>
   <div class="header-brand">
-    {# ✅ polished: dynamic URL for logo #}
+    {# ✅ Dynamic URL for logo #}
     <img src="{{ url_for('static', path='KRN_Logo.png') }}" alt="KRN" />
     <h1>KRN Alloys Pvt Ltd</h1>
   </div>
