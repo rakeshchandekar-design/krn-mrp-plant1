@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Dispatch — {{ head.order_no }}</h2>
+
+<div class="toolbar" style="margin:8px 0 12px;">
+  <a class="btn" href="/dispatch/orders">← Back to Orders</a>
+  <a class="btn" href="/dispatch/pdf/{{ head.id }}" target="_blank">PDF</a>
+</div>
+
+<p class="muted">
+  Date: {{ head.date }} |
+  Customer: {{ head.customer_name }} |
+  Transporter: {{ head.transporter or '' }} |
+  Vehicle: {{ head.vehicle_no or '' }} |
+  LR: {{ head.lr_no or '' }}
+</p>
+
+<table class="table">
+  <tr>
+    <th>FG Lot</th><th>FG Grade</th><th class="right">Qty (kg)</th>
+    {% if is_admin %}<th class="right">Cost/kg (₹)</th><th class="right">Value (₹)</th>{% endif %}
+    <th>CoA</th>
+  </tr>
+  {% for it in items %}
+  <tr>
+    <td>{{ it.fg_lot_no }}</td>
+    <td>{{ it.fg_grade }}</td>
+    <td class="right">{{ '%.2f'|format(it.qty_kg or 0) }}</td>
+    {% if is_admin %}<td class="right">{{ '%.2f'|format(it.cost_per_kg or 0) }}</td>
+    <td class="right">{{ '%.2f'|format(it.value or 0) }}</td>{% endif %}
+    <td><a href="/dispatch/coa/{{ it.fg_lot_id }}" target="_blank">CoA</a></td>
+  </tr>
+  {% endfor %}
+  <tr class="table-info">
+    <th colspan="2" style="text-align:right">TOTAL</th>
+    <th class="right">{{ '%.2f'|format(total_qty or 0) }}</th>
+    {% if is_admin %}<th></th><th class="right">{{ '%.2f'|format(total_val or 0) }}</th>{% endif %}
+    <th></th>
+  </tr>
+</table>
+
+{% endblock %}
