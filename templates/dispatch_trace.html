@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Traceability Chain for {{ fg_lot_no }}</h2>
+
+<div class="toolbar" style="margin:8px 0 12px;">
+  <a class="btn" href="/dispatch">← Back</a>
+</div>
+
+{% macro render_table(title, rows, keys) -%}
+  <h3>{{ title }}</h3>
+  {% if rows and rows|length > 0 %}
+  <table class="table">
+    <tr>{% for k in keys %}<th>{{ k }}</th>{% endfor %}</tr>
+    {% for r in rows %}
+    <tr>{% for k in keys %}<td>{{ r.get(k, '') }}</td>{% endfor %}</tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">No records found</p>
+  {% endif %}
+{%- endmacro %}
+
+{{ render_table("FG Lot", [trace["FG"]], ["lot_no","fg_grade","family","date","weight_kg","qa_status"]) }}
+{{ render_table("Grinding", trace["Grinding"], ["lot_no","date","grade","weight_kg","qa_status"]) }}
+{{ render_table("Annealing", trace["Annealing"], ["lot_no","date","temp","weight_kg","qa_status"]) }}
+{{ render_table("Atomization", trace["Atomization"], ["lot_no","date","grade","total_output_kg","qa_status"]) }}
+{{ render_table("Melting", trace["Melting"], ["lot_no","date","heat_no","metal_input_kg","grn_no"]) }}
+{{ render_table("GRN", trace["GRN"], ["grn_no","vendor","invoice_no","date"]) }}
+
+{% endblock %}
