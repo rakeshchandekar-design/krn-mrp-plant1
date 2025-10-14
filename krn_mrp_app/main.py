@@ -888,6 +888,8 @@ from krn_mrp_app.annealing import router as anneal_router
 app.include_router(anneal_router, prefix="/anneal", tags=["Annealing"])
 from krn_mrp_app.grinding import router as grind_router
 app.include_router(grind_router, prefix="/grind", tags=["Grinding & Screening"])
+from krn_mrp_app.fg.routes import router as fg_router
+app.include_router(fg_router, prefix="/fg", tags=["FG"])
 
 # expose python builtins to Jinja
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)
