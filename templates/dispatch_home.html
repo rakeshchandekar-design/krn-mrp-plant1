@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Dispatch — Available FG Lots</h2>
+
+<div class="toolbar" style="margin:8px 0 12px; display:flex; gap:8px; flex-wrap:wrap">
+  <a class="btn" href="/dispatch/create">Create Dispatch</a>
+  <a class="btn" href="/dispatch/orders">View Orders</a>
+</div>
+
+<table class="table">
+  <tr>
+    <th>Date</th><th>FG Lot</th><th>Family</th><th>FG Grade</th>
+    <th>Available (kg)</th>
+    {% if is_admin %}<th>Cost/kg (₹)</th>{% endif %}
+    <th>Remarks</th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.date }}</td>
+    <td>{{ r.fg_lot_no }}</td>
+    <td>{{ r.family }}</td>
+    <td>{{ r.fg_grade }}</td>
+    <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
+    {% if is_admin %}<td>{{ '%.2f'|format(r.cost_per_kg or 0) }}</td>{% endif %}
+    <td>{{ r.remarks or '' }}</td>
+  </tr>
+  {% endfor %}
+  <tr class="table-info">
+    <th colspan="4">TOTAL Available</th>
+    <th>{{ '%.1f'|format(total_avail or 0) }}</th>
+    {% if is_admin %}<th></th>{% endif %}
+    <th></th>
+  </tr>
+</table>
+
+{% endblock %}
