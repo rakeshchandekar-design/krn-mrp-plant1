@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Packing & FG</h1>
+<div class="grid-2">
+  <div class="card">
+    <h3>KPIs (Today)</h3>
+    <table class="table small">
+      <tr><th>Lots Today</th><td>{{ lots_today }}</td></tr>
+      <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
+      <tr><th>Capacity (kg)</th><td>{{ '%.0f'|format(cap or 0) }}</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>Production — Last 5 Days</h3>
+    <table class="table small">
+      <tr><th>Date</th><th>Actual (kg)</th></tr>
+      {% for r in last5 %}
+        <tr><td>{{ r.date }}</td><td>{{ '%.0f'|format(r.qty or 0) }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+
+<div class="grid-2" style="margin-top:12px">
+  <div class="card">
+    <h3>Live Stock — FG</h3>
+    <table class="table small">
+      <tr><th>FG Grade</th><th>Qty (kg)</th></tr>
+      {% for s in live_stock %}
+        <tr><td>{{ s.fg_grade }}</td><td>{{ '%.0f'|format(s.qty or 0) }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div></div>
+</div>
+
+<div class="toolbar" style="margin-top:10px">
+  <a class="btn btn-primary" href="/fg/create">Create FG Lot</a>
+  <a class="btn" href="/fg/lots">View Lots</a>
+</div>
+{% endblock %}
