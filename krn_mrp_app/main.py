@@ -2519,11 +2519,11 @@ def atom_page(
         {
             "request": request,
             "role": current_role(request),
+            "today_iso": dt.date.today().isoformat(),  # caps date inputs (max)
             "heats": heats,
             "lots": lots,
             "heat_grades": grades,
             "available_map": available_map,
-            "today_iso": today.isoformat(),
             "start": s,
             "end": e,
             "atom_eff_today": eff_today,
