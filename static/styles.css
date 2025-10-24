@@ -222,3 +222,20 @@ footer{
 .badge { display:inline-block; padding:2px 10px; border-radius:9999px; font-size:12px; font-weight:600; color:#fff; }
 .badge-krip { background:#16a34a; } /* green */
 .badge-krfs { background:#0ea5e9; } /* blue */
+
+/* --- Inline allocation row (RAP table) --- */
+.alloc-row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:nowrap;              /* keep on one line */
+}
+
+.alloc-row input[type="date"]{ max-width:140px }
+.alloc-row input[type="number"]{ max-width:120px }
+.alloc-row input[type="text"]{ flex:1; min-width:200px } /* remarks grows */
+
+.alloc-row .btn{ white-space:nowrap }
+
+/* Helpful so controls sit centered vertically in table cells */
+table td, table th{ vertical-align: middle }
