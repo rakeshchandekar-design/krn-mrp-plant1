@@ -5,26 +5,23 @@
 <div class="page-wrap" style="max-width:900px;margin:16px auto;padding:0 16px">
   <h1>New GRN</h1>
 
-  <!-- top tools -->
   <div class="toolbar" style="display:flex;gap:10px;margin:8px 0 12px">
     <a class="btn ghost" href="/grn">← Back to GRN</a>
   </div>
 
-  {# optional error message from server-side validation #}
   {% if error_text %}
     <div class="alert error" role="alert" style="margin:8px 0 12px">
       {{ error_text }}
     </div>
   {% endif %}
 
-  <form class="blue-ui" method="post" action="/grn/new"
+  <form class="blue-ui" method="post" action="/grn/new" enctype="multipart/form-data"
         style="border:1px solid #e5e7eb;border-radius:12px;padding:16px">
     <fieldset {% if read_only %}disabled{% endif %}>
+
       <div class="form-row">
         <label for="date">Date</label>
-        <!-- block future dates, allow up to 4 days back (provided by server) -->
-        <input id="date" name="date" type="date"
-               required min="{{ min_date }}" max="{{ max_date }}">
+        <input id="date" name="date" type="date" required min="{{ min_date }}" max="{{ max_date }}">
         <div class="muted">Allowed: today to 4 days back (no future date)</div>
       </div>
 
@@ -45,14 +42,34 @@
 
       <div class="form-row">
         <label for="qty">Qty (kg)</label>
-        <input id="qty" name="qty" type="number" step="0.1" min="0.1"
-               inputmode="decimal" required>
+        <input id="qty" name="qty" type="number" step="0.1" min="0.1" inputmode="decimal" required>
       </div>
 
       <div class="form-row">
         <label for="price">Price (₹/kg)</label>
-        <input id="price" name="price" type="number" step="0.01" min="0"
-               inputmode="decimal" required>
+        <input id="price" name="price" type="number" step="0.01" min="0" inputmode="decimal" required>
+      </div>
+
+      <!-- NEW: Transport details -->
+      <div class="form-row">
+        <label for="transporter">Transporter Name</label>
+        <input id="transporter" name="transporter" required>
+      </div>
+
+      <div class="form-row">
+        <label for="vehicle_no">Vehicle Number</label>
+        <input id="vehicle_no" name="vehicle_no" placeholder="e.g., MH12AB1234" required>
+      </div>
+
+      <!-- NEW: Attachments (optional) -->
+      <div class="form-row">
+        <label for="invoice_file">Invoice (image/PDF)</label>
+        <input id="invoice_file" name="invoice_file" type="file" accept="image/*,application/pdf">
+      </div>
+
+      <div class="form-row">
+        <label for="ewaybill_file">E-way Bill (image/PDF)</label>
+        <input id="ewaybill_file" name="ewaybill_file" type="file" accept="image/*,application/pdf">
       </div>
 
       {% if not read_only %}
