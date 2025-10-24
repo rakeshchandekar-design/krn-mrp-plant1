@@ -8,43 +8,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>KRN Alloys Pvt Ltd</title>
 
-  <!-- ✅ Global favicon -->
+  <!-- Global favicon -->
   <link rel="icon" type="image/png" href="{{ url_for('static', path='favicon.png') }}"/>
 
-  <!-- ✅ Your global stylesheet -->
+  <!-- Global CSS -->
   <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}"/>
 
   <style>
-  /* Header */
-  .krn-nav{background:#fff;border-bottom:4px solid #f59e0b;position:sticky;top:0;z-index:50;}
-  .krn-bar{max-width:1200px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:10px 18px;gap:12px;flex-wrap:wrap}
-  .header-brand{display:flex;align-items:center;gap:10px;white-space:nowrap}
-  .header-brand img{height:48px}
-  .header-brand h1{
-    font-size:2.0rem;font-weight:800;line-height:1.1;margin:0;
-    white-space:nowrap;                 /* ✅ keep “KRN Alloys Pvt Ltd” on one line */
-  }
+    /* Header (can move to styles.css later) */
+    .krn-nav{background:#fff;border-bottom:4px solid #f59e0b;position:sticky;top:0;z-index:50;}
+    .krn-bar{max-width:1200px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:10px 18px;gap:12px;flex-wrap:wrap}
+    .header-brand{display:flex;align-items:center;gap:10px;white-space:nowrap}
+    .header-brand img{height:48px}
+    .header-brand h1{font-size:2.0rem;font-weight:800;line-height:1.1;margin:0;white-space:nowrap}
 
-  /* Top-right nav: allow 2 rows when tight */
-  .top-right{
-    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-    margin-left:auto;
-  }
-  .top-right a{color:#2563eb;text-decoration:none;padding:6px 10px;border-radius:8px;transition:background .2s ease}
-  .top-right a:hover{background:#f3f4f6}
-  .top-right a.active{font-weight:700;background:#0e2a47;color:#fff} /* ✅ active = blue/white */
+    .top-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;}
+    .top-right a{color:#2563eb;text-decoration:none;padding:6px 10px;border-radius:8px;transition:background .2s ease}
+    .top-right a:hover{background:#f3f4f6}
+    .top-right a.active{font-weight:700;background:#0e2a47;color:#fff}
 
-  /* Role badge + auth button */
-  .role-badge{padding:2px 8px;border-radius:999px;background:#ffedd5;color:#7c2d12;border:1px solid #fed7aa;font-size:12px}
-  .btn-auth{background:#0e2a47;color:#fff;border:1px solid #0e2a47;padding:8px 12px;border-radius:8px;text-decoration:none}
-  .btn-auth:hover{background:#f59e0b;border-color:#f59e0b}
+    .role-badge{padding:2px 8px;border-radius:999px;background:#ffedd5;color:#7c2d12;border:1px solid #fed7aa;font-size:12px}
+    .btn-auth{background:#0e2a47;color:#fff;border:1px solid #0e2a47;padding:8px 12px;border-radius:8px;text-decoration:none}
+    .btn-auth:hover{background:#f59e0b;border-color:#f59e0b}
 
-  footer { text-align:center; font-size:0.75rem; color:#666; margin-top:20px; }
-</style>
+    footer{ text-align:center; font-size:0.75rem; color:#666; margin-top:20px; }
+  </style>
 </head>
 <body>
 
-<!-- Global Header -->
 <header class="krn-nav">
   <div class="krn-bar">
     <div class="header-brand">
@@ -65,7 +56,6 @@
       <a href="/qa-dashboard" {{ active('/qa-dashboard') }}>QA</a>
       <a href="/help" {{ active('/help') }}>Help</a>
 
-      <!-- role + auth -->
       <span class="role-badge">{{ (role or 'guest')|capitalize }}</span>
       {% if role and role != 'guest' %}
         <a class="btn-auth" href="/logout">Logout</a>
@@ -76,7 +66,10 @@
   </div>
 </header>
 
-{% block content %}{% endblock %}
+<!-- Wrap content so footer sticks to bottom -->
+<main class="page-wrap">
+  {% block content %}{% endblock %}
+</main>
 
 <footer>
   Developed by Metcom Solutions exclusively for KRN Alloys Pvt Ltd
