@@ -1,52 +1,12 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>RAP – Ready After Atomization</title>
-  <style>
-    body { font-family: system-ui, Arial, sans-serif; margin: 20px; }
-    .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-    .brand .name { font-weight: 600; font-size: 26px; line-height: 48px; margin: 0; }
-    .brand img { height: 48px; }
-
-    .toolbar-head { margin: 6px 0 12px; display: flex; gap: 8px; flex-wrap: wrap; }
-
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
-    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
-    .card h3 { margin: 0 0 8px 0; font-size: 14px; }
-
-    .btn { padding: 8px 14px; border-radius: 8px; background: #111827; color: #fff; border: none; cursor: pointer; text-decoration: none; display: inline-block; }
-    .btn.ghost { background: #e5e7eb; color: #111827; }
-
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
-    th { background: #f3f4f6; }
-    .right { text-align: right; }
-
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; color: #fff; }
-    .badge-success { background: #16a34a; }
-    .badge-info { background: #0ea5e9; }
-
-    .muted { color: #6b7280; font-size: 12px; }
-    .toolbar { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-
-    input, select { padding: 4px 6px; }
-  </style>
-</head>
-<body>
-  {% set read_only = is_read_only(request) %}
-  <div class="brand">
-    <div class="name">KRN Alloys Pvt. Ltd</div>
-    <img src="/static/KRN_Logo.png" alt="KRN">
-  </div>
+{% extends "base.html" %}
+{% block content %}
+{% set read_only = is_read_only(request) %}
+<div class="page-wrap" style="max-width:1200px;margin:16px auto;padding:0 16px">
 
   <h1>RAP – Ready After Atomization</h1>
-  <p class="toolbar-head">
-    <a class="btn ghost" href="/">Home</a>
-  </p>
 
   <!-- Row 1: KPIs (left) + Month-to-date (right) -->
-  <div class="grid">
+  <div class="grid-2">
     <div class="card">
       <h3>RAP KPIs</h3>
       <table style="width:auto">
@@ -73,7 +33,7 @@
           </tr>
         </tfoot>
       </table>
-      <div class="muted">RAP available = Approved lot weight − allocations (Dispatch/Plant 2).</div>
+      <div class="small">RAP available = Approved lot weight − allocations (Dispatch/Plant-2).</div>
     </div>
 
     <div class="card">
@@ -95,14 +55,15 @@
           </tr>
         </tbody>
       </table>
-      <p class="toolbar">
+
+      <p class="toolbar" style="margin-top:10px">
         <a class="btn" href="/rap/dispatch/export">Download Dispatch Movements (CSV)</a>
-        <a class="btn ghost" href="/rap/transfer/export">Download Plant-2 Transfers (CSV)</a>
+        <a class="btn btn-secondary" style="background:#e5e7eb;color:#111827;border:none" href="/rap/transfer/export">Download Plant-2 Transfers (CSV)</a>
       </p>
     </div>
   </div>
 
-  <!-- Atomization Balance (safe defaults if server hasn't supplied atom_mtd) -->
+  <!-- Atomization Balance -->
   {% set M = atom_mtd or {'feed': 0, 'rap': 0, 'oversize': 0, 'conv': 0} %}
   <div class="card" style="margin-top:12px">
     <h3>Atomization Balance — Month to Date</h3>
@@ -119,23 +80,26 @@
         <tr><th>Conversion to RAP</th><th class="right">{{ '%.1f' % (M.get('conv', 0) or 0) }}%</th></tr>
       </tfoot>
     </table>
-    <div class="muted">Feed = sum of heat allocations into lots created this month.</div>
+    <div class="small">Feed = sum of heat allocations into lots created this month.</div>
   </div>
 
-  <!-- Row 2: Create Dispatch Note (full width) -->
+  <!-- Create Dispatch Note -->
   <div class="card">
     <h3>Create Dispatch Note (Multi-lot)</h3>
-    <form id="dispatchForm" method="post" action="/rap/dispatch/save">
+
+    <form id="dispatchForm" class="blue-ui" method="post" action="/rap/dispatch/save">
       <fieldset {% if read_only %}disabled{% endif %}>
-        <label>Date:
-          <input type="date" name="date" value="{{ today }}" max="{{ today }}" min="{{ min_date }}" required>
-        </label>
-        <label>Customer:
-          <input type="text" name="customer" required>
-        </label>
-        <label style="margin-left:8px;">Total Dispatch Qty (kg):
-          <input type="number" step="0.1" min="0" name="total_qty" id="total_qty" placeholder="e.g. 250.0" required>
-        </label>
+        <div class="toolbar" style="gap:12px">
+          <label>Date
+            <input type="date" name="date" value="{{ today }}" max="{{ today }}" min="{{ min_date }}" required>
+          </label>
+          <label>Customer
+            <input type="text" name="customer" required>
+          </label>
+          <label>Total Dispatch Qty (kg)
+            <input type="number" step="0.1" min="0" name="total_qty" id="total_qty" placeholder="e.g. 250.0" required>
+          </label>
+        </div>
 
         <table>
           <thead>
@@ -152,7 +116,13 @@
             <tr>
               <td><input type="checkbox" class="pick" name="lot_ids" value="{{ r.id }}"></td>
               <td>{{ r.lot.lot_no }}</td>
-              <td class="lot-grade">{{ r.lot.grade or 'KRIP' }}</td>
+              <td>
+                {% if (r.lot.grade or 'KRIP') == 'KRFS' %}
+                  <span class="badge badge-krfs">KRFS</span>
+                {% else %}
+                  <span class="badge badge-krip">KRIP</span>
+                {% endif %}
+              </td>
               <td class="right">{{ '%.1f' % (r.available_qty or 0) }}</td>
               <td>
                 <input type="number"
@@ -169,13 +139,14 @@
         </table>
 
         {% if not read_only %}
-          <button class="btn" type="submit">Generate Dispatch Note</button>
+          <button class="btn" type="submit" style="margin-top:10px">Generate Dispatch Note</button>
         {% else %}
-          <p class="muted">Read-only: dispatch creation is disabled for viewer role.</p>
+          <p class="small" style="margin-top:10px">Read-only: dispatch creation is disabled for viewer role.</p>
         {% endif %}
       </fieldset>
     </form>
 
+    <!-- client-side checks (unchanged logic) -->
     <script>
       (function () {
         const form = document.getElementById('dispatchForm');
@@ -188,11 +159,9 @@
             if (cb.checked) {
               const row = cb.closest('tr');
               const qtyEl = row.querySelector('input.dq');
-              const gEl = row.querySelector('.lot-grade');
-              out.push({
-                qty: parseFloat(qtyEl.value || '0'),
-                grade: (gEl ? gEl.textContent : 'KRIP').trim()
-              });
+              const gradePill = row.querySelector('.badge-krip, .badge-krfs');
+              const grade = gradePill ? gradePill.textContent.trim() : 'KRIP';
+              out.push({ qty: parseFloat(qtyEl.value || '0'), grade });
             }
           });
           return out;
@@ -200,49 +169,32 @@
 
         form.addEventListener('submit', function (e) {
           {% if read_only %}
-          // Hard stop (defense-in-depth; server also blocks)
           e.preventDefault();
           alert('Read-only role: cannot create dispatch notes.');
           return;
           {% endif %}
 
           const picks = selectedRows();
-          if (picks.length === 0) {
-            e.preventDefault();
-            alert('Select at least one lot.');
-            return;
-          }
+          if (picks.length === 0) { e.preventDefault(); alert('Select at least one lot.'); return; }
           for (const p of picks) {
-            if (!(p.qty > 0)) {
-              e.preventDefault();
-              alert('Enter quantity for every selected lot.');
-              return;
-            }
+            if (!(p.qty > 0)) { e.preventDefault(); alert('Enter quantity for every selected lot.'); return; }
           }
           const gset = new Set(picks.map(p => p.grade));
-          if (gset.size > 1) {
-            e.preventDefault();
-            alert('Please select lots of a single grade (KRIP or KRFS) in one dispatch.');
-            return;
-          }
+          if (gset.size > 1) { e.preventDefault(); alert('Please select lots of a single grade (KRIP or KRFS) in one dispatch.'); return; }
+
           const want = parseFloat(totalEl.value || '0');
           const have = picks.reduce((s, p) => s + p.qty, 0);
-          if (!(want > 0)) {
-            e.preventDefault();
-            alert('Enter Total Dispatch Qty.');
-            return;
-          }
+          if (!(want > 0)) { e.preventDefault(); alert('Enter Total Dispatch Qty.'); return; }
           if (Math.abs(want - have) > 0.05) {
             e.preventDefault();
             alert(`Total Dispatch Qty (${want.toFixed(1)}) must equal the sum of selected lot quantities (${have.toFixed(1)}).`);
-            return;
           }
         });
       })();
     </script>
   </div>
 
-  <!-- Row 3: RAP Lots – Transfers to Plant 2 (full width) -->
+  <!-- RAP Lots – Transfers to Plant 2 -->
   <div class="card">
     <h2 style="margin:0 0 8px 0;">RAP Lots – Transfers to Plant 2</h2>
     <table>
@@ -265,9 +217,9 @@
             <td>{{ lot.lot_no }}</td>
             <td>
               {% if (lot.grade or 'KRIP') == 'KRFS' %}
-                <span class="badge badge-info">KRFS</span>
+                <span class="badge badge-krfs">KRFS</span>
               {% else %}
-                <span class="badge badge-success">KRIP</span>
+                <span class="badge badge-krip">KRIP</span>
               {% endif %}
             </td>
             <td class="right">{{ '%.1f' % (lot.weight or 0) }}</td>
@@ -299,7 +251,7 @@
                     <button class="btn" type="submit">Allocate</button>
                   {% endif %}
                 </fieldset>
-                {% if read_only %}<span class="muted">Read-only</span>{% endif %}
+                {% if read_only %}<span class="small">Read-only</span>{% endif %}
               </form>
             </td>
           </tr>
@@ -307,8 +259,8 @@
       </tbody>
     </table>
     {% if not rows %}
-      <p class="muted">No APPROVED lots are available in RAP.</p>
+      <p class="small">No APPROVED lots are available in RAP.</p>
     {% endif %}
   </div>
-</body>
-</html>
+</div>
+{% endblock %}
