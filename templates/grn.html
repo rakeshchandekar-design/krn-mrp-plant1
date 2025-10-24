@@ -6,13 +6,13 @@
 
   {# Toolbar #}
   <div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 14px">
-    {% set read_only = is_read_only(request) %}
     {% if not read_only %}
       <a class="btn" href="/grn/new">New GRN</a>
     {% endif %}
     <a class="btn ghost" href="javascript:void(0)" onclick="goToday()">Today</a>
 
-    <form class="inline-form blue-ui" method="get" action="/grn" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <form class="inline-form blue-ui" method="get" action="/grn"
+          style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <input type="hidden" name="report" value="1">
       <label>From</label>
       <input id="start" type="date" name="start" max="{{ today_iso }}" value="{{ start or today_iso }}">
@@ -35,10 +35,7 @@
         </tr>
       </thead>
       <tbody>
-        {% set ns = namespace(t_qty=0.0, t_cost=0.0) %}
         {% for row in rm_summary %}
-          {% set ns.t_qty  = ns.t_qty  + (row.available or 0) %}
-          {% set ns.t_cost = ns.t_cost + (row.cost or 0) %}
           <tr>
             <td>{{ row.rm_type }}</td>
             <td class="right">{{ '%.1f' % (row.available or 0) }}</td>
@@ -49,8 +46,8 @@
       <tfoot>
         <tr>
           <th style="text-align:right">Total</th>
-          <th class="right">{{ '%.1f' % ns.t_qty }}</th>
-          <th class="right">{{ '%.2f' % ns.t_cost }}</th>
+          <th class="right">{{ '%.1f' % (rm_total_qty or 0) }}</th>
+          <th class="right">{{ '%.2f' % (rm_total_cost or 0) }}</th>
         </tr>
       </tfoot>
     </table>
@@ -74,10 +71,10 @@
       </thead>
       <tbody>
         {% for g in grns %}
-          {% set total_price   = (g.qty or 0.0) * (g.price or 0.0) %}
+          {% set total_price    = (g.qty or 0.0) * (g.price or 0.0) %}
           {% set remaining_cost = (g.remaining_qty or 0.0) * (g.price or 0.0) %}
           <tr>
-            <td>{{ g.grn_no or ('GRN-'+ (g.date|string).replace('-','') ~ '-' ~ (g.id|string)) }}</td>
+            <td>{{ g.grn_no or ('GRN-' ~ (g.date|string).replace('-','') ~ '-' ~ (g.id|string)) }}</td>
             <td>{{ g.date }}</td>
             <td>{{ g.supplier }}</td>
             <td>{{ g.rm_type }}</td>
@@ -101,14 +98,17 @@
   function goToday(){
     const d=new Date(); const iso=d.toISOString().slice(0,10);
     const u=new URL(window.location.href);
-    u.searchParams.set('report','1'); u.searchParams.set('start', iso); u.searchParams.set('end', iso);
+    u.searchParams.set('report','1');
+    u.searchParams.set('start', iso);
+    u.searchParams.set('end', iso);
     window.location.href=u.toString();
   }
   function exportCSV(){
     const s=document.getElementById('start').value || '{{ today_iso }}';
     const e=document.getElementById('end').value   || '{{ today_iso }}';
     const u=new URL('/grn/export', window.location.origin);
-    u.searchParams.set('start', s); u.searchParams.set('end', e);
+    u.searchParams.set('start', s);
+    u.searchParams.set('end', e);
     window.location.href=u.toString();
   }
 </script>
