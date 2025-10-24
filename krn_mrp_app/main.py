@@ -1531,19 +1531,24 @@ async def login_post(request: Request, username: str = Form(...), password: str 
 
     role = u.get("role", "guest")
 
-    # New unified session format (dict for Annealing)
+    # Keep existing session writes
     request.session["user"] = {"username": uname, "role": role}
-
-    # Legacy keys so older code continues working
     request.session["username"] = uname
     request.session["role"] = role
 
-    return RedirectResponse("/", status_code=303)
+    # NEW: set cookies so middleware/base.html can read role immediately
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie("role", role, max_age=60*60*24*7, samesite="lax")      # 7 days
+    resp.set_cookie("username", uname, max_age=60*60*24*7, samesite="lax") # optional
+    return resp
 
 @app.get("/logout")
 def logout(request: Request):
     request.session.clear()
-    return RedirectResponse("/", status_code=303)
+    resp = RedirectResponse("/", status_code=303)
+    resp.delete_cookie("role")
+    resp.delete_cookie("username")
+    return resp
 
 # -------------------------------------------------
 # Health + Setup + Home
