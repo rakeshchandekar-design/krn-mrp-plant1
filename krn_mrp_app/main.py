@@ -2083,7 +2083,7 @@ def melting_page(
     yield_today = (100.0 * tot_out_today / tot_in_today) if tot_in_today > 0 else 0.0
     eff_today   = (100.0 * tot_out_today / DAILY_CAPACITY_KG) if DAILY_CAPACITY_KG > 0 else 0.0
 
-    # Last 5 days: actual, target adjusted
+    # Last 5 days
     last5 = []
     for i in range(4, -1, -1):
         d = today - dt.timedelta(days=i)
@@ -2130,6 +2130,10 @@ def melting_page(
         {
             "request": request,
             "role": current_role(request),
+
+            # ✅ add this so the template can disable the form for non-melting users
+            "read_only": (not role_allowed(request, {"admin", "melting"})),
+
             "rm_types": RM_TYPES,
             "pending": visible_heats,
             "heat_grades": {r["heat"].id: r["grade"] for r in rows},
@@ -2137,9 +2141,15 @@ def melting_page(
             "yield_today": yield_today,
             "eff_today": eff_today,
             "last5": last5,
-            "stock": {"krip_qty": krip_qty, "krip_val": krip_val, "krfs_qty": krfs_qty, "krfs_val": krfs_val},
-            "today_iso": today.isoformat(),
-            "start": s, "end": e,
+            "stock": {
+                "krip_qty": krip_qty,
+                "krip_val": krip_val,
+                "krfs_qty": krfs_qty,
+                "krfs_val": krfs_val
+            },
+            "today_iso": today.isoformat(),   # used to cap date inputs (max)
+            "start": s,
+            "end": e,
             "power_target": POWER_TARGET_KWH_PER_TON,
             "trace_map": trace_map,
         },
