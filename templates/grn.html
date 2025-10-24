@@ -1,33 +1,30 @@
 {% extends "base.html" %}
-
 {% block content %}
-<div class="page-wrap">
+<div class="page-wrap" style="max-width:1200px;margin:16px auto;padding:0 16px">
+
   <h1>Stores – GRN</h1>
 
-  {% set read_only = is_read_only(request) %}
-
-  <!-- Action buttons -->
-  <div class="blue-ui" style="margin-bottom:16px;">
+  {# Toolbar #}
+  <div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 14px">
+    {% set read_only = is_read_only(request) %}
     {% if not read_only %}
       <a class="btn" href="/grn/new">New GRN</a>
     {% endif %}
-    <a class="btn" href="/">Home</a>
-    <a class="btn" href="javascript:void(0)" onclick="goToday()">Today</a>
+    <a class="btn ghost" href="javascript:void(0)" onclick="goToday()">Today</a>
+
+    <form class="inline-form blue-ui" method="get" action="/grn" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <input type="hidden" name="report" value="1">
+      <label>From</label>
+      <input id="start" type="date" name="start" max="{{ today_iso }}" value="{{ start or today_iso }}">
+      <label>To</label>
+      <input id="end" type="date" name="end" max="{{ today_iso }}" value="{{ end or today_iso }}">
+      <button class="btn" type="submit">Fetch</button>
+      <button class="btn" type="button" onclick="exportCSV()">Download CSV</button>
+    </form>
   </div>
 
-  <!-- Filter form -->
-  <form class="inline-form blue-ui" method="get" action="/grn" style="margin-bottom:16px;">
-    <input type="hidden" name="report" value="1">
-    <label>From</label>
-    <input id="start" type="date" name="start" value="{{ start or today_iso }}">
-    <label>To</label>
-    <input id="end" type="date" name="end" value="{{ end or today_iso }}">
-    <button class="btn" type="submit">Fetch</button>
-    <button class="btn" type="button" onclick="exportCSV()">Download CSV</button>
-  </form>
-
-  <!-- Live Stock Summary -->
-  <div class="summary">
+  <!-- Live stock summary -->
+  <div class="card">
     <h3>Live Stock (Remaining &gt; 0)</h3>
     <table>
       <thead>
@@ -38,7 +35,10 @@
         </tr>
       </thead>
       <tbody>
+        {% set ns = namespace(t_qty=0.0, t_cost=0.0) %}
         {% for row in rm_summary %}
+          {% set ns.t_qty  = ns.t_qty  + (row.available or 0) %}
+          {% set ns.t_cost = ns.t_cost + (row.cost or 0) %}
           <tr>
             <td>{{ row.rm_type }}</td>
             <td class="right">{{ '%.1f' % (row.available or 0) }}</td>
@@ -46,66 +46,70 @@
           </tr>
         {% endfor %}
       </tbody>
+      <tfoot>
+        <tr>
+          <th style="text-align:right">Total</th>
+          <th class="right">{{ '%.1f' % ns.t_qty }}</th>
+          <th class="right">{{ '%.2f' % ns.t_cost }}</th>
+        </tr>
+      </tfoot>
     </table>
   </div>
 
-  <!-- GRN Table -->
-  <table>
-    <thead>
-      <tr>
-        <th>GRN No</th>
-        <th>Date</th>
-        <th>Supplier</th>
-        <th>RM Type</th>
-        <th class="right">Qty (kg)</th>
-        <th class="right">Price (₹/kg)</th>
-        <th class="right">Total Price (₹)</th>
-        <th class="right">Remaining (kg)</th>
-        <th class="right">Remaining Cost (₹)</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for g in grns %}
-        {% set total_price = (g.qty or 0.0) * (g.price or 0.0) %}
-        {% set remaining_cost = (g.remaining_qty or 0.0) * (g.price or 0.0) %}
+  <!-- GRN table -->
+  <div class="card">
+    <table>
+      <thead>
         <tr>
-          <td>{{ g.grn_no or ('GRN-'+ (g.date|string).replace('-','') + '-' + (g.id|string)) }}</td>
-          <td>{{ g.date }}</td>
-          <td>{{ g.supplier }}</td>
-          <td>{{ g.rm_type }}</td>
-          <td class="right">{{ '%.1f' % (g.qty or 0) }}</td>
-          <td class="right">{{ '%.2f' % (g.price or 0) }}</td>
-          <td class="right">{{ '%.2f' % total_price }}</td>
-          <td class="right">{{ '%.1f' % (g.remaining_qty or 0) }}</td>
-          <td class="right">{{ '%.2f' % remaining_cost }}</td>
+          <th>GRN No</th>
+          <th>Date</th>
+          <th>Supplier</th>
+          <th>RM Type</th>
+          <th class="right">Qty (kg)</th>
+          <th class="right">Price (₹/kg)</th>
+          <th class="right">Total Price (₹)</th>
+          <th class="right">Remaining (kg)</th>
+          <th class="right">Remaining Cost (₹)</th>
         </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for g in grns %}
+          {% set total_price   = (g.qty or 0.0) * (g.price or 0.0) %}
+          {% set remaining_cost = (g.remaining_qty or 0.0) * (g.price or 0.0) %}
+          <tr>
+            <td>{{ g.grn_no or ('GRN-'+ (g.date|string).replace('-','') ~ '-' ~ (g.id|string)) }}</td>
+            <td>{{ g.date }}</td>
+            <td>{{ g.supplier }}</td>
+            <td>{{ g.rm_type }}</td>
+            <td class="right">{{ '%.1f' % (g.qty or 0) }}</td>
+            <td class="right">{{ '%.2f' % (g.price or 0) }}</td>
+            <td class="right">{{ '%.2f' % total_price }}</td>
+            <td class="right">{{ '%.1f' % (g.remaining_qty or 0) }}</td>
+            <td class="right">{{ '%.2f' % remaining_cost }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
 
-  {% if not grns %}
-    <p class="muted">No GRNs match this view.</p>
-  {% endif %}
+    {% if not grns %}
+      <p class="muted">No GRNs match this view.</p>
+    {% endif %}
+  </div>
 </div>
 
 <script>
-function goToday(){
-  const d = new Date();
-  const iso = d.toISOString().slice(0,10);
-  const u = new URL(window.location.href);
-  u.searchParams.set('report','1');
-  u.searchParams.set('start', iso);
-  u.searchParams.set('end', iso);
-  window.location.href = u.toString();
-}
-
-function exportCSV(){
-  const s = document.getElementById('start').value || '{{ today_iso }}';
-  const e = document.getElementById('end').value   || '{{ today_iso }}';
-  const u = new URL('/grn/export', window.location.origin);
-  u.searchParams.set('start', s);
-  u.searchParams.set('end', e);
-  window.location.href = u.toString();
-}
+  function goToday(){
+    const d=new Date(); const iso=d.toISOString().slice(0,10);
+    const u=new URL(window.location.href);
+    u.searchParams.set('report','1'); u.searchParams.set('start', iso); u.searchParams.set('end', iso);
+    window.location.href=u.toString();
+  }
+  function exportCSV(){
+    const s=document.getElementById('start').value || '{{ today_iso }}';
+    const e=document.getElementById('end').value   || '{{ today_iso }}';
+    const u=new URL('/grn/export', window.location.origin);
+    u.searchParams.set('start', s); u.searchParams.set('end', e);
+    window.location.href=u.toString();
+  }
 </script>
 {% endblock %}
