@@ -203,3 +203,22 @@ footer{
 }
 
 .blue-ui :disabled{ opacity:.7; cursor:not-allowed }
+
+/* --- two column responsive grid (stacks on small screens) --- */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+@media (min-width: 980px) {
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+}
+
+/* --- compact card look (already used by GRN; harmless if duplicate) --- */
+.card { border:1px solid #e5e7eb; border-radius:12px; padding:12px; }
+
+/* --- badges for grades/types --- */
+.badge { display:inline-block; padding:2px 10px; border-radius:9999px; font-size:12px; font-weight:600; color:#fff; }
+.badge-krip { background:#16a34a; } /* green */
+.badge-krfs { background:#0ea5e9; } /* blue */
