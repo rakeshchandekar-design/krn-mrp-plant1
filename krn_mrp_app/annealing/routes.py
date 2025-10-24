@@ -214,6 +214,8 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
 
     return templates.TemplateResponse("annealing_home.html", {
         "request": request,
+        "role": current_role(request),          # <<< add this
+        "read_only": is_read_only(request),     # (optional but recommended)
         "target": target_today,                 # <— adjusted for downtime
         "lots_today": lots_today,
         "nh3_today": nh3_today,
@@ -228,7 +230,6 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
         "is_admin": is_admin,
     })
 
-
 @router.get("/create", response_class=HTMLResponse)
 async def anneal_create_get(
     request: Request,
@@ -241,7 +242,8 @@ async def anneal_create_get(
         "annealing_create.html",
         {
             "request": request,
-            "rap_rows": rap_rows,
+            "role": current_role(request),          # <<< add this
+            "read_only": is_read_only(request),     # (optional but recommended)"rap_rows": rap_rows,
             "err": err,
             "is_admin": _is_admin(request),   # <-- KEY: pass reliable flag
         },
@@ -445,6 +447,8 @@ async def anneal_lots(
 
     return templates.TemplateResponse("annealing_lot_list.html", {
         "request": request,
+        "role": current_role(request),          # <<< add this
+        "read_only": is_read_only(request),     # (optional but recommended)
         "lots": visible_rows,              # each row now has anneal_cost_per_kg & total_value
         "total_weight": total_weight,
         "weighted_cost": weighted_cost,    # uses effective anneal cost
@@ -467,6 +471,8 @@ async def anneal_downtime_get(request: Request, dep: None = Depends(require_role
 
     return templates.TemplateResponse("annealing_downtime.html", {
         "request": request,
+        "role": current_role(request),          # <<< add this
+        "read_only": is_read_only(request),     # (optional but recommended)
         "logs": logs,
         # used by the form to restrict picker
         "today": today.isoformat(),
