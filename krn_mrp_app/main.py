@@ -1485,6 +1485,9 @@ def _save_upload(file: UploadFile | None) -> str | None:
         f.write(file.file.read())
     return name  # store this in DB
 
+def is_read_only_grn(request: Request) -> bool:
+    return not role_allowed(request, {"admin", "store"})
+
 # -------------------------------
 # RAP helpers
 # -------------------------------
@@ -1870,7 +1873,7 @@ def grn_list(
         {
             "request": request,
             "role": current_role(request),
-            "read_only": is_read_only(request),   # <-- lets template disable create buttons
+            "read_only": (not role_allowed(request, {"admin", "store"})),
             "grns": grns,
             "prices": rm_price_defaults(),
             "report": report,
@@ -1899,7 +1902,7 @@ def grn_new(request: Request):
         {
             "request": request,
             "role": current_role(request),
-            "read_only": is_read_only(request),
+            "read_only": (not role_allowed(request, {"admin", "store"})),
             "rm_types": RM_TYPES,
             "min_date": min_date,
             "max_date": max_date,
@@ -1939,7 +1942,7 @@ def grn_new_post(
             {
                 "request": request,
                 "role": current_role(request),
-                "read_only": is_read_only(request),
+                "read_only": (not role_allowed(request, {"admin", "store"})),
                 "rm_types": RM_TYPES,
                 "min_date": min_date,
                 "max_date": max_date,
