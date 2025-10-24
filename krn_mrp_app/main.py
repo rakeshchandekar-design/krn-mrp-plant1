@@ -5,6 +5,11 @@ from enum import Enum
 from starlette.middleware.sessions import SessionMiddleware
 import secrets
 
+import os
+from uuid import uuid4
+from fastapi import File, UploadFile, Form, Request
+from starlette.staticfiles import StaticFiles
+
 # FastAPI
 from fastapi import FastAPI, Request, Form, Depends, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
@@ -18,6 +23,14 @@ def _alert_redirect(msg: str, url: str = "/atomization") -> HTMLResponse:
     return HTMLResponse(html)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+# ---- File uploads config ----
+BASE_DIR = os.path.dirname(__file__)
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# serve uploaded files at /uploads/<filename>
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # PDF
 from reportlab.lib.pagesizes import A4
@@ -857,6 +870,21 @@ with engine.begin() as conn:
                 sql = coldef.replace("REAL", "DOUBLE PRECISION")
                 conn.execute(text(f"ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
 
+    # ---- GRN extra columns (safe migrations) ----
+    for coldef in [
+        "transporter TEXT",
+        "vehicle_no TEXT",
+        "invoice_file TEXT",
+        "ewaybill_file TEXT",
+    ]:
+        col = coldef.split()[0]
+        if not _table_has_column(conn, "grn", col):
+            if str(engine.url).startswith("sqlite"):
+                conn.execute(text(f"ALTER TABLE grn ADD COLUMN {coldef}"))
+            else:
+                # Postgres types map cleanly from TEXT
+                conn.execute(text(f"ALTER TABLE grn ADD COLUMN IF NOT EXISTS {col} TEXT"))
+
 # ================================
 # --- Dispatch helpers (read-only)
 # ================================
@@ -1021,6 +1049,10 @@ class GRN(Base):
     qty = Column(Float, nullable=False)
     remaining_qty = Column(Float, nullable=False)
     price = Column(Float, nullable=False)
+    transporter   = Column(String, nullable=True)
+    vehicle_no    = Column(String, nullable=True)
+    invoice_file  = Column(String, nullable=True)
+    ewaybill_file = Column(String, nullable=True)
 
 class Heat(Base):
     __tablename__ = "heat"
@@ -1444,6 +1476,17 @@ def atom_day_available_minutes(db: Session, day: dt.date) -> int:
 def atom_day_target_kg(db: Session, day: dt.date) -> float:
     return DAILY_CAPACITY_ATOM_KG * (atom_day_available_minutes(db, day) / 1440.0)
 
+
+def _save_upload(file: UploadFile | None) -> str | None:
+    if not file or not file.filename:
+        return None
+    ext = os.path.splitext(file.filename)[1].lower()
+    name = f"grn_{uuid4().hex}{ext}"
+    dest = os.path.join(UPLOAD_DIR, name)
+    with open(dest, "wb") as f:
+        f.write(file.file.read())
+    return name  # store this in DB
+
 # -------------------------------
 # RAP helpers
 # -------------------------------
@@ -1785,7 +1828,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
 
 # -------------------------------------------------
-# GRN (unchanged)
+# GRN (standardized UI hooks; business logic unchanged)
 # -------------------------------------------------
 @app.get("/grn", response_class=HTMLResponse)
 def grn_list(
@@ -1795,7 +1838,8 @@ def grn_list(
     end: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    if not role_allowed(request, {"admin", "store"}):
+    # Allow read-only viewers to see GRN; only admin/store can create
+    if not role_allowed(request, {"admin", "store", "view"}):
         return RedirectResponse("/login", status_code=303)
 
     q = db.query(GRN)
@@ -1805,16 +1849,22 @@ def grn_list(
         if end:
             q = q.filter(GRN.date <= dt.date.fromisoformat(end))
     else:
+        # default view = only rows with remaining_qty > 0 (live stock)
         q = q.filter(GRN.remaining_qty > 0)
     grns = q.order_by(GRN.id.desc()).all()
 
+    # Live stock summary per RM type
     live = db.query(GRN).filter(GRN.remaining_qty > 0).all()
     rm_summary = []
     for rm in RM_TYPES:
         subset = [r for r in live if r.rm_type == rm]
-        avail = sum(r.remaining_qty for r in subset)
+        avail = sum(r.remaining_qty or 0.0 for r in subset)
         cost = sum((r.remaining_qty or 0.0) * (r.price or 0.0) for r in subset)
         rm_summary.append({"rm_type": rm, "available": avail, "cost": cost})
+
+    # Totals for live stock (for footer row in template)
+    rm_total_qty = sum(r["available"] for r in rm_summary)
+    rm_total_cost = sum(r["cost"] for r in rm_summary)
 
     today = dt.date.today()
     return templates.TemplateResponse(
@@ -1822,37 +1872,89 @@ def grn_list(
         {
             "request": request,
             "role": current_role(request),
+            "read_only": is_read_only(request),   # <-- lets template disable create buttons
             "grns": grns,
             "prices": rm_price_defaults(),
             "report": report,
             "start": start or "",
             "end": end or "",
             "rm_summary": rm_summary,
+            "rm_total_qty": rm_total_qty,
+            "rm_total_cost": rm_total_cost,
             "today": today,
             "today_iso": today.isoformat(),
         },
     )
 
+
 @app.get("/grn/new", response_class=HTMLResponse)
 def grn_new(request: Request):
+    # Only admin/store can create GRNs
+    if not role_allowed(request, {"admin", "store"}):
+        return RedirectResponse("/login", status_code=303)
+
     today = dt.date.today()
     min_date = (today - dt.timedelta(days=4)).isoformat()
     max_date = today.isoformat()
     return templates.TemplateResponse(
         "grn_new.html",
-        {"request": request, "rm_types": RM_TYPES, "min_date": min_date, "max_date": max_date},
+        {
+            "request": request,
+            "role": current_role(request),
+            "read_only": is_read_only(request),
+            "rm_types": RM_TYPES,
+            "min_date": min_date,
+            "max_date": max_date,
+            "error_text": "",  # inline error slot
+        },
     )
 
 @app.post("/grn/new")
 def grn_new_post(
-    date: str = Form(...), supplier: str = Form(...), rm_type: str = Form(...),
-    qty: float = Form(...), price: float = Form(...), db: Session = Depends(get_db)
+    request: Request,
+    date: str = Form(...),
+    supplier: str = Form(...),
+    rm_type: str = Form(...),
+    qty: float = Form(...),
+    price: float = Form(...),
+    # NEW required fields:
+    transporter: str = Form(...),
+    vehicle_no: str = Form(...),
+    # NEW optional uploads (make sure form has enctype="multipart/form-data")
+    invoice_file: UploadFile = File(None),
+    ewaybill_file: UploadFile = File(None),
+    db: Session = Depends(get_db),
 ):
+    # Guard: only admin/store may post
+    if not role_allowed(request, {"admin", "store"}):
+        return RedirectResponse("/login", status_code=303)
+
     today = dt.date.today()
     d = dt.date.fromisoformat(date)
-    if d > today or d < (today - dt.timedelta(days=4)):
-        return PlainTextResponse("Date must be today or within the last 4 days.", status_code=400)
 
+    # Same rule as before: today to 4 days back; no future
+    if d > today or d < (today - dt.timedelta(days=4)):
+        min_date = (today - dt.timedelta(days=4)).isoformat()
+        max_date = today.isoformat()
+        return templates.TemplateResponse(
+            "grn_new.html",
+            {
+                "request": request,
+                "role": current_role(request),
+                "read_only": is_read_only(request),
+                "rm_types": RM_TYPES,
+                "min_date": min_date,
+                "max_date": max_date,
+                "error_text": "Date must be today or within the last 4 days.",
+            },
+            status_code=400,
+        )
+
+    # Save files (helper returns saved filename or None)
+    inv_name = _save_upload(invoice_file)
+    ewb_name = _save_upload(ewaybill_file)
+
+    # --- business logic unchanged; just store new fields & filenames ---
     g = GRN(
         grn_no=next_grn_no(db, d),
         date=d,
@@ -1861,11 +1963,16 @@ def grn_new_post(
         qty=qty,
         remaining_qty=qty,
         price=price,
+        transporter=transporter,    # NEW
+        vehicle_no=vehicle_no,      # NEW
+        invoice_file=inv_name,      # NEW (can be None)
+        ewaybill_file=ewb_name,     # NEW (can be None)
     )
-    db.add(g); db.commit()
+    db.add(g)
+    db.commit()
     return RedirectResponse("/grn", status_code=303)
 
-# ---------- CSV export for report range ----------
+# ---------- CSV export for report range (unchanged) ----------
 @app.get("/grn/export")
 def grn_export(
     start: str,
@@ -1895,11 +2002,12 @@ def grn_export(
     return Response(
         content=data,
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'}
     )
 
+
 # -------------------------------------------------
-# Stock helpers (FIFO)
+# Stock helpers (FIFO)  (unchanged)
 # -------------------------------------------------
 def available_stock(db: Session, rm_type: str):
     rows = db.query(GRN).filter(GRN.rm_type == rm_type, GRN.remaining_qty > 0).order_by(GRN.id.asc()).all()
