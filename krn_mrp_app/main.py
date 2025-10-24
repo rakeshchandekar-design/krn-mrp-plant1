@@ -29,9 +29,6 @@ BASE_DIR = os.path.dirname(__file__)
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# serve uploaded files at /uploads/<filename>
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
-
 # PDF
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
@@ -1256,6 +1253,7 @@ if not os.path.isdir(STATIC_DIR):
     STATIC_DIR = os.path.join(BASE_DIR, "..", "static")
 
 app = FastAPI()
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 # session middleware (keep the secret; regenerate for production)
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_hex(16)))
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
