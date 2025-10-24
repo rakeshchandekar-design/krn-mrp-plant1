@@ -114,6 +114,19 @@ def plant2_available_rows(conn):
     """)
     return conn.execute(sql).mappings().all()
 
+# --- role helpers (shared with other modules) ---
+def current_role(request):
+    """Return current user's role, default 'guest'."""
+    if hasattr(request.state, "role") and request.state.role:
+        return request.state.role
+    return "guest"
+
+
+def is_read_only(request):
+    """Viewer/guest cannot modify data."""
+    role = current_role(request)
+    return role not in ("admin", "anneal")
+
 # --- helper: robust admin check ---
 def _is_admin(request: Request) -> bool:
     s = getattr(request, "state", None)
