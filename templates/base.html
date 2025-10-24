@@ -36,6 +36,14 @@
 </head>
 <body>
 
+{# ---------- Resolve role once, with safe fallbacks ---------- #}
+{% set _role = (
+  role                                   # passed by route (preferred)
+  or (request.state.role if request.state.role is defined else None)    # middleware
+  or (request.session.get('role') if request.session is defined else None)  # session
+  or 'guest'
+) %}
+
 <header class="krn-nav">
   <div class="krn-bar">
     <div class="header-brand">
@@ -56,8 +64,8 @@
       <a href="/qa-dashboard" {{ active('/qa-dashboard') }}>QA</a>
       <a href="/help" {{ active('/help') }}>Help</a>
 
-      <span class="role-badge">{{ (role or 'guest')|capitalize }}</span>
-      {% if role and role != 'guest' %}
+      <span class="role-badge">{{ _role|capitalize }}</span>
+      {% if _role != 'guest' %}
         <a class="btn-auth" href="/logout">Logout</a>
       {% else %}
         <a class="btn-auth" href="/login">Login</a>
