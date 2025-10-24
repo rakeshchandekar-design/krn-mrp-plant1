@@ -146,7 +146,7 @@
       </fieldset>
     </form>
 
-    <!-- client-side checks (unchanged logic) -->
+    <!-- client-side checks -->
     <script>
       (function () {
         const form = document.getElementById('dispatchForm');
@@ -240,13 +240,19 @@
               <a href="/lot/{{ lot.id }}/qa" target="_blank">QA</a>
             </td>
             <td>
-              <form method="post" action="/rap/allocate" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-                <fieldset {% if read_only %}disabled{% endif %} style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;border:none;margin:0;padding:0">
+              <form method="post" action="/rap/allocate">
+                <fieldset {% if read_only %}disabled{% endif %}
+                          class="alloc-row"
+                          style="border:none;margin:0;padding:0">
                   <input type="hidden" name="rap_lot_id" value="{{ r.id }}">
                   <input type="hidden" name="kind" value="PLANT2">
-                  <input type="date" name="date" max="{{ today }}" min="{{ min_date }}" required>
-                  <input type="number" step="0.1" min="0" max="{{ '%.1f' % (r.available_qty or 0) }}" name="qty" placeholder="Qty (kg)" required>
-                  <input type="text" name="remarks" placeholder="remarks">
+
+                  <input type="date"  name="date" max="{{ today }}" min="{{ min_date }}" required>
+                  <input type="number" step="0.1" min="0"
+                         max="{{ '%.1f' % (r.available_qty or 0) }}"
+                         name="qty" placeholder="Qty (kg)" required>
+                  <input type="text"   name="remarks" placeholder="remarks">
+
                   {% if not read_only %}
                     <button class="btn" type="submit">Allocate</button>
                   {% endif %}
