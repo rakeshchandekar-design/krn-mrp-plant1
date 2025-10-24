@@ -1,55 +1,71 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>New GRN</title>
-  <style>
-    body{font-family:system-ui,Arial,sans-serif;margin:20px}
-    /* BRAND BAR to match list page */
-    .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-    .brand .name{font-weight:800;font-size:40px;line-height:48px}
-    .brand img.logo{height:48px}
+{# templates/grn_new.html #}
+{% extends "base.html" %}
 
-    label{display:block;margin:8px 0 4px}
-    input,select{padding:4px 6px}
-    .btn{margin-top:12px;padding:8px 14px;border-radius:8px;background:#111827;color:#fff;border:none}
-    a{margin-left:8px}
-    .hint{font-size:12px;color:#6b7280}
-    .muted{font-size:12px;color:#6b7280;margin-top:8px}
-  </style>
-</head>
-<body>
-  {% set read_only = is_read_only(request) %}
-  <div class="brand">
-    <div class="name">KRN Alloys Pvt. Ltd</div>
-    <img class="logo" src="/static/KRN_Logo.png" alt="KRN">
-  </div>
-
+{% block content %}
+<div class="page-wrap" style="max-width:900px;margin:16px auto;padding:0 16px">
   <h1>New GRN</h1>
 
-  <form method="post" action="/grn/new">
-    <fieldset {% if read_only %}disabled{% endif %}>
-      <label>Date</label>
-      <input type="date" name="date" required min="{{min_date}}" max="{{max_date}}">
-      <div class="hint">Allowed: today to 4 days back (no future date)</div>
+  <!-- top tools -->
+  <div class="toolbar" style="display:flex;gap:10px;margin:8px 0 12px">
+    <a class="btn ghost" href="/grn">← Back to GRN</a>
+  </div>
 
-      <label>Supplier</label><input type="text" name="supplier" required>
-      <label>RM Type</label>
-      <select name="rm_type" required>
-        <option value="">-- Select --</option>
-        {% for t in rm_types %}
-          <option value="{{ t }}">{{ t }}</option>
-        {% endfor %}
-      </select>
-      <label>Qty (kg)</label><input type="number" step="0.1" min="0.1" name="qty" required>
-      <label>Price (₹/kg)</label><input type="number" step="0.01" min="0" name="price" required>
+  {# optional error message from server-side validation #}
+  {% if error_text %}
+    <div class="alert error" role="alert" style="margin:8px 0 12px">
+      {{ error_text }}
+    </div>
+  {% endif %}
+
+  <form class="blue-ui" method="post" action="/grn/new"
+        style="border:1px solid #e5e7eb;border-radius:12px;padding:16px">
+    <fieldset {% if read_only %}disabled{% endif %}>
+      <div class="form-row">
+        <label for="date">Date</label>
+        <!-- block future dates, allow up to 4 days back (provided by server) -->
+        <input id="date" name="date" type="date"
+               required min="{{ min_date }}" max="{{ max_date }}">
+        <div class="muted">Allowed: today to 4 days back (no future date)</div>
+      </div>
+
+      <div class="form-row">
+        <label for="supplier">Supplier</label>
+        <input id="supplier" name="supplier" required>
+      </div>
+
+      <div class="form-row">
+        <label for="rm_type">RM Type</label>
+        <select id="rm_type" name="rm_type" required>
+          <option value="">-- Select --</option>
+          {% for t in rm_types %}
+            <option value="{{ t }}">{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label for="qty">Qty (kg)</label>
+        <input id="qty" name="qty" type="number" step="0.1" min="0.1"
+               inputmode="decimal" required>
+      </div>
+
+      <div class="form-row">
+        <label for="price">Price (₹/kg)</label>
+        <input id="price" name="price" type="number" step="0.01" min="0"
+               inputmode="decimal" required>
+      </div>
 
       {% if not read_only %}
-        <div><button class="btn" type="submit">Save GRN</button> <a href="/grn">Cancel</a></div>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button class="btn" type="submit">Save GRN</button>
+          <a class="btn ghost" href="/grn">Cancel</a>
+        </div>
       {% else %}
-        <p class="muted">Read-only access: form controls are disabled. <a href="/grn">Back</a></p>
+        <p class="muted" style="margin-top:12px">
+          Read-only access: form controls are disabled. <a href="/grn">Back</a>
+        </p>
       {% endif %}
     </fieldset>
   </form>
-</body>
-</html>
+</div>
+{% endblock %}
