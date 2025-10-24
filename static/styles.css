@@ -1,70 +1,205 @@
+/* ===============================
+   KRN – Global Stylesheet
+   Works with base.html + all pages
+   =============================== */
 
-body{font-family:Inter,Arial,Helvetica,sans-serif;margin:20px}
+/* --- Theme tokens --- */
+:root{
+  --krn-blue:#0e2a47;
+  --krn-orange:#f59e0b;
+  --ink:#111827;
+  --muted:#6b7280;
+  --line:#e5e7eb;
+  --bg:#f8fafc;
+  --white:#ffffff;
+}
+
+/* --- Base layout: footer sticks to bottom --- */
+html, body{
+  height:100%;
+  margin:0;
+}
+body{
+  font-family:Inter, Arial, Helvetica, sans-serif;
+  color:var(--ink);
+  background:var(--bg);
+  display:flex;
+  flex-direction:column;
+}
+
+/* anything with .page-wrap or main area can grow */
+main, .page-wrap{ flex:1; }
+
+/* --- Links --- */
 a{color:#0b64d6;text-decoration:none}
 a:hover{text-decoration:underline}
+
+/* --- Legacy header bits kept for compatibility (used in some templates) --- */
 nav{display:flex;gap:18px;align-items:center;margin-bottom:18px;padding:10px 0;border-bottom:1px solid #eee}
 nav img{height:28px;margin-right:10px}
-table{border-collapse:collapse;width:100%;margin-top:12px}
-th,td{border:1px solid #ddd;padding:8px;font-size:14px}
-th{background:#fafafa;text-align:left}
-.btn{display:inline-block;background:#0b64d6;color:#fff;padding:6px 10px;border-radius:6px}
-.btn-secondary{background:#555}
-label{display:block;margin-top:8px}
-input,select{padding:6px;border:1px solid #ccc;border-radius:6px;width:100%;max-width:340px}
-hr{border:none;border-top:1px solid #eee;margin:18px 0}
+
+/* --- Header defined in base.html --- */
+.krn-nav{
+  background:#fff;
+  border-bottom:4px solid var(--krn-orange);
+  position:sticky; top:0; z-index:50;
+}
+.krn-bar{
+  max-width:1200px; margin:0 auto;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 18px; gap:12px; flex-wrap:wrap;
+}
+.header-brand{display:flex; align-items:center; gap:10px; white-space:nowrap}
+.header-brand img{height:48px}
+.header-brand h1{
+  font-size:2rem; font-weight:800; line-height:1.1; margin:0;
+  white-space:nowrap; /* keep single line */
+}
+
+/* --- Top right navigation (base.html) --- */
+.top-right{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  margin-left:auto;
+}
+.top-right a{
+  color:#2563eb; text-decoration:none;
+  padding:6px 10px; border-radius:8px; transition:background .2s ease, color .2s ease;
+}
+.top-right a:hover{ background:#f3f4f6; }
+.top-right a.active{
+  font-weight:700;
+  background:var(--krn-blue);
+  color:#fff;              /* active = blue bg + white text */
+}
+
+/* role badge + login/logout button (base.html) */
+.role-badge{
+  padding:2px 8px; border-radius:999px; background:#ffedd5;
+  color:#7c2d12; border:1px solid #fed7aa; font-size:12px
+}
+.btn-auth{
+  background:var(--krn-blue); color:#fff; border:1px solid var(--krn-blue);
+  padding:8px 12px; border-radius:8px; text-decoration:none
+}
+.btn-auth:hover{ background:var(--krn-orange); border-color:var(--krn-orange) }
+
+/* --- Buttons --- */
+.btn{
+  display:inline-block;
+  background:#0b64d6; color:#fff;
+  padding:8px 12px; border-radius:8px;
+  border:1px solid #0b64d6; text-decoration:none; cursor:pointer;
+  transition:background .2s ease, border .2s ease, color .2s ease;
+}
+.btn:hover{ background:var(--krn-orange); border-color:var(--krn-orange) }
+
+.btn-secondary{ background:#555; border-color:#555 }
+.btn.ghost{
+  background:#fff; color:var(--krn-blue); border:1px solid var(--krn-blue)
+}
+.btn.ghost:hover{ background:var(--krn-orange); color:#fff; border-color:var(--krn-orange) }
+
+button[disabled], .btn[disabled]{ opacity:.5; cursor:not-allowed }
+
+/* --- Forms --- */
+label{display:block;margin-top:8px;font-weight:600}
+input,select,textarea{
+  padding:6px; border:1px solid #ccc; border-radius:6px;
+  width:100%; max-width:340px; background:#fff; color:#111; font:inherit;
+}
+input:focus,select:focus,textarea:focus{
+  outline:2px solid #2563eb; outline-offset:2px;
+  border-color:#2563eb;
+}
+
 .small{color:#666;font-size:12px}
 .alert{background:#fff6e5;border:1px solid #ffd59f;padding:10px;border-radius:6px}
 .success{background:#e9f9ee;border:1px solid #b6e7c6}
 .red{color:#b00020}
-.header-brand{display:flex;align-items:center;gap:10px}
-.header-brand h1{font-size:18px;margin:0;font-weight:700}
-.top-right{margin-left:auto;display:flex;gap:12px}
 code{background:#f5f5f5;padding:2px 6px;border-radius:4px}
-/* === Reusable blue controls skin ======================================= */
-/* Apply this by adding class="blue-ui" on a <form> or wrapper <div>.      */
+
+/* --- Tables --- */
+table{
+  border-collapse:collapse; width:100%; margin-top:12px; background:#fff;
+  border-radius:10px; overflow:hidden;
+}
+th,td{border:1px solid #ddd;padding:8px;font-size:14px}
+th{background:#fafafa;text-align:left}
+td.right, th.right{ text-align:right }
+
+/* --- Cards/Sections --- */
+.card{
+  border:1px solid var(--line); background:#fff; border-radius:12px;
+  padding:14px 16px; box-shadow:0 1px 2px rgba(0,0,0,.04);
+  margin-bottom:16px;
+}
+h1,h2,h3{ color:var(--krn-blue); margin:10px 0 }
+h1{ font-size:1.8rem } h2{ font-size:1.4rem } h3{ font-size:1.2rem }
+
+/* --- Toolbars & inline filter rows --- */
+.toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:10px 0 14px }
+.inline-form{ display:flex; align-items:center; gap:8px; flex-wrap:wrap }
+
+/* Date inputs – keep compact width and block future dates via max attr in templates */
+input[type="date"]{ max-width:180px }
+
+/* --- Footer pinned to bottom --- */
+footer{
+  margin-top:auto; padding:12px 0; text-align:center; font-size:.75rem; color:#666;
+}
+
+/* --- Header-brand compatibility (some templates still use) --- */
+.header-brand{display:flex;align-items:center;gap:10px}
+.header-brand h1,.header-brand h2,.header-brand h3{margin:0}
+.header-brand h1{font-size:18px;font-weight:700}
+
+/* ===============================
+   Reusable Blue Skin (you already used)
+   Apply on <form class="blue-ui"> or wrapper
+   =============================== */
 .blue-ui input[type="text"],
 .blue-ui input[type="date"],
 .blue-ui input[type="number"],
 .blue-ui select,
 .blue-ui textarea,
 .blue-ui button,
-.blue-ui .btn  {
-  background:#0e2a47;      /* brand blue */
-  color:#fff;               /* white text */
-  border:1px solid #0e2a47;
+.blue-ui .btn{
+  background:var(--krn-blue);
+  color:#fff;
+  border:1px solid var(--krn-blue);
   border-radius:8px;
   padding:8px 10px;
 }
 
-/* readable dropdown arrow + consistent look on all browsers */
-.blue-ui select {
-  -webkit-appearance:none;
-  -moz-appearance:none;
-  appearance:none;
+.blue-ui .btn:hover,
+.blue-ui button:hover{
+  background:var(--krn-orange);
+  border-color:var(--krn-orange);
+}
+
+/* readable dropdown arrow + consistent look */
+.blue-ui select{
+  -webkit-appearance:none; -moz-appearance:none; appearance:none;
   background-image:
     linear-gradient(45deg, transparent 50%, #fff 50%),
     linear-gradient(135deg, #fff 50%, transparent 50%);
   background-position:
     calc(100% - 18px) calc(50% - 3px),
-    calc(100% - 12px) calc(50% - -3px);
+    calc(100% - 12px) calc(50% + 3px);
   background-size:6px 6px, 6px 6px;
   background-repeat:no-repeat;
   padding-right:28px;
 }
 
 .blue-ui input::placeholder,
-.blue-ui textarea::placeholder { color:#e5e7eb; }
+.blue-ui textarea::placeholder{ color:#e5e7eb }
 
 .blue-ui input:focus,
 .blue-ui select:focus,
 .blue-ui textarea:focus,
-.blue-ui button:focus {
-  outline:2px solid #2563eb;   /* focus ring */
+.blue-ui button:focus{
+  outline:2px solid #2563eb;
   outline-offset:2px;
 }
 
-/* keep disabled legible */
-.blue-ui :disabled {
-  opacity:.7;
-  cursor:not-allowed;
-}
+.blue-ui :disabled{ opacity:.7; cursor:not-allowed }
