@@ -20,3 +20,51 @@ hr{border:none;border-top:1px solid #eee;margin:18px 0}
 .header-brand h1{font-size:18px;margin:0;font-weight:700}
 .top-right{margin-left:auto;display:flex;gap:12px}
 code{background:#f5f5f5;padding:2px 6px;border-radius:4px}
+/* === Reusable blue controls skin ======================================= */
+/* Apply this by adding class="blue-ui" on a <form> or wrapper <div>.      */
+.blue-ui input[type="text"],
+.blue-ui input[type="date"],
+.blue-ui input[type="number"],
+.blue-ui select,
+.blue-ui textarea,
+.blue-ui button,
+.blue-ui .btn  {
+  background:#0e2a47;      /* brand blue */
+  color:#fff;               /* white text */
+  border:1px solid #0e2a47;
+  border-radius:8px;
+  padding:8px 10px;
+}
+
+/* readable dropdown arrow + consistent look on all browsers */
+.blue-ui select {
+  -webkit-appearance:none;
+  -moz-appearance:none;
+  appearance:none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #fff 50%),
+    linear-gradient(135deg, #fff 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) calc(50% - 3px),
+    calc(100% - 12px) calc(50% - -3px);
+  background-size:6px 6px, 6px 6px;
+  background-repeat:no-repeat;
+  padding-right:28px;
+}
+
+.blue-ui input::placeholder,
+.blue-ui textarea::placeholder { color:#e5e7eb; }
+
+.blue-ui input:focus,
+.blue-ui select:focus,
+.blue-ui textarea:focus,
+.blue-ui button:focus {
+  outline:2px solid #2563eb;   /* focus ring */
+  outline-offset:2px;
+}
+
+/* keep disabled legible */
+.blue-ui :disabled {
+  opacity:.7;
+  cursor:not-allowed;
+}
