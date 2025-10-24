@@ -8,39 +8,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>KRN Alloys Pvt Ltd</title>
 
-  <!-- Global favicon -->
   <link rel="icon" type="image/png" href="{{ url_for('static', path='favicon.png') }}"/>
-
-  <!-- Global CSS -->
   <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}"/>
 
   <style>
-    /* Header (can move to styles.css later) */
     .krn-nav{background:#fff;border-bottom:4px solid #f59e0b;position:sticky;top:0;z-index:50;}
     .krn-bar{max-width:1200px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:10px 18px;gap:12px;flex-wrap:wrap}
     .header-brand{display:flex;align-items:center;gap:10px;white-space:nowrap}
     .header-brand img{height:48px}
     .header-brand h1{font-size:2.0rem;font-weight:800;line-height:1.1;margin:0;white-space:nowrap}
-
     .top-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;}
     .top-right a{color:#2563eb;text-decoration:none;padding:6px 10px;border-radius:8px;transition:background .2s ease}
     .top-right a:hover{background:#f3f4f6}
     .top-right a.active{font-weight:700;background:#0e2a47;color:#fff}
-
     .role-badge{padding:2px 8px;border-radius:999px;background:#ffedd5;color:#7c2d12;border:1px solid #fed7aa;font-size:12px}
     .btn-auth{background:#0e2a47;color:#fff;border:1px solid #0e2a47;padding:8px 12px;border-radius:8px;text-decoration:none}
     .btn-auth:hover{background:#f59e0b;border-color:#f59e0b}
-
     footer{ text-align:center; font-size:0.75rem; color:#666; margin-top:20px; }
   </style>
 </head>
 <body>
 
-{# ---------- Resolve role once, with safe fallbacks ---------- #}
+{# Resolve role with safe fallbacks: route -> request.state -> session -> 'guest' #}
 {% set _role = (
-  role                                   # passed by route (preferred)
-  or (request.state.role if request.state.role is defined else None)    # middleware
-  or (request.session.get('role') if request.session is defined else None)  # session
+  role
+  or (request.state.role if request.state.role is defined else None)
+  or (request.session.get('role') if request.session is defined else None)
   or 'guest'
 ) %}
 
@@ -74,7 +67,6 @@
   </div>
 </header>
 
-<!-- Wrap content so footer sticks to bottom -->
 <main class="page-wrap">
   {% block content %}{% endblock %}
 </main>
