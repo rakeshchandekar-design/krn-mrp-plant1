@@ -114,18 +114,44 @@ def plant2_available_rows(conn):
     """)
     return conn.execute(sql).mappings().all()
 
-# --- role helpers (shared with other modules) ---
+# robust role helpers
 def current_role(request):
-    """Return current user's role, default 'guest'."""
-    if hasattr(request.state, "role") and request.state.role:
-        return request.state.role
+    """
+    Return current user's role with fallbacks:
+    1) request.state.role (preferred)
+    2) cookie 'role'
+    3) request.session['role'] (if SessionMiddleware is used)
+    """
+    # 1) already attached to request
+    role = getattr(request.state, "role", None)
+    if role:
+        return role
+
+    # 2) cookie fallback
+    role = request.cookies.get("role")
+    if role:
+        request.state.role = role
+        return role
+
+    # 3) session fallback (only if you use SessionMiddleware)
+    try:
+        if hasattr(request, "session"):
+            role = request.session.get("role")
+            if role:
+                request.state.role = role
+                return role
+    except Exception:
+        pass
+
     return "guest"
 
 
 def is_read_only(request):
-    """Viewer/guest cannot modify data."""
+    """Lock down create/update for non-privileged roles."""
     role = current_role(request)
+    # adjust as needed for your app
     return role not in ("admin", "anneal")
+
 
 # --- helper: robust admin check ---
 def _is_admin(request: Request) -> bool:
