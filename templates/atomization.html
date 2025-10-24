@@ -10,12 +10,12 @@
 
   <h1>Atomization</h1>
 
-  <!-- Top: KPIs (left) + Last 5 days (right) -->
-  <div style="display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:12px">
-    <div class="card" style="border:1px solid #e5e7eb;border-radius:12px;padding:12px">
+  <!-- Top row: KPIs (left) + Last 5 days (right) -->
+  <div class="grid-2">
+    <div class="card">
       <h2 style="margin:0 0 8px 0">KPIs (Today)</h2>
 
-      <div class="card" style="border:1px solid #e5e7eb;border-radius:10px;padding:10px;margin-bottom:8px">
+      <div class="card" style="margin-bottom:8px">
         <h3 style="margin:0 0 6px">Production Efficiency (Today)</h3>
         <table>
           <thead>
@@ -42,7 +42,7 @@
       </div>
     </div>
 
-    <div class="card" style="border:1px solid #e5e7eb;border-radius:12px;padding:12px">
+    <div class="card">
       <h3 style="margin:0 0 6px">Production – Last 5 Days</h3>
       <table>
         <thead>
@@ -67,9 +67,9 @@
     </div>
   </div>
 
-  <!-- Live Stock + Month Balance -->
-  <div style="display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:12px">
-    <div class="card" style="border:1px solid #e5e7eb;border-radius:12px;padding:12px">
+  <!-- Second row: Live Stock (left) + Month Balance (right) -->
+  <div class="grid-2">
+    <div class="card">
       <h3 style="margin:0 0 6px">Live Stock – Lots Available</h3>
       <table style="width:auto">
         <thead>
@@ -99,7 +99,7 @@
     </div>
 
     {% set bal = atom_bal or {'feed_kg':0, 'produced_kg':0, 'oversize_kg':0, 'conv_pct':0} %}
-    <div class="card" style="border:1px solid #e5e7eb;border-radius:12px;padding:12px">
+    <div class="card">
       <h3 style="margin:0 0 6px">Atomization Balance — Month to Date</h3>
       <table style="width:auto">
         <tbody>
@@ -116,7 +116,7 @@
   </div>
 
   <!-- Create Lot -->
-  <div class="card" style="border:1px solid #e5e7eb;border-radius:12px;padding:12px">
+  <div class="card">
     <h2 style="margin:0 0 8px 0">Create Lot (Allocate from Approved Heats)</h2>
 
     <form class="blue-ui" method="post" action="/atomization/new">
@@ -152,7 +152,13 @@
             {% set kwhpt = ( (h.power_kwh or 0) > 0 and (h.actual_output or 0) > 0 ) and ( (h.power_kwh / h.actual_output) * 1000 ) or 0 %}
             <tr>
               <td>{{ h.heat_no }}</td>
-              <td>{% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
+              <td>
+                {% if g == 'KRFS' %}
+                  <span class="badge badge-krfs">KRFS (FeSi)</span>
+                {% else %}
+                  <span class="badge badge-krip">KRIP</span>
+                {% endif %}
+              </td>
               <td class="right">{{ '%.1f' % (h.actual_output or 0) }}</td>
               <td class="right">{{ '%.1f' % avail }}</td>
               {% if role == 'admin' %}<td class="right">{{ '%.2f' % (h.unit_cost or 0) }}</td>{% endif %}
@@ -191,7 +197,7 @@
   </div>
 
   <!-- Lots -->
-  <div class="card" style="border:1px solid #e5e7eb;border-radius:12px;padding:12px">
+  <div class="card">
     <h2>Lots</h2>
 
     <div class="toolbar blue-ui" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 12px">
@@ -223,7 +229,13 @@
         {% for lot in lots %}
           <tr>
             <td>{{ lot.lot_no }}</td>
-            <td>{% if (lot.grade or 'KRIP') == 'KRFS' %}<span class="badge badge-info">KRFS</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
+            <td>
+              {% if (lot.grade or 'KRIP') == 'KRFS' %}
+                <span class="badge badge-krfs">KRFS</span>
+              {% else %}
+                <span class="badge badge-krip">KRIP</span>
+              {% endif %}
+            </td>
             <td class="right">{{ '%.1f' % (lot.weight or 0) }}</td>
             {% if role == 'admin' %}<td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>{% endif %}
             <td>{{ lot.qa_status or '' }}</td>
