@@ -74,5 +74,128 @@
 <footer>
   Copyright © 2025 KRN Alloys Pvt Ltd. All Rights Reserved.
 </footer>
+  
+<!-- Idle timeout toast (non-intrusive) -->
+<style>
+  #idle-toast {
+    position: fixed; right: 16px; bottom: 16px;
+    max-width: 340px; z-index: 9999;
+    background: #fff7ed; color: #7c2d12;
+    border: 1px solid #fdba74; border-radius: 10px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.1);
+    padding: 10px 12px; font-size: 14px; line-height: 1.35;
+    display: none;
+  }
+  #idle-toast .ttl {
+    font-weight: 700; margin-bottom: 4px; display:block;
+  }
+  #idle-toast .count {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 700;
+  }
+</style>
+<div id="idle-toast" role="status" aria-live="polite">
+  <span class="ttl">Session expiring soon</span>
+  You’ll be logged out after <span class="count" id="idle-countdown">--</span>.
+  <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap">
+    <a href="#" id="idle-stay" style="text-decoration:underline; color:#7c2d12">Stay signed in</a>
+    <a href="/logout" style="text-decoration:none; color:#7c2d12">Logout now</a>
+  </div>
+</div>
+
+<script>
+(function(){
+  // Don’t run for guests (no session)
+  const role = "{{ _role|e }}";
+  if (!role || role.toLowerCase() === "guest") return;
+
+  const TOAST = document.getElementById("idle-toast");
+  const COUNT = document.getElementById("idle-countdown");
+  const STAY  = document.getElementById("idle-stay");
+
+  // Threshold & poll period
+  const WARN_AT_SEC = 120;     // show banner when <= 120s left
+  const POLL_MS     = 30_000;  // poll every 30s
+
+  let lastSecondsLeft = null;
+
+  function fmt(seconds){
+    seconds = Math.max(0, Math.floor(seconds||0));
+    const m = Math.floor(seconds / 60), s = seconds % 60;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+
+  function show(sec){
+    COUNT.textContent = fmt(sec);
+    TOAST.style.display = "block";
+  }
+  function hide(){
+    TOAST.style.display = "none";
+  }
+
+  // “Stay signed in” -> quick ping to refresh last_activity then re-check
+  STAY.addEventListener("click", function(ev){
+    ev.preventDefault();
+    fetch(window.location.pathname, {
+      method: "HEAD",
+      credentials: "same-origin",
+      cache: "no-store",
+    }).then(()=> setTimeout(checkOnce, 500)).catch(()=>{});
+  });
+
+  async function readHeaderSeconds() {
+    // HEAD falls back to GET automatically in FastAPI if no HEAD route; still ok
+    const res = await fetch(window.location.pathname, {
+      method: "HEAD",
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    // If redirected to login (session timed out), follow it.
+    if (res.redirected) {
+      window.location.href = res.url;
+      return 0;
+    }
+    const h = res.headers.get("X-Idle-Seconds-Left");
+    return h ? parseInt(h, 10) : null;
+  }
+
+  async function checkOnce(){
+    try{
+      const left = await readHeaderSeconds();
+      if (left === null) return; // header missing → do nothing
+
+      lastSecondsLeft = left;
+
+      if (left <= 0) {
+        // Server will already time out; send user to login with message
+        window.location.href = "/login?err=Session+timed+out";
+        return;
+      }
+      if (left <= WARN_AT_SEC) {
+        show(left);
+      } else {
+        hide();
+      }
+    }catch(e){
+      // Network errors: ignore silently, don't disrupt app
+    }
+  }
+
+  // Polling
+  checkOnce();
+  const t = setInterval(checkOnce, POLL_MS);
+
+  // Be responsive when user returns to the tab
+  document.addEventListener("visibilitychange", function(){
+    if (!document.hidden) checkOnce();
+  });
+
+  // Optional: clean up if needed when navigating away
+  window.addEventListener("beforeunload", function(){
+    clearInterval(t);
+  });
+})();
+</script>
 </body>
 </html>
