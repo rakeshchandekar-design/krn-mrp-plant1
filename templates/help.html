@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Help & User Guide</h1>
+<p class="muted">Welcome to the KRN MRP Application. Below is a step-by-step guide for each module from RM entry to Dispatch.</p>
+
+<style>
+  details {
+    margin: 10px 0;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #f9fafb;
+    padding: 10px 14px;
+  }
+  details summary {
+    font-weight: 600;
+    font-size: 1.1rem;
+    cursor: pointer;
+    color: #0e2a47;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  details summary:hover { color: #f59e0b; }
+  details ul { margin: 6px 0 6px 22px; line-height: 1.6; }
+  .icon { font-size: 1.3rem; }
+</style>
+
+<hr>
+
+<details open>
+  <summary>🏗️ Stores (GRN)</summary>
+  <ul>
+    <li><strong>Purpose:</strong> Record all incoming raw materials (Scrap, Fe-Si, Cu, etc.).</li>
+    <li><strong>Compulsory Fields:</strong> Date, Supplier, Material Type, Weight (kg), Rate (₹/kg).</li>
+    <li><strong>After Save:</strong> Appears as available stock for Melting.</li>
+    <li><strong>Tip:</strong> Approved GRNs only appear in the Melting module.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>🔥 Melting</summary>
+  <ul>
+    <li><strong>Purpose:</strong> Consume GRN materials to prepare Heats.</li>
+    <li><strong>Fields:</strong> Heat No, Input Weight, Fe-Si %, Output Weight, Power Used.</li>
+    <li><strong>Note:</strong> Approved Heats move to Atomization automatically.</li>
+    <li><strong>KPI Section:</strong> Displays yield % and power efficiency daily.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>💧 Atomization</summary>
+  <ul>
+    <li><strong>Purpose:</strong> Convert heats into atomized powder (KRIP or KRFS).</li>
+    <li><strong>Fields:</strong> Lot No, Input Heat, Output Weight, Pressure, Nozzle, Water Ratio.</li>
+    <li><strong>QA:</strong> Must be approved before visible in RAP.</li>
+    <li><strong>Dashboard:</strong> Shows 5-day production, targets, efficiency, and live stock.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>♻️ RAP (Ready After Atomization)</summary>
+  <ul>
+    <li><strong>Purpose:</strong> Allocate QA-approved atomized lots to Plant-2 (Annealing).</li>
+    <li><strong>Fields:</strong> Date, Qty, Remarks (single row entry).</li>
+    <li><strong>Actions:</strong> Download Trace, PDF, or QA sheet for each lot.</li>
+    <li><strong>Note:</strong> Allocation and dispatch history available as CSV for Admins.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>🔥 Annealing</summary>
+  <ul>
+    <li><strong>Purpose:</strong> Convert RAP lots into annealed powder (KIP / KFS).</li>
+    <li><strong>Compulsory Fields:</strong> Lot Weight, Ammonia Used, Allocated RAP Lots.</li>
+    <li><strong>Checks:</strong> Total allocated qty = Lot Weight (system validates automatically).</li>
+    <li><strong>Live Stock:</strong> Shows remaining RAP lots per grade.</li>
+    <li><strong>Tip:</strong> Use correct ammonia ratio (0.025 kg NH₃ per kg of lot).</li>
+  </ul>
+</details>
+
+<details>
+  <summary>⚙️ Grinding & Screening</summary>
+  <ul>
+    <li><strong>Purpose:</strong> Process annealed powder to fine grades (KIP-80.29, 100.29 etc.).</li>
+    <li><strong>Fields:</strong> Lot No, Input Weight, Screen Mesh, Output Weight.</li>
+    <li><strong>Result:</strong> Ready lots for Packing after QA approval.</li>
+    <li><strong>KPI:</strong> Monitors yield %, total production, and balance stock.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>📦 Packing & FG</summary>
+  <ul>
+    <li><strong>Purpose:</strong> Record final finished goods (FG lots).</li>
+    <li><strong>Compulsory:</strong> FG Lot No, Grade, Packing Weight, Bag Count.</li>
+    <li><strong>Auto-link:</strong> Pulls data from QA-approved Grinding lots.</li>
+    <li><strong>Outputs:</strong> Ready for Dispatch with Trace & CoA available.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>🚚 Dispatch</summary>
+  <ul>
+    <li><strong>Purpose:</strong> Allocate FG lots to customers for shipment.</li>
+    <li><strong>Fields:</strong> Customer Name, Dispatch Date, Qty, Transporter.</li>
+    <li><strong>Output:</strong> CoA auto-generated and lot marked “Dispatched.”</li>
+    <li><strong>Admin:</strong> Can export all dispatch logs as CSV.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>🧪 QA Dashboard</summary>
+  <ul>
+    <li><strong>Purpose:</strong> Central QA control to approve/reject lots at every stage.</li>
+    <li><strong>Functions:</strong> Filter by stage (Atomization, RAP, Anneal, FG).</li>
+    <li><strong>Outputs:</strong> PDF reports and daily QA summaries.</li>
+    <li><strong>Note:</strong> QA status directly affects visibility in the next stage.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>🔒 Access Control & Notes</summary>
+  <ul>
+    <li><strong>Roles:</strong> Each login is department-specific (Store, Melting, QA, Admin, etc.).</li>
+    <li><strong>Hidden Opening Stock:</strong> System calculates base stock internally — not editable by users.</li>
+    <li><strong>Reports:</strong> CSV & PDF options available only for Admin roles.</li>
+    <li><strong>Logout:</strong> Always logout after use to protect session data.</li>
+    <li><strong>Support:</strong> <a href="mailto:rakesh@krnalloys.co.in">rakesh@krnalloys.co.in</a></li>
+  </ul>
+</details>
+
+{% endblock %}
