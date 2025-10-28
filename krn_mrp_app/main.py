@@ -4265,3 +4265,7 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": f'inline; filename="trace_{lot.lot_no}.pdf"'})
+
+@app.get("/help", response_class=HTMLResponse)
+def help_page(request: Request):
+    return templates.TemplateResponse("help.html", {"request": request})
