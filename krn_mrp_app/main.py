@@ -5,6 +5,12 @@ from enum import Enum
 from starlette.middleware.sessions import SessionMiddleware
 import secrets
 
+import time
+from fastapi.responses import RedirectResponse
+
+from krn_mrp_app.auth_guard import can_login, register_login, unregister_login, update_heartbeat
+import uuid, time
+
 import os
 from uuid import uuid4
 from fastapi import File, UploadFile, Form, Request
@@ -65,6 +71,8 @@ POWER_TARGET_KWH_PER_TON = 560.0    # target kWh/ton
 
 # Atomization capacity
 DAILY_CAPACITY_ATOM_KG = 6000.0     # atomization 24h capacity
+
+INACTIVITY_SECONDS = 15 * 60   # 15 minutes
 
 # -------------------------------------------------
 # Database config
@@ -1293,6 +1301,57 @@ def _is_read_only(request: Request) -> bool:
 templates.env.globals.update(role_of=_role_of, is_read_only=_is_read_only)
 
 @app.middleware("http")
+async def session_heartbeat(request: Request, call_next):
+    """
+    15-min idle timeout + per-request heartbeat.
+    Safe: never breaks existing logic if anything goes wrong.
+    """
+    now_ts = int(time.time())
+    try:
+        sess = getattr(request, "session", {}) or {}
+        uname = sess.get("username")
+        sid   = sess.get("sid")
+        last  = int(sess.get("last_activity") or now_ts)
+
+        if uname and sid:
+            idle = now_ts - last
+
+            # Idle timeout → clear session and redirect to login
+            if idle > INACTIVITY_SECONDS:
+                try:
+                    unregister_login(uname, sid)  # safe if not registered
+                except Exception:
+                    pass
+                request.session.clear()
+
+                resp = RedirectResponse("/login?err=Session+timed+out+(15+min+idle)", status_code=303)
+                # mirror your logout cookie behavior
+                resp.delete_cookie("role")
+                resp.delete_cookie("username")
+                return resp
+
+            # Refresh activity + heartbeat map
+            request.session["last_activity"] = now_ts
+            try:
+                update_heartbeat(uname, sid)     # keeps single-session record fresh
+            except Exception:
+                pass
+
+        # Proceed normally
+        response = await call_next(request)
+
+        # Expose remaining idle seconds for optional client-side warning UI (non-breaking)
+        if getattr(request, "session", None) and request.session.get("username") and request.session.get("sid"):
+            remaining = max(0, INACTIVITY_SECONDS - (int(time.time()) - int(request.session.get("last_activity", now_ts))))
+            response.headers["X-Idle-Seconds-Left"] = str(remaining)
+
+        return response
+
+    except Exception:
+        # Never block requests if the heartbeat has any issue
+        return await call_next(request)
+
+@app.middleware("http")
 async def attach_role_flags(request: Request, call_next):
     """
     Attach role + read_only flags to request.state so templates
@@ -1517,33 +1576,69 @@ def ensure_rap_lot(db: Session, lot: Lot) -> RAPLot:
     db.add(rap); db.flush()
     return rap
 
+# --- unchanged ---
 @app.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "err": request.query_params.get("err", "")})
+    return templates.TemplateResponse(
+        "login.html",
+        {"request": request, "err": request.query_params.get("err", "")}
+    )
 
+# --- updated with single-session guard + session id/heartbeat ---
 @app.post("/login")
-async def login_post(request: Request, username: str = Form(...), password: str = Form(...)):
+async def login_post(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...)
+):
     uname = (username or "").strip().lower()
     u = USER_DB.get(uname) or {}
 
+    # existing credential check (unchanged)
     if not u or u.get("password") != (password or ""):
         return RedirectResponse("/login?err=Invalid+credentials", status_code=303)
 
+    # ✅ single-session guard: block if already active elsewhere (unless idle > threshold)
+    ok, msg = can_login(uname)
+    if not ok:
+        # keep your current redirect flow, just surface a clear message
+        return RedirectResponse(f"/login?err={msg.replace(' ', '+')}", status_code=303)
+
     role = u.get("role", "guest")
 
-    # Keep existing session writes
+    # ✅ issue a session id so we can track this device/browser
+    sid = uuid.uuid4().hex
+    now_ts = int(time.time())
+
+    # Keep your existing session structure (unchanged keys)
     request.session["user"] = {"username": uname, "role": role}
     request.session["username"] = uname
     request.session["role"] = role
 
-    # NEW: set cookies so middleware/base.html can read role immediately
+    # New: store sid and last activity in session (does not break existing code)
+    request.session["sid"] = sid
+    request.session["last_activity"] = now_ts
+
+    # ✅ register the active session for the single-session guard
+    register_login(uname, sid)
+
+    # Keep your cookie behavior (role/username cookies)
     resp = RedirectResponse("/", status_code=303)
-    resp.set_cookie("role", role, max_age=60*60*24*7, samesite="lax")      # 7 days
-    resp.set_cookie("username", uname, max_age=60*60*24*7, samesite="lax") # optional
+    resp.set_cookie("role", role, max_age=60*60*24*7, samesite="lax")       # 7 days (unchanged)
+    resp.set_cookie("username", uname, max_age=60*60*24*7, samesite="lax")  # optional (unchanged)
     return resp
 
+# --- updated logout to release the active session slot ---
 @app.get("/logout")
 def logout(request: Request):
+    uname = (request.session or {}).get("username")
+    sid = (request.session or {}).get("sid")
+
+    # ✅ free the single-session slot only if this device/session owns it
+    if uname and sid:
+        unregister_login(uname, sid)
+
+    # keep your existing clearing & cookies
     request.session.clear()
     resp = RedirectResponse("/", status_code=303)
     resp.delete_cookie("role")
