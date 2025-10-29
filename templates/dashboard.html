@@ -35,18 +35,21 @@
 <div class="toolbar">
   <form method="get" action="/dashboard" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     <label>From</label>
-    <input type="date" name="from" max="{{ today }}" value="{{ from }}">
+    <input type="date" name="from_date" max="{{ today }}" value="{{ from_date }}">
     <label>To</label>
-    <input type="date" name="to"   max="{{ today }}" value="{{ to }}">
+    <input type="date" name="to_date"   max="{{ today }}" value="{{ to_date }}">
     <button class="btn">Apply</button>
     <a class="btn" href="/dashboard">This Month</a>
     <span class="pill">Yesterday: {{ yesterday }}</span>
     <span class="pill">Today: {{ today }}</span>
+    <span class="pill" title="RM + all WIP + RAP + FG (no duplication)">
+      Total value in hand: <strong>₹ {{ '%.0f' % (total_value_in_hand or 0) }}</strong>
+    </span>
   </form>
   <button class="btn" onclick="window.print()">Print / Save PDF</button>
 </div>
 
-<!-- Row A: Inventory & Value -->
+<!-- Row A: High-level charts -->
 <div class="grid-3">
   <div class="card">
     <h2>Inventory — Value by Stage (₹)</h2>
@@ -63,8 +66,15 @@
   <div class="card">
     <h2>Avg Cost/kg (₹) — Anneal · Grind · FG</h2>
     <canvas id="costChart" height="160"></canvas>
-    <div class="muted" style="margin-top:6px">Range: {{ from }} → {{ to }}</div>
+    <div class="muted" style="margin-top:6px">Range: {{ from_date }} → {{ to_date }}</div>
   </div>
+</div>
+
+<!-- WIP pipeline -->
+<div class="card" style="margin-top:14px">
+  <h2>WIP Pipeline — RM → FG</h2>
+  <canvas id="wipChart" height="180"></canvas>
+  <div class="muted" style="margin-top:6px">Snapshot as of {{ today }} (Qty in kg, Value in ₹).</div>
 </div>
 
 <!-- Row B: Department snapshots -->
@@ -104,10 +114,10 @@
   <div class="card">
     <h2>Annealing</h2>
     <table>
-      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % anneal_yday_prod }} kg</td></tr>
-      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % anneal_avg_cost }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % anneal_mtd_prod }} kg</td></tr>
-      <tr><th>Value (MTD)</th><td class="right">₹ {{ '%.0f' % anneal_value }}</td></tr>
+      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % anneal_y_qty }} kg</td></tr>
+      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % anneal_m_cost_avg }}</td></tr>
+      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % anneal_m_qty }} kg</td></tr>
+      <tr><th>Value (MTD)</th><td class="right">₹ {{ '%.0f' % anneal_m_val }}</td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
     <table>
@@ -121,10 +131,10 @@
   <div class="card">
     <h2>Grinding & Screening</h2>
     <table>
-      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % grind_yday_prod }} kg</td></tr>
-      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % grind_avg_cost }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % grind_mtd_prod }} kg</td></tr>
-      <tr><th>Value (MTD)</th><td class="right">₹ {{ '%.0f' % grind_value }}</td></tr>
+      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % grind_y_qty }} kg</td></tr>
+      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % grind_m_cost_avg }}</td></tr>
+      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % grind_m_qty }} kg</td></tr>
+      <tr><th>Value (MTD)</th><td class="right">₹ {{ '%.0f' % grind_m_val }}</td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
     <table>
@@ -136,11 +146,11 @@
   <div class="card">
     <h2>Packing & FG / Dispatch</h2>
     <table>
-      <tr><th>FG — Yesterday</th><td class="right">{{ '%.0f' % fg_yday_prod }} kg</td></tr>
-      <tr><th>FG — Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % fg_avg_cost }}</td></tr>
-      <tr><th>FG — MTD Output</th><td class="right">{{ '%.0f' % fg_mtd_prod }} kg</td></tr>
+      <tr><th>FG — Yesterday</th><td class="right">{{ '%.0f' % fg_y_qty }} kg</td></tr>
+      <tr><th>FG — Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % fg_m_cost_avg }}</td></tr>
+      <tr><th>FG — MTD Output</th><td class="right">{{ '%.0f' % fg_m_qty }} kg</td></tr>
       <tr><th>FG Stock Value (now)</th><td class="right">₹ {{ '%.0f' % fg_stock_value }}</td></tr>
-      <tr><th>Dispatch (MTD)</th><td class="right">{{ '%.0f' % dispatch_mtd_qty }} kg | ₹ {{ '%.0f' % dispatch_mtd_value }}</td></tr>
+      <tr><th>Dispatch (MTD)</th><td class="right">{{ '%.0f' % dispatch_m_qty }} kg | ₹ {{ '%.0f' % dispatch_m_val }}</td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3 — FG)</h3>
     <table>
@@ -156,16 +166,16 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 (function(){
-  // Data passed from route (already numbers)
-  const inv = {{ inv_by_stage | tojson }};          // [{label, value}]
-  const prod = {{ prod_by_stage | tojson }};        // [{label, yday, mtd}]
-  const cost = {{ cost_by_stage | tojson }};        // [{label, avg_cost}]
+  const inv  = {{ inv_by_stage   | tojson }};   // [{label, value}]
+  const prod = {{ prod_by_stage  | tojson }};   // [{label, yday, mtd}]
+  const cost = {{ cost_by_stage  | tojson }};   // [{label, avg_cost}]
+  const wip  = {{ wip_pipeline   | tojson }};   // [{label, qty, value}]
 
   function makeBar(canvasId, labels, v1, v2, label1, label2){
     new Chart(document.getElementById(canvasId), {
       type: 'bar',
       data: {
-        labels: labels,
+        labels,
         datasets: [
           ...(v1 ? [{label: label1, data: v1}] : []),
           ...(v2 ? [{label: label2, data: v2}] : []),
@@ -179,6 +189,7 @@
     });
   }
 
+  // Inventory value by stage (₹) – from WIP pipeline values
   makeBar(
     'invChart',
     inv.map(x=>x.label),
@@ -187,6 +198,7 @@
     'Value (₹)'
   );
 
+  // Output Yesterday vs MTD (kg)
   makeBar(
     'prodChart',
     prod.map(x=>x.label),
@@ -195,6 +207,7 @@
     'Yesterday (kg)','MTD (kg)'
   );
 
+  // Avg cost/kg
   makeBar(
     'costChart',
     cost.map(x=>x.label),
@@ -202,6 +215,23 @@
     null,
     'Avg Cost/kg (₹)'
   );
+
+  // WIP pipeline (Qty vs Value)
+  new Chart(document.getElementById('wipChart'), {
+    type: 'bar',
+    data: {
+      labels: wip.map(x=>x.label),
+      datasets: [
+        { label: 'Qty (kg)',  data: wip.map(x=>x.qty)   },
+        { label: 'Value (₹)', data: wip.map(x=>x.value) }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'bottom' } },
+      scales: { y: { beginAtZero: true } }
+    }
+  });
 })();
 </script>
 {% endblock %}
