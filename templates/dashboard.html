@@ -18,13 +18,7 @@
   th,td{border:1px solid var(--border);padding:6px;text-align:left}
   th{background:#f3f4f6}
   .right{text-align:right}
-
-  /* Print-friendly */
-  @media print{
-    .toolbar, header.krn-nav, footer{ display:none !important; }
-    body{ margin:0; }
-    .card{ page-break-inside: avoid; }
-  }
+  @media print{ .toolbar, header.krn-nav, footer{display:none!important} body{margin:0} .card{page-break-inside:avoid}}
 </style>
 
 <div class="brand">
@@ -43,7 +37,7 @@
     <span class="pill">Yesterday: {{ yesterday }}</span>
     <span class="pill">Today: {{ today }}</span>
     <span class="pill" title="RM + WIP (Melting/Atom/Anneal/Grind) + RAP + FG. No duplication.">
-      Total value in hand: <strong>₹ {{ '%.0f' % (total_value_in_hand or 0) }}</strong>
+      Total value in hand: <strong>₹ {{ (total_value_in_hand | default(0) | float) | round(0) }}</strong>
     </span>
   </form>
   <button class="btn" onclick="window.print()">Print / Save PDF</button>
@@ -82,47 +76,53 @@
   <div class="card">
     <h2>Melting</h2>
     <table>
-      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % melt_yday.actual_kg }} kg</td></tr>
-      <tr><th>kWh/ton (Y)</th><td class="right">{{ '%.1f' % melt_yday.kwhpt }}</td></tr>
-      <tr><th>Yield % (Y)</th><td class="right">{{ '%.1f' % melt_yday.yield_pct }}</td></tr>
-      <tr><th>Eff. % (Y vs tgt)</th><td class="right">{{ '%.1f' % melt_yday.eff_pct }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % melt_mtd.actual_kg }} kg</td></tr>
-      <tr><th>Avg kWh/ton</th><td class="right">{{ '%.1f' % melt_mtd.kwhpt }}</td></tr>
+      <tr><th>Yesterday</th><td class="right">{{ (melt_yday.actual_kg | default(0) | float) | round(0) }} kg</td></tr>
+      <tr><th>kWh/ton (Y)</th><td class="right">{{ (melt_yday.kwhpt | default(0) | float) | round(1) }}</td></tr>
+      <tr><th>Yield % (Y)</th><td class="right">{{ (melt_yday.yield_pct | default(0) | float) | round(1) }}</td></tr>
+      <tr><th>Eff. % (Y vs tgt)</th><td class="right">{{ (melt_yday.eff_pct | default(0) | float) | round(1) }}</td></tr>
+      <tr><th>MTD Output</th><td class="right">{{ (melt_mtd.actual_kg | default(0) | float) | round(0) }} kg</td></tr>
+      <tr><th>Avg kWh/ton</th><td class="right">{{ (melt_mtd.kwhpt | default(0) | float) | round(1) }}</td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
     <table>
       <tr><th>Reason</th><th class="right">Min</th></tr>
-      {% for r in dt_top3.MELTING %}<tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>{% endfor %}
+      {% for r in dt_top3.MELTING | default([]) %}
+        <tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>
+      {% endfor %}
     </table>
   </div>
 
   <div class="card">
     <h2>Atomization</h2>
     <table>
-      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % atom_yday_prod }} kg</td></tr>
-      <tr><th>Eff. % (Y)</th><td class="right">{{ '%.1f' % atom_yday_eff }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % atom_mtd_prod }} kg</td></tr>
-      <tr><th>Avg Eff. %</th><td class="right">{{ '%.1f' % atom_mtd_eff }}</td></tr>
+      <tr><th>Yesterday</th><td class="right">{{ (atom_yday_prod | default(0) | float) | round(0) }} kg</td></tr>
+      <tr><th>Eff. % (Y)</th><td class="right">{{ (atom_yday_eff  | default(0) | float) | round(1) }}</td></tr>
+      <tr><th>MTD Output</th><td class="right">{{ (atom_mtd_prod  | default(0) | float) | round(0) }} kg</td></tr>
+      <tr><th>Avg Eff. %</th><td class="right">{{ (atom_mtd_eff   | default(0) | float) | round(1) }}</td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
     <table>
       <tr><th>Reason</th><th class="right">Min</th></tr>
-      {% for r in dt_top3.ATOM %}<tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>{% endfor %}
+      {% for r in dt_top3.ATOM | default([]) %}
+        <tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>
+      {% endfor %}
     </table>
   </div>
 
   <div class="card">
     <h2>Annealing</h2>
     <table>
-      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % anneal_yday_prod }} kg</td></tr>
-      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % anneal_avg_cost }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % anneal_mtd_prod }} kg</td></tr>
-      <tr><th>Value (MTD)</th><td class="right">₹ {{ '%.0f' % anneal_value }}</td></tr>
+      <tr><th>Yesterday</th><td class="right">{{ (anneal_yday_prod | default(0) | float) | round(0) }} kg</td></tr>
+      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ (anneal_avg_cost | default(0) | float) | round(2) }}</td></tr>
+      <tr><th>MTD Output</th><td class="right">{{ (anneal_mtd_prod | default(0) | float) | round(0) }} kg</td></tr>
+      <tr><th>Value (MTD)</th><td class="right">₹ {{ (anneal_value | default(0) | float) | round(0) }}</td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
     <table>
       <tr><th>Reason</th><th class="right">Min</th></tr>
-      {% for r in dt_top3.ANNEAL %}<tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>{% endfor %}
+      {% for r in dt_top3.ANNEAL | default([]) %}
+        <tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>
+      {% endfor %}
     </table>
   </div>
 </div>
@@ -131,31 +131,41 @@
   <div class="card">
     <h2>Grinding & Screening</h2>
     <table>
-      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % grind_yday_prod }} kg</td></tr>
-      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % grind_avg_cost }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % grind_mtd_prod }} kg</td></tr>
-      <tr><th>Value (MTD)</th><td class="right">₹ {{ '%.0f' % grind_value }}</td></tr>
+      <tr><th>Yesterday</th><td class="right">{{ (grind_yday_prod | default(0) | float) | round(0) }} kg</td></tr>
+      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ (grind_avg_cost | default(0) | float) | round(2) }}</td></tr>
+      <tr><th>MTD Output</th><td class="right">{{ (grind_mtd_prod | default(0) | float) | round(0) }} kg</td></tr>
+      <tr><th>Value (MTD)</th><td class="right">₹ {{ (grind_value | default(0) | float) | round(0) }}</td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
     <table>
       <tr><th>Reason</th><th class="right">Min</th></tr>
-      {% for r in dt_top3.GRIND %}<tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>{% endfor %}
+      {% for r in dt_top3.GRIND | default([]) %}
+        <tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>
+      {% endfor %}
     </table>
   </div>
 
   <div class="card">
     <h2>Packing & FG / Dispatch</h2>
     <table>
-      <tr><th>FG — Yesterday</th><td class="right">{{ '%.0f' % fg_yday_prod }} kg</td></tr>
-      <tr><th>FG — Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % fg_avg_cost }}</td></tr>
-      <tr><th>FG — MTD Output</th><td class="right">{{ '%.0f' % fg_mtd_prod }} kg</td></tr>
-      <tr><th>FG Stock Value (now)</th><td class="right">₹ {{ '%.0f' % fg_stock_value }}</td></tr>
-      <tr><th>Dispatch (MTD)</th><td class="right">{{ '%.0f' % dispatch_mtd_qty }} kg | ₹ {{ '%.0f' % dispatch_mtd_value }}</td></tr>
-    </table>
+      <tr><th>FG — Yesterday</th><td class="right">{{ (fg_yday_prod | default(0) | float) | round(0) }} kg</td></tr>
+      <tr><th>FG — Avg Cost/kg</th><td class="right">₹ {{ (fg_avg_cost | default(0) | float) | round(2) }}</td></tr>
+      <tr><th>FG — MTD Output</th><td class="right">{{ (fg_mtd_prod | default(0) | float) | round(0) }} kg</td></tr>
+      <tr><th>FG Stock Value (now)</th><td class="right">₹ {{ (fg_stock_value | default(0) | float) | round(0) }}</td></tr>
+      <tr>
+        <th>Dispatch (MTD)</th>
+        <td class="right">
+          {{ (dispatch_mtd_qty   | default(0) | float) | round(0) }} kg |
+          ₹ {{ (dispatch_mtd_value | default(0) | float) | round(0) }}
+        </td>
+      </tr>
+     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3 — FG)</h3>
     <table>
       <tr><th>Reason</th><th class="right">Min</th></tr>
-      {% for r in dt_top3.FG %}<tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>{% endfor %}
+      {% for r in dt_top3.FG | default([]) %}
+        <tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>
+      {% endfor %}
     </table>
   </div>
 </div>
@@ -166,10 +176,10 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 (function(){
-  const inv  = {{ inv_by_stage   | tojson }};
-  const prod = {{ prod_by_stage  | tojson }};
-  const cost = {{ cost_by_stage  | tojson }};
-  const wip  = {{ wip_pipeline   | tojson }};
+  const inv  = {{ (inv_by_stage  | default([]))  | tojson }};
+  const prod = {{ (prod_by_stage | default([]))  | tojson }};
+  const cost = {{ (cost_by_stage | default([]))  | tojson }};
+  const wip  = {{ (wip_pipeline  | default([]))  | tojson }};
 
   function makeBar(canvasId, labels, v1, v2, label1, label2){
     new Chart(document.getElementById(canvasId), {
@@ -193,7 +203,7 @@
   makeBar(
     'invChart',
     inv.map(x=>x.label),
-    inv.map(x=>x.value),
+    inv.map(x=>Number(x.value || 0)),
     null,
     'Value (₹)'
   );
@@ -202,8 +212,8 @@
   makeBar(
     'prodChart',
     prod.map(x=>x.label),
-    prod.map(x=>x.yday),
-    prod.map(x=>x.mtd),
+    prod.map(x=>Number(x.yday || 0)),
+    prod.map(x=>Number(x.mtd  || 0)),
     'Yesterday (kg)','MTD (kg)'
   );
 
@@ -211,7 +221,7 @@
   makeBar(
     'costChart',
     cost.map(x=>x.label),
-    cost.map(x=>x.avg_cost),
+    cost.map(x=>Number(x.avg_cost || 0)),
     null,
     'Avg Cost/kg (₹)'
   );
@@ -222,8 +232,8 @@
     data: {
       labels: wip.map(x=>x.label),
       datasets: [
-        { label: 'Qty (kg)',  data: wip.map(x=>x.qty)   },
-        { label: 'Value (₹)', data: wip.map(x=>x.value) }
+        { label: 'Qty (kg)',  data: wip.map(x=>Number(x.qty   || 0)) },
+        { label: 'Value (₹)', data: wip.map(x=>Number(x.value || 0)) }
       ]
     },
     options: {
