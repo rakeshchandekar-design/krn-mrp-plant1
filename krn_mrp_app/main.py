@@ -16,6 +16,10 @@ from uuid import uuid4
 from fastapi import File, UploadFile, Form, Request
 from starlette.staticfiles import StaticFiles
 
+import datetime as dt
+from sqlalchemy import text, func
+from sqlalchemy.orm import joinedload
+
 # FastAPI
 from fastapi import FastAPI, Request, Form, Depends, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
@@ -1943,6 +1947,15 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
     ]
     return pipeline
 
+# --- Tiny SQL helpers (must be defined before the route) ---
+def _sum(db, sql, **kw) -> float:
+    return float(db.execute(text(sql), kw).scalar() or 0.0)
+
+def _avg(db, num_sql, den_sql, **kw) -> float:
+    num = float(db.execute(text(num_sql), kw).scalar() or 0.0)
+    den = float(db.execute(text(den_sql), kw).scalar() or 0.0)
+    return (num / den) if den > 0 else 0.0
+
 # -------------------------------
 # Dashboard (Admin + View) — final route using helpers
 # -------------------------------
@@ -2338,18 +2351,128 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "dt_top3":          mdx["dt_top3"],
 
         "wip_pipeline": wip_pipeline,
-    "total_value_in_hand": total_value_in_hand,
-    "inv_by_stage": inv_by_stage,
-    "prod_by_stage": prod_by_stage,
-    "cost_by_stage": cost_by_stage,
-    "fg_stock_value": fg_stock_value,
-    "dt_top3": dt_top3,
-    # expose from/to with names used by html
-    "from_date": _from.isoformat(),
-    "to_date": _to.isoformat(),
+        "total_value_in_hand": total_value_in_hand,
+        "inv_by_stage": inv_by_stage,
+        "prod_by_stage": prod_by_stage,
+        "cost_by_stage": cost_by_stage,
+        "fg_stock_value": fg_stock_value,
+        "dt_top3": dt_top3,
+        # expose from/to with names used by html
+        "from_date": _from.isoformat(),
+        "to_date": _to.isoformat(),
     }
     return templates.TemplateResponse("dashboard.html", ctx)
 
+# --- WIP pipeline (RM -> FG Stock) snapshot ---
+def krn_build_wip_pipeline(db, today: dt.date):
+    # 1) RM (GRN remaining)
+    rm_val = _sum(db, "select sum((remaining_qty or qty) * price) from grn")
+
+    # 2) Melting WIP: heats whose output > allocated
+    melt_rows = db.execute(text("""
+        select
+          coalesce(sum(greatest((h.actual_output - coalesce(alloc.used,0)), 0)), 0) as qty,
+          coalesce(sum(greatest((h.actual_output - coalesce(alloc.used,0)), 0) * coalesce(h.unit_cost,0)), 0) as value
+        from heat h
+        left join (
+          select heat_id, sum(qty) as used
+          from lot_heat
+          group by heat_id
+        ) alloc on alloc.heat_id = h.id
+    """)).first()
+    melt_qty  = float(melt_rows[0] or 0.0)
+    melt_val  = float(melt_rows[1] or 0.0)
+
+    # 3) Atomization WIP: Lots not yet approved (pending/hold)
+    atom_rows = db.execute(text("""
+        select
+          coalesce(sum(weight),0) as qty,
+          coalesce(sum(weight * coalesce(unit_cost,0)),0) as value
+        from lot
+        where qa_status is null or qa_status in ('PENDING','HOLD')
+    """)).first()
+    atom_qty  = float(atom_rows[0] or 0.0)
+    atom_val  = float(atom_rows[1] or 0.0)
+
+    # 4) RAP: Approved atom lots minus RAP allocations
+    rap_rows = db.execute(text("""
+        with lot_avail as (
+          select
+            l.id,
+            coalesce(l.weight,0) - coalesce(la.used,0) as avail,
+            coalesce(l.unit_cost,0) as ucost
+          from lot l
+          left join (
+            select rl.lot_id, sum(ra.qty) as used
+            from rap_alloc ra
+            join rap_lot rl on rl.id = ra.rap_lot_id
+            group by rl.lot_id
+          ) la on la.lot_id = l.id
+          where l.qa_status = 'APPROVED'
+        )
+        select
+          coalesce(sum(greatest(avail,0)),0) as qty,
+          coalesce(sum(greatest(avail,0) * ucost),0) as value
+        from lot_avail
+    """)).first()
+    rap_qty  = float(rap_rows[0] or 0.0)
+    rap_val  = float(rap_rows[1] or 0.0)
+
+    # 5) Anneal WIP: anneal lots not approved
+    ann_rows = db.execute(text("""
+        select
+          coalesce(sum(weight_kg),0) as qty,
+          coalesce(sum(weight_kg * coalesce(cost_per_kg,0)),0) as value
+        from anneal_lots
+        where qa_status is null or qa_status in ('PENDING','HOLD')
+    """)).first()
+    ann_qty  = float(ann_rows[0] or 0.0)
+    ann_val  = float(ann_rows[1] or 0.0)
+
+    # 6) Grinding WIP: grinding lots not approved
+    grd_rows = db.execute(text("""
+        select
+          coalesce(sum(weight_kg),0) as qty,
+          coalesce(sum(weight_kg * coalesce(cost_per_kg,0)),0) as value
+        from grinding_lots
+        where qa_status is null or qa_status in ('PENDING','HOLD')
+    """)).first()
+    grd_qty  = float(grd_rows[0] or 0.0)
+    grd_val  = float(grd_rows[1] or 0.0)
+
+    # 7) FG Stock: approved FG minus dispatched
+    fg_rows = db.execute(text("""
+        with fg_left as (
+          select
+            f.id,
+            coalesce(f.weight_kg,0) - coalesce(di.disp,0) as remain,
+            coalesce(f.cost_per_kg,0) as cpk
+          from fg_lots f
+          left join (
+            select fg_lot_id, sum(qty_kg) as disp
+            from dispatch_items
+            group by fg_lot_id
+          ) di on di.fg_lot_id = f.id
+          where f.qa_status = 'APPROVED'
+        )
+        select
+          coalesce(sum(greatest(remain,0)),0) as qty,
+          coalesce(sum(greatest(remain,0) * cpk),0) as value
+        from fg_left
+    """)).first()
+    fg_qty  = float(fg_rows[0] or 0.0)
+    fg_val  = float(fg_rows[1] or 0.0)
+
+    pipeline = [
+        {"label": "RM",             "qty": 0.0,        "value": rm_val},
+        {"label": "Melting WIP",    "qty": melt_qty,   "value": melt_val},
+        {"label": "Atom WIP",       "qty": atom_qty,   "value": atom_val},
+        {"label": "RAP",            "qty": rap_qty,    "value": rap_val},
+        {"label": "Anneal WIP",     "qty": ann_qty,    "value": ann_val},
+        {"label": "Grind WIP",      "qty": grd_qty,    "value": grd_val},
+        {"label": "FG Stock",       "qty": fg_qty,     "value": fg_val},
+    ]
+    return pipeline
 
 # -------------------------------------------------
 # GRN (standardized UI hooks; business logic unchanged)
