@@ -1670,6 +1670,10 @@ def home(request: Request):
     )
 
 # ---------- KRN Dashboard helpers (drop-in, no behavior change to existing code) ----------
+import datetime as dt
+import math
+from sqlalchemy import text, func
+from sqlalchemy.orm import joinedload
 
 def krn_parse_range(request) -> dict:
     """
@@ -1707,127 +1711,142 @@ def krn_parse_range(request) -> dict:
         "yest": yest, "ymd_y": ymd_y, "ymd_m": ymd_m,
     }
 
+# --- Tiny SQL helpers (must be defined before the route) ---
+def _sum(db, sql, **kw) -> float:
+    return float(db.execute(text(sql), kw).scalar() or 0.0)
 
-def krn_compose_md_view(
-    db: Session,
-    _from: dt.date, _to: dt.date, yest: dt.date,
-    melt_yday: dict, melt_mtd: dict,
-    atom_yday_prod: float, atom_mtd_prod: float,
-    # RAP costs already computed in your route:
-    rap_grade_cost: dict[str, float],
-    # downtime top 3 “area” lists for Anneal/Grind/FG (you already compute them):
-    ann_dt_top: list[dict], grd_dt_top: list[dict], fg_dt_top: list[dict],
-    # simple aggregates already computed in your route:
-    anneal_y_qty: float, anneal_m_qty: float, anneal_m_val: float, anneal_m_cost_avg: float,
-    grind_y_qty: float,  grind_m_qty: float,  grind_m_val: float,  grind_m_cost_avg: float,
-    fg_y_qty: float,     fg_m_qty: float,     fg_m_val: float,     fg_m_cost_avg: float,
-    # melt/atom kind maps for top-3 (you already compute them):
-    melt_by_m: dict, atom_by_m: dict,
-):
+def _avg(db, num_sql, den_sql, **kw) -> float:
+    num = float(db.execute(text(num_sql), kw).scalar() or 0.0)
+    den = float(db.execute(text(den_sql), kw).scalar() or 0.0)
+    return (num / den) if den > 0 else 0.0
+
+# ---------- NEW KPI HELPERS (no schema changes) ----------
+def kpi_atom_oversize(db, start: dt.date, end: dt.date, yest: dt.date):
     """
-    Builds only the extra variables your dashboard.html expects, without touching existing logic.
+    Atomization oversize:
+      (a) PSD-derived >180/212 µm fraction from lot_psd
+      (b) +20 mesh/80# oversize from screen_lot.oversize_80
+    Returns (yesterday_kg, mtd_kg)
     """
-    # Cards: rename to template-friendly names
-    anneal_yday_prod = anneal_y_qty
-    anneal_mtd_prod  = anneal_m_qty
-    anneal_avg_cost  = anneal_m_cost_avg
-    anneal_value     = anneal_m_val
+    # PSD path
+    sql_psd_m = """
+      SELECT COALESCE(SUM(
+               COALESCE(l.weight, l.qty, 0)::numeric *
+               (CASE WHEN COALESCE(lp.p212,0) <> 0 THEN lp.p212::numeric
+                     WHEN COALESCE(lp.p180,0) <> 0 THEN lp.p180::numeric
+                     ELSE 0 END) / 100.0
+             ),0)
+      FROM lot l
+      JOIN lot_psd lp ON lp.lot_id = l.id
+      WHERE (COALESCE(lp.p212,0) <> 0 OR COALESCE(lp.p180,0) <> 0)
+        AND (COALESCE(l.date, DATE(l.created_at)) BETWEEN :a AND :b)
+    """
+    sql_psd_y = sql_psd_m + " AND COALESCE(l.date, DATE(l.created_at)) = :d"
 
-    grind_yday_prod  = grind_y_qty
-    grind_mtd_prod   = grind_m_qty
-    grind_avg_cost   = grind_m_cost_avg
-    grind_value      = grind_m_val
+    # Screening path (+20 / 80#)
+    sql_gs_m = """
+      SELECT COALESCE(SUM(COALESCE(oversize_80,0)::numeric),0)
+      FROM screen_lot
+      WHERE COALESCE(date, DATE(created_at)) BETWEEN :a AND :b
+    """
+    sql_gs_y = sql_gs_m + " AND COALESCE(date, DATE(created_at)) = :d"
 
-    fg_yday_prod     = fg_y_qty
-    fg_mtd_prod      = fg_m_qty
-    fg_avg_cost      = fg_m_cost_avg
+    run = lambda sql, **kw: float(db.execute(text(sql), kw).scalar() or 0.0)
 
-    # FG stock value snapshot = cumulative FG value till date − cumulative dispatched value till date
-    fg_total_val_now = float(db.execute(text(
-        "select sum(weight_kg*cost_per_kg) from fg_lots "
-        "where (qa_status is null or qa_status!='REJECTED') and date <= :b"
-    ), {"b": _to}).scalar() or 0.0)
+    psd_m = run(sql_psd_m, a=start, b=end)
+    psd_y = run(sql_psd_y, a=start, b=end, d=yest)
 
-    fg_dispatched_val_cum = float(db.execute(text(
-    "select coalesce(sum(di.value),0) "
-    "from dispatch_items di "
-    "join dispatch_orders ord on ord.id = di.dispatch_id "
-    "where ord.date <= :b"
-), {"b": _to}).scalar() or 0.0)
+    gs_m  = run(sql_gs_m,  a=start, b=end)
+    gs_y  = run(sql_gs_y,  a=start, b=end, d=yest)
 
-    fg_stock_value = max(fg_total_val_now - fg_dispatched_val_cum, 0.0)
+    return (psd_y + gs_y, psd_m + gs_m)
 
-    # Inventory snapshot (no double count): RM + RAP available + FG stock
-    rap_total_val = float((rap_grade_cost or {}).get("KRIP", 0.0) + (rap_grade_cost or {}).get("KRFS", 0.0))
+def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
+    """
+    NH3 consumption (kg) and efficiency (kg NH3 / ton approved output).
+    Uses rm_consumption entries tagged for anneal with item like 'ammonia',
+    and approved anneal_lots output in the window.
+    """
+    nh3_base = """
+      FROM rm_consumption
+      WHERE (LOWER(area)='anneal' OR LOWER(process)='anneal')
+        AND LOWER(item) LIKE '%ammonia%'
+    """
+    nh3_m = _sum(db, f"SELECT COALESCE(SUM(qty_kg),0) {nh3_base} AND DATE(date) BETWEEN :a AND :b", a=start, b=end)
+    nh3_y = _sum(db, f"SELECT COALESCE(SUM(qty_kg),0) {nh3_base} AND DATE(date) = :d", d=yest)
 
-    # Note: RM live value should come from your existing context; we only define the structure here.
-    # We'll let caller inject the RM value later.
-    inv_by_stage = lambda rm_live_val: [
-        {"label": "RM",            "value": round(rm_live_val, 2)},
-        {"label": "RAP Available", "value": round(rap_total_val, 2)},
-        {"label": "FG Stock",      "value": round(fg_stock_value, 2)},
-    ]
+    out_base = "FROM anneal_lots WHERE COALESCE(qa_status,'APPROVED')='APPROVED'"
+    ok_m = _sum(db, f"SELECT COALESCE(SUM(weight_kg),0) {out_base} AND COALESCE(date, DATE(created_at)) BETWEEN :a AND :b", a=start, b=end)
+    ok_y = _sum(db, f"SELECT COALESCE(SUM(weight_kg),0) {out_base} AND COALESCE(date, DATE(created_at)) = :d", d=yest)
 
-    # Production yesterday vs MTD across nodes
-    prod_by_stage = [
-        {"label": "Melting",     "yday": round(float(melt_yday.get("actual_kg", 0.0)), 1),
-                                  "mtd": round(float(melt_mtd.get("actual_kg", 0.0)), 1)},
-        {"label": "Atomization", "yday": round(float(atom_yday_prod), 1),
-                                  "mtd": round(float(atom_mtd_prod), 1)},
-        {"label": "Annealing",   "yday": round(float(anneal_yday_prod), 1),
-                                  "mtd": round(float(anneal_mtd_prod), 1)},
-        {"label": "Grinding",    "yday": round(float(grind_yday_prod), 1),
-                                  "mtd": round(float(grind_mtd_prod), 1)},
-        {"label": "FG",          "yday": round(float(fg_yday_prod), 1),
-                                  "mtd": round(float(fg_mtd_prod), 1)},
-    ]
+    eff_m = (nh3_m / ok_m * 1000.0) if ok_m > 0 else 0.0  # kg/ton
+    eff_y = (nh3_y / ok_y * 1000.0) if ok_y > 0 else 0.0
+    return {"nh3_y": nh3_y, "nh3_m": nh3_m, "eff_y": eff_y, "eff_m": eff_m}
 
-    # Average cost chart
-    cost_by_stage = [
-        {"label": "Anneal", "avg_cost": round(float(anneal_avg_cost), 2)},
-        {"label": "Grind",  "avg_cost": round(float(grind_avg_cost), 2)},
-        {"label": "FG",     "avg_cost": round(float(fg_avg_cost), 2)},
-    ]
+def kpi_grind_oversize_and_eff(db, start: dt.date, end: dt.date, yest: dt.date):
+    """
+    Grinding oversize (kg) from screen_lot.oversize_80 and
+    simple efficiency = FG out / Grinding input.
+    """
+    os_m = _sum(db,
+        "SELECT COALESCE(SUM(COALESCE(oversize_80,0)::numeric),0) FROM screen_lot WHERE COALESCE(date, DATE(created_at)) BETWEEN :a AND :b",
+        a=start, b=end
+    )
+    os_y = _sum(db,
+        "SELECT COALESCE(SUM(COALESCE(oversize_80,0)::numeric),0) FROM screen_lot WHERE COALESCE(date, DATE(created_at)) = :d",
+        d=yest
+    )
 
-    # Top-3 downtime per department
-    def _top3_from_kind_map(kind_map: dict[str, int]):
-        pairs = [{"reason": (k or "OTHER").title(), "minutes": int(v or 0)} for k, v in (kind_map or {}).items()]
-        pairs.sort(key=lambda x: x["minutes"], reverse=True)
-        return pairs[:3]
+    gi_m = _sum(db, "SELECT COALESCE(SUM(weight_kg),0) FROM grinding_lots WHERE COALESCE(date, DATE(created_at)) BETWEEN :a AND :b", a=start, b=end)
+    gi_y = _sum(db, "SELECT COALESCE(SUM(weight_kg),0) FROM grinding_lots WHERE COALESCE(date, DATE(created_at)) = :d", d=yest)
+    go_m = _sum(db, "SELECT COALESCE(SUM(weight_kg),0) FROM fg_lots       WHERE COALESCE(date, DATE(created_at)) BETWEEN :a AND :b", a=start, b=end)
+    go_y = _sum(db, "SELECT COALESCE(SUM(weight_kg),0) FROM fg_lots       WHERE COALESCE(date, DATE(created_at)) = :d", d=yest)
 
-    dt_top3 = {
-        "MELTING": _top3_from_kind_map(melt_by_m),
-        "ATOM":    _top3_from_kind_map(atom_by_m),
-        "ANNEAL":  [{"reason": r["area"], "minutes": int(r["min"])} for r in (ann_dt_top or [])],
-        "GRIND":   [{"reason": r["area"], "minutes": int(r["min"])} for r in (grd_dt_top or [])],
-        "FG":      [{"reason": r["area"], "minutes": int(r["min"])} for r in (fg_dt_top or [])],
-    }
+    eff_m = (go_m / gi_m * 100.0) if gi_m > 0 else 0.0
+    eff_y = (go_y / gi_y * 100.0) if gi_y > 0 else 0.0
+    return {"os_y": os_y, "os_m": os_m, "eff_y": eff_y, "eff_m": eff_m}
 
-    # Return pieces; caller can merge into ctx
-    return {
-        # Cards
-        "anneal_yday_prod": anneal_yday_prod,
-        "anneal_mtd_prod":  anneal_mtd_prod,
-        "anneal_avg_cost":  anneal_avg_cost,
-        "anneal_value":     anneal_value,
+def kpi_fg_gradewise_stock(db):
+    """
+    Remaining FG on hand by grade (qty kg and value).
+    """
+    sql = """
+      WITH disp AS (
+        SELECT fg_lot_id, COALESCE(SUM(qty_kg),0) qty
+        FROM dispatch_items GROUP BY fg_lot_id
+      )
+      SELECT UPPER(COALESCE(fl.grade,'KRIP')) AS grade,
+             COALESCE(SUM(GREATEST(COALESCE(fl.weight_kg,0)-COALESCE(d.qty,0),0)),0) AS qty,
+             COALESCE(SUM(GREATEST(COALESCE(fl.weight_kg,0)-COALESCE(d.qty,0),0)
+                       * COALESCE(fl.cost_per_kg,0)),0) AS value
+      FROM fg_lots fl
+      LEFT JOIN disp d ON d.fg_lot_id = fl.id
+      WHERE fl.qa_status = 'APPROVED'
+      GROUP BY 1
+      ORDER BY 1
+    """
+    rows = db.execute(text(sql)).fetchall()
+    return [{"grade": r[0], "qty": float(r[1] or 0), "value": float(r[2] or 0)} for r in rows]
 
-        "grind_yday_prod":  grind_yday_prod,
-        "grind_mtd_prod":   grind_mtd_prod,
-        "grind_avg_cost":   grind_avg_cost,
-        "grind_value":      grind_value,
-
-        "fg_yday_prod":     fg_yday_prod,
-        "fg_mtd_prod":      fg_mtd_prod,
-        "fg_avg_cost":      fg_avg_cost,
-        "fg_stock_value":   fg_stock_value,
-
-        # Charts (inv needs RM value; we expose a function to finalize)
-        "prod_by_stage":    prod_by_stage,
-        "cost_by_stage":    cost_by_stage,
-        "dt_top3":          dt_top3,
-        # Provide a small hook to build inv_by_stage after RM value is known
-        "_inv_builder":     inv_by_stage,
-    }
+def kpi_qa_eagle(db, start: dt.date, end: dt.date):
+    """
+    Small QA bird’s-eye: counts by status for heats & lots in the window.
+    """
+    counts = {}
+    for s in ("PENDING","APPROVED","HOLD","REJECTED"):
+        qh = text("""
+          SELECT COUNT(*) FROM heats
+          WHERE COALESCE(qa_status,'PENDING') = :s
+            AND DATE(created_at) BETWEEN :a AND :b
+        """)
+        ql = text("""
+          SELECT COUNT(*) FROM lot
+          WHERE COALESCE(qa_status,'PENDING') = :s
+            AND (COALESCE(date, DATE(created_at)) BETWEEN :a AND :b)
+        """)
+        counts[f"heats_{s.lower()}"] = int(db.execute(qh, {"s": s, "a": start, "b": end}).scalar() or 0)
+        counts[f"lots_{s.lower()}"]  = int(db.execute(ql, {"s": s, "a": start, "b": end}).scalar() or 0)
+    return counts
 
 # -----------------------------------------
 # Helper: Build WIP snapshot across stages
@@ -1837,7 +1856,7 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
     rm_row = db.execute(text("""
         select
           coalesce(sum(coalesce(remaining_qty,0)), 0)                                   as qty,
-          coalesce(sum(coalesce(remaining_qty, qty, 0) * coalesce(price, 0)), 0)        as val
+        coalesce(sum(coalesce(remaining_qty, qty, 0) * coalesce(price, 0)), 0)        as val
         from grn
     """)).first()
     rm_qty = float(rm_row[0] or 0.0)
@@ -1853,7 +1872,7 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
         from grn
     """)).scalar() or 0.0)
 
-    # 2) Melting WIP (melted but not yet allocated to atomization lots)
+    # 2) Melting WIP
     heats = db.query(Heat).all()
     alloc_by_heat = {
         hid: float(qty or 0)
@@ -1870,14 +1889,13 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
             continue
         unit = float(h.unit_cost or 0.0)
         if unit <= 0 and out_kg > 0:
-            # fallback to total_cost / output, else RM avg cost
             unit = (float(h.total_cost or 0.0) / out_kg) if out_kg > 0 else rm_avg_cost
             if unit <= 0:
                 unit = rm_avg_cost
         melt_wip_qty += avail
         melt_wip_val += avail * unit
 
-    # 3) Atomization WIP — pending/hold (ORM; respects actual DB column through model)
+    # 3) Atomization WIP — pending/hold
     atom_row = (
         db.query(
             func.coalesce(func.sum(Lot.weight), 0.0),
@@ -1897,7 +1915,7 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
     atom_qty = float(atom_row[0] or 0.0)
     atom_val = float(atom_row[1] or 0.0)
 
-    # 4) RAP — approved atom lots minus RAP allocations (ORM)
+    # 4) RAP — approved lots minus RAP allocations
     alloc_sq = (
         db.query(
             RAPLot.lot_id.label("lot_id"),
@@ -1913,21 +1931,16 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
             func.coalesce(
                 func.sum(
                     func.greatest(
-                        func.coalesce(Lot.weight, 0.0) - func.coalesce(alloc_sq.c.used, 0.0),
-                        0.0,
+                        func.coalesce(Lot.weight, 0.0) - func.coalesce(alloc_sq.c.used, 0.0), 0.0
                     )
-                ),
-                0.0,
+                ), 0.0
             ),
             func.coalesce(
                 func.sum(
                     func.greatest(
-                        func.coalesce(Lot.weight, 0.0) - func.coalesce(alloc_sq.c.used, 0.0),
-                        0.0,
-                    )
-                    * func.coalesce(Lot.unit_cost, 0.0)
-                ),
-                0.0,
+                        func.coalesce(Lot.weight, 0.0) - func.coalesce(alloc_sq.c.used, 0.0), 0.0
+                    ) * func.coalesce(Lot.unit_cost, 0.0)
+                ), 0.0
             ),
         )
         .join(alloc_sq, alloc_sq.c.lot_id == Lot.id, isouter=True)
@@ -1937,7 +1950,7 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
     rap_qty = float(rap_row[0] or 0.0)
     rap_val = float(rap_row[1] or 0.0)
 
-    # 5) Anneal WIP (pending/hold only — approved moves forward)
+    # 5) Anneal WIP (pending/hold only)
     ann_row = db.execute(text("""
         select
           coalesce(sum(coalesce(weight_kg,0)), 0) as qty,
@@ -1981,14 +1994,13 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
     wip_pipeline = [
         {"label": "RM",           "qty": rm_qty,        "value": rm_val},
         {"label": "Melting WIP",  "qty": melt_wip_qty,  "value": melt_wip_val},
-        {"label": "Atom WIP",     "qty": atom_qty,  "value": atom_val},
+        {"label": "Atom WIP",     "qty": atom_qty,      "value": atom_val},
         {"label": "RAP",          "qty": rap_qty,       "value": rap_val},
         {"label": "Anneal WIP",   "qty": ann_wip_qty,   "value": ann_wip_val},
         {"label": "Grind WIP",    "qty": grd_wip_qty,   "value": grd_wip_val},
         {"label": "FG Stock",     "qty": fg_qty,        "value": fg_val},
     ]
 
-    # Inventory-by-stage for the top-left chart (no duplication)
     inv_by_stage = [
         {"label": "RM",  "value": rm_val},
         {"label": "WIP", "value": melt_wip_val + atom_val + ann_wip_val + grd_wip_val},
@@ -1996,57 +2008,13 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
         {"label": "FG",  "value": fg_val},
     ]
 
-    total_value_in_hand = float(
-        rm_val + melt_wip_val + atom_val + ann_wip_val + grd_wip_val + rap_val + fg_val
-    )
+    total_value_in_hand = float(rm_val + melt_wip_val + atom_val + ann_wip_val + grd_wip_val + rap_val + fg_val)
 
     return {
         "wip_pipeline": wip_pipeline,
         "inv_by_stage": inv_by_stage,
-        # your existing code builds prod_by_stage and cost_by_stage; if you want, you can
-        # also attach them here instead of separately
         "total_value_in_hand": total_value_in_hand,
     }
-
-# -----------------------------------------
-# Small date-range helper (no future dates)
-# -----------------------------------------
-import datetime as dt
-from sqlalchemy import text, func
-from sqlalchemy.orm import joinedload
-
-def krn_parse_range(request):
-    today = dt.date.today()
-    month_start = today.replace(day=1)
-
-    def _parse(name, default):
-        raw = request.query_params.get(name)
-        if not raw:
-            return default
-        try:
-            d = dt.date.fromisoformat(raw)
-            return min(d, today)
-        except Exception:
-            return default
-
-    _from = _parse("from_date", month_start)
-    _to   = _parse("to_date", today)
-    if _from > _to:
-        _from, _to = _to, _from
-
-    yest = max(_to - dt.timedelta(days=1), today - dt.timedelta(days=1))
-    ymd_y = yest.strftime("%Y%m%d")
-    ymd_m = _from.strftime("%Y%m")
-    return dict(today=today, month_start=month_start, _from=_from, _to=_to, yest=yest, ymd_y=ymd_y, ymd_m=ymd_m)
-
-# --- Tiny SQL helpers (must be defined before the route) ---
-def _sum(db, sql, **kw) -> float:
-    return float(db.execute(text(sql), kw).scalar() or 0.0)
-
-def _avg(db, num_sql, den_sql, **kw) -> float:
-    num = float(db.execute(text(num_sql), kw).scalar() or 0.0)
-    den = float(db.execute(text(den_sql), kw).scalar() or 0.0)
-    return (num / den) if den > 0 else 0.0
 
 # -------------------------------
 # Dashboard (Admin + View) — final route
@@ -2066,7 +2034,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         db.query(
             GRN.rm_type,
             func.coalesce(func.sum(GRN.remaining_qty), 0.0),
-            func.coalesce(func.sum(GRN.remaining_qty * GRN.price), 0.0),
+        func.coalesce(func.sum(GRN.remaining_qty * GRN.price), 0.0),
         )
         .group_by(GRN.rm_type)
         .all()
@@ -2189,6 +2157,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     rap_m = {k: float(v or 0) for (k, v) in rap_m_rows}
 
     # ---------- QA breakdown ----------
+    heats_all = heats_all  # already fetched
     heats_pending_rows = [h for h in heats_all if (h.qa_status is None) or (h.qa_status == "PENDING")]
     heat_pending_by_grade = {"KRIP": 0, "KRFS": 0}
     for h in heats_pending_rows:
@@ -2290,7 +2259,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         a=_from, b=_to
     )
 
-# ---------- Build MD eagle-view (charts + pill + top-3) ----------
+    # ---------- Build MD eagle-view (charts + pill + top-3) ----------
     wip = krn_build_wip_pipeline(db, today)
     wip_pipeline        = wip.get("wip_pipeline", [])   # list[{label, qty, value}]
     inv_by_stage        = wip.get("inv_by_stage", [])   # list[{label, value}]
@@ -2355,36 +2324,22 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     dt_top3["FG"]     = _norm(_dt_simple("fg_downtime", _from, _to))
 
     # -------- helpers for safe numbers --------
-    import math
     def _nz(x, v=0):
         try:
             return v if x is None or (isinstance(x, float) and math.isnan(x)) else x
         except Exception:
             return v
 
-    # Make sure MTD keys always exist (even if your queries returned None / no rows)
-    _loc = locals()  # snapshot of locals() to read optional vars if defined upstream
-
+    _loc = locals()
     def _get(name: str, default=0):
         return _nz(_loc.get(name), default)
 
-    defaults = {
-        "dispatch_mtd_qty": 0, "dispatch_mtd_value": 0,
-        "production_mtd_qty": 0, "production_mtd_value": 0,
-        "receipts_mtd_qty": 0,  "receipts_mtd_value": 0,
-        "scrap_mtd_qty": 0,     "scrap_mtd_value": 0,
-    }
-
-    metrics = {
-        "dispatch_mtd_qty":   _get("dispatch_mtd_qty"),
-        "dispatch_mtd_value": _get("dispatch_mtd_value"),
-        "production_mtd_qty": _get("production_mtd_qty"),
-        "production_mtd_value": _get("production_mtd_value"),
-        "receipts_mtd_qty":   _get("receipts_mtd_qty"),
-        "receipts_mtd_value": _get("receipts_mtd_value"),
-        "scrap_mtd_qty":      _get("scrap_mtd_qty"),
-        "scrap_mtd_value":    _get("scrap_mtd_value"),
-    }
+    # ---------- NEW KPIs ----------
+    atom_oversize_y, atom_oversize_m = kpi_atom_oversize(db, _from, _to, yest)
+    ann = kpi_anneal_ammonia(db, _from, _to, yest)
+    grd = kpi_grind_oversize_and_eff(db, _from, _to, yest)
+    fg_by_grade = kpi_fg_gradewise_stock(db)
+    qa_eagle = kpi_qa_eagle(db, _from, _to)
 
     # ---------- Context ----------
     ctx = {
@@ -2454,7 +2409,6 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "fg_yday_prod":     fg_y_qty,
         "fg_mtd_prod":      fg_m_qty,
         "fg_avg_cost":      fg_m_cost_avg,
-        "fg_stock_value":   fg_stock_value,
 
         # Charts & headline pill
         "wip_pipeline":       wip_pipeline,
@@ -2462,9 +2416,48 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "prod_by_stage":      prod_by_stage,
         "cost_by_stage":      cost_by_stage,
         "total_value_in_hand": total_value_in_hand,
+
+        # NEW KPIs to feed dashboard.html additions
+        "fg_stock_value":     _v("FG Stock"),
+        "atom_oversize_y":    atom_oversize_y,
+        "atom_oversize_m":    atom_oversize_m,
+        "ann_nh3_y":          ann["nh3_y"],
+        "ann_nh3_m":          ann["nh3_m"],
+        "ann_eff_y":          ann["eff_y"],
+        "ann_eff_m":          ann["eff_m"],
+        "gr_os_y":            grd["os_y"],
+        "gr_os_m":            grd["os_m"],
+        "gr_eff_y":           grd["eff_y"],
+        "gr_eff_m":           grd["eff_m"],
+        "fg_stock_by_grade":  fg_by_grade,
+        "qa_eagle":           qa_eagle,
     }
 
-    # merge defaults then computed metrics so keys always exist
+    # Safe defaults so Jinja never breaks if any metric is missing
+    defaults = {
+        "dispatch_mtd_qty": 0, "dispatch_mtd_value": 0,
+        "production_mtd_qty": 0, "production_mtd_value": 0,
+        "receipts_mtd_qty": 0,  "receipts_mtd_value": 0,
+        "scrap_mtd_qty": 0,     "scrap_mtd_value": 0,
+
+        # New KPI defaults
+        "atom_oversize_y": 0, "atom_oversize_m": 0,
+        "ann_nh3_y": 0, "ann_nh3_m": 0, "ann_eff_y": 0, "ann_eff_m": 0,
+        "gr_os_y": 0, "gr_os_m": 0, "gr_eff_y": 0, "gr_eff_m": 0,
+        "fg_stock_by_grade": [], "qa_eagle": {},
+    }
+
+    metrics = {
+        "dispatch_mtd_qty":   _get("dispatch_mtd_qty"),
+        "dispatch_mtd_value": _get("dispatch_mtd_value"),
+        "production_mtd_qty": _get("production_mtd_qty"),
+        "production_mtd_value": _get("production_mtd_value"),
+        "receipts_mtd_qty":   _get("receipts_mtd_qty"),
+        "receipts_mtd_value": _get("receipts_mtd_value"),
+        "scrap_mtd_qty":      _get("scrap_mtd_qty"),
+        "scrap_mtd_value":    _get("scrap_mtd_value"),
+    }
+
     ctx.update(defaults)
     ctx.update(metrics)
 
