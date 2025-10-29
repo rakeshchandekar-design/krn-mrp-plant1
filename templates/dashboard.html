@@ -29,7 +29,7 @@
 
 <div class="brand">
   <div class="name">Executive Dashboard — Plant 1</div>
-  <<img src="{{ url_for('static', path='KRN_Logo.png') }}" alt="KRN" style="height:42px">="/static/KRN_Logo.png" alt="KRN" style="height:42px">
+  <img src="/static/KRN_Logo.png" alt="KRN" style="height:42px">
 </div>
 
 <div class="toolbar">
@@ -42,7 +42,7 @@
     <a class="btn" href="/dashboard">This Month</a>
     <span class="pill">Yesterday: {{ yesterday }}</span>
     <span class="pill">Today: {{ today }}</span>
-    <span class="pill" title="RM + all WIP + RAP + FG (no duplication)">
+    <span class="pill" title="RM + WIP (Melting/Atom/Anneal/Grind) + RAP + FG. No duplication.">
       Total value in hand: <strong>₹ {{ '%.0f' % (total_value_in_hand or 0) }}</strong>
     </span>
   </form>
@@ -114,10 +114,10 @@
   <div class="card">
     <h2>Annealing</h2>
     <table>
-      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % anneal_y_qty }} kg</td></tr>
-      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % anneal_m_cost_avg }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % anneal_m_qty }} kg</td></tr>
-      <tr><th>Value (MTD)</th><td class="right">₹ {{ '%.0f' % anneal_m_val }}</td></tr>
+      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % anneal_yday_prod }} kg</td></tr>
+      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % anneal_avg_cost }}</td></tr>
+      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % anneal_mtd_prod }} kg</td></tr>
+      <tr><th>Value (MTD)</th><td class="right">₹ {{ '%.0f' % anneal_value }}</td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
     <table>
@@ -131,10 +131,10 @@
   <div class="card">
     <h2>Grinding & Screening</h2>
     <table>
-      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % grind_y_qty }} kg</td></tr>
-      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % grind_m_cost_avg }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % grind_m_qty }} kg</td></tr>
-      <tr><th>Value (MTD)</th><td class="right">₹ {{ '%.0f' % grind_m_val }}</td></tr>
+      <tr><th>Yesterday</th><td class="right">{{ '%.0f' % grind_yday_prod }} kg</td></tr>
+      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % grind_avg_cost }}</td></tr>
+      <tr><th>MTD Output</th><td class="right">{{ '%.0f' % grind_mtd_prod }} kg</td></tr>
+      <tr><th>Value (MTD)</th><td class="right">₹ {{ '%.0f' % grind_value }}</td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
     <table>
@@ -146,11 +146,11 @@
   <div class="card">
     <h2>Packing & FG / Dispatch</h2>
     <table>
-      <tr><th>FG — Yesterday</th><td class="right">{{ '%.0f' % fg_y_qty }} kg</td></tr>
-      <tr><th>FG — Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % fg_m_cost_avg }}</td></tr>
-      <tr><th>FG — MTD Output</th><td class="right">{{ '%.0f' % fg_m_qty }} kg</td></tr>
+      <tr><th>FG — Yesterday</th><td class="right">{{ '%.0f' % fg_yday_prod }} kg</td></tr>
+      <tr><th>FG — Avg Cost/kg</th><td class="right">₹ {{ '%.2f' % fg_avg_cost }}</td></tr>
+      <tr><th>FG — MTD Output</th><td class="right">{{ '%.0f' % fg_mtd_prod }} kg</td></tr>
       <tr><th>FG Stock Value (now)</th><td class="right">₹ {{ '%.0f' % fg_stock_value }}</td></tr>
-      <tr><th>Dispatch (MTD)</th><td class="right">{{ '%.0f' % dispatch_m_qty }} kg | ₹ {{ '%.0f' % dispatch_m_val }}</td></tr>
+      <tr><th>Dispatch (MTD)</th><td class="right">{{ '%.0f' % dispatch_mtd_qty }} kg | ₹ {{ '%.0f' % dispatch_mtd_value }}</td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3 — FG)</h3>
     <table>
@@ -166,10 +166,10 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 (function(){
-  const inv  = {{ inv_by_stage   | tojson }};   // [{label, value}]
-  const prod = {{ prod_by_stage  | tojson }};   // [{label, yday, mtd}]
-  const cost = {{ cost_by_stage  | tojson }};   // [{label, avg_cost}]
-  const wip  = {{ wip_pipeline   | tojson }};   // [{label, qty, value}]
+  const inv  = {{ inv_by_stage   | tojson }};
+  const prod = {{ prod_by_stage  | tojson }};
+  const cost = {{ cost_by_stage  | tojson }};
+  const wip  = {{ wip_pipeline   | tojson }};
 
   function makeBar(canvasId, labels, v1, v2, label1, label2){
     new Chart(document.getElementById(canvasId), {
@@ -189,7 +189,7 @@
     });
   }
 
-  // Inventory value by stage (₹) – from WIP pipeline values
+  // Inventory value by stage (₹)
   makeBar(
     'invChart',
     inv.map(x=>x.label),
@@ -198,7 +198,7 @@
     'Value (₹)'
   );
 
-  // Output Yesterday vs MTD (kg)
+  // Output — Yesterday vs MTD (kg)
   makeBar(
     'prodChart',
     prod.map(x=>x.label),
