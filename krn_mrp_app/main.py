@@ -1981,7 +1981,7 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
     wip_pipeline = [
         {"label": "RM",           "qty": rm_qty,        "value": rm_val},
         {"label": "Melting WIP",  "qty": melt_wip_qty,  "value": melt_wip_val},
-        {"label": "Atom WIP",     "qty": atom_wip_qty,  "value": atom_wip_val},
+        {"label": "Atom WIP",     "qty": atom_qty,  "value": atom_val},
         {"label": "RAP",          "qty": rap_qty,       "value": rap_val},
         {"label": "Anneal WIP",   "qty": ann_wip_qty,   "value": ann_wip_val},
         {"label": "Grind WIP",    "qty": grd_wip_qty,   "value": grd_wip_val},
@@ -1991,13 +1991,13 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
     # Inventory-by-stage for the top-left chart (no duplication)
     inv_by_stage = [
         {"label": "RM",  "value": rm_val},
-        {"label": "WIP", "value": melt_wip_val + atom_wip_val + ann_wip_val + grd_wip_val},
+        {"label": "WIP", "value": melt_wip_val + atom_val + ann_wip_val + grd_wip_val},
         {"label": "RAP", "value": rap_val},
         {"label": "FG",  "value": fg_val},
     ]
 
     total_value_in_hand = float(
-        rm_val + melt_wip_val + atom_wip_val + ann_wip_val + grd_wip_val + rap_val + fg_val
+        rm_val + melt_wip_val + atom_val + ann_wip_val + grd_wip_val + rap_val + fg_val
     )
 
     return {
