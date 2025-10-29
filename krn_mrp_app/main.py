@@ -1721,45 +1721,71 @@ def _avg(db, num_sql, den_sql, **kw) -> float:
     return (num / den) if den > 0 else 0.0
 
 # ---------- NEW KPI HELPERS (no schema changes) ----------
-def kpi_atom_oversize(db, start: dt.date, end: dt.date, yest: dt.date):
+# --- Atomization KPI: oversize (yesterday, MTD) with safe text→numeric handling ---
+def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) -> tuple[float, float]:
     """
-    Atomization oversize:
-      (a) PSD-derived >180/212 µm fraction from lot_psd
-      (b) +20 mesh/80# oversize from screen_lot.oversize_80
-    Returns (yesterday_kg, mtd_kg)
+    Oversize = (PSD-derived >180/212 µm %) * lot weight + Screen 'oversize_80'.
+    Handles p212/p180 stored as VARCHAR (e.g., '40' or '40%') by stripping non-numeric chars.
+    Returns (yesterday_kg, mtd_kg).
     """
-    # PSD path
-    sql_psd_m = """
+    def run(sql: str, **kw) -> float:
+        return float(db.execute(text(sql), kw).scalar() or 0.0)
+
+    # helper: make a NUMERIC from a text column that may contain '%' etc.
+    # NULLIF(...,'')::numeric prevents cast errors on empty after stripping.
+    def num(col: str) -> str:
+        return f"NULLIF(regexp_replace({col}, '[^0-9\\.]', '', 'g'), '')::numeric"
+
+    # PSD component (>212 or >180, prefer p212 when present)
+    sql_psd_y = f"""
       SELECT COALESCE(SUM(
                COALESCE(l.weight, l.qty, 0)::numeric *
-               (CASE WHEN COALESCE(lp.p212,0) <> 0 THEN lp.p212::numeric
-                     WHEN COALESCE(lp.p180,0) <> 0 THEN lp.p180::numeric
-                     ELSE 0 END) / 100.0
+               COALESCE({num('lp.p212')}, {num('lp.p180')}, 0) / 100.0
              ),0)
       FROM lot l
       JOIN lot_psd lp ON lp.lot_id = l.id
-      WHERE (COALESCE(lp.p212,0) <> 0 OR COALESCE(lp.p180,0) <> 0)
+      WHERE (
+          COALESCE({num('lp.p212')}, 0) <> 0
+          OR COALESCE({num('lp.p180')}, 0) <> 0
+      )
+        AND COALESCE(l.date, DATE(l.created_at)) = :d
+    """
+
+    sql_psd_m = f"""
+      SELECT COALESCE(SUM(
+               COALESCE(l.weight, l.qty, 0)::numeric *
+               COALESCE({num('lp.p212')}, {num('lp.p180')}, 0) / 100.0
+             ),0)
+      FROM lot l
+      JOIN lot_psd lp ON lp.lot_id = l.id
+      WHERE (
+          COALESCE({num('lp.p212')}, 0) <> 0
+          OR COALESCE({num('lp.p180')}, 0) <> 0
+      )
         AND (COALESCE(l.date, DATE(l.created_at)) BETWEEN :a AND :b)
     """
-    sql_psd_y = sql_psd_m + " AND COALESCE(l.date, DATE(l.created_at)) = :d"
 
-    # Screening path (+20 / 80#)
-    sql_gs_m = """
-      SELECT COALESCE(SUM(COALESCE(oversize_80,0)::numeric),0)
+    # Screening component from screen_lot.oversize_80 (text or numeric)
+    sql_scr_y = f"""
+      SELECT COALESCE(SUM(COALESCE({num('oversize_80')}, 0)), 0)
+      FROM screen_lot
+      WHERE COALESCE(date, DATE(created_at)) = :d
+    """
+
+    sql_scr_m = f"""
+      SELECT COALESCE(SUM(COALESCE({num('oversize_80')}, 0)), 0)
       FROM screen_lot
       WHERE COALESCE(date, DATE(created_at)) BETWEEN :a AND :b
     """
-    sql_gs_y = sql_gs_m + " AND COALESCE(date, DATE(created_at)) = :d"
 
-    run = lambda sql, **kw: float(db.execute(text(sql), kw).scalar() or 0.0)
+    y_psd = run(sql_psd_y, d=yest)
+    m_psd = run(sql_psd_m, a=start, b=end)
+    y_scr = run(sql_scr_y, d=yest)
+    m_scr = run(sql_scr_m, a=start, b=end)
 
-    psd_m = run(sql_psd_m, a=start, b=end)
-    psd_y = run(sql_psd_y, a=start, b=end, d=yest)
-
-    gs_m  = run(sql_gs_m,  a=start, b=end)
-    gs_y  = run(sql_gs_y,  a=start, b=end, d=yest)
-
-    return (psd_y + gs_y, psd_m + gs_m)
+    y_total = y_psd + y_scr
+    m_total = m_psd + m_scr
+    return y_total, m_total
 
 def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
     """
