@@ -2290,16 +2290,27 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         a=_from, b=_to
     )
 
-    # ---------- Build MD eagle-view (charts + pill + top-3) ----------
-    wip_pipeline = krn_build_wip_pipeline(db, today)
-    total_value_in_hand = float(sum(x["value"] for x in wip_pipeline))
+# ---------- Build MD eagle-view (charts + pill + top-3) ----------
+    # WIP + totals for charts/badges (helper returns a dict)
+    wip = krn_build_wip_pipeline(db, today)
+    wip_pipeline         = wip.get("wip_pipeline", [])          # list of {label, qty, value}
+    inv_by_stage         = wip.get("inv_by_stage", [])          # list of {label, value}
+    total_value_in_hand  = float(wip.get("total_value_in_hand", 0.0))
 
+    # Safe value getter from pipeline
+    def _v(lbl: str) -> float:
+        return float(next((x["value"] for x in wip_pipeline if x.get("label") == lbl), 0.0))
+
+    # Recompute buckets for UI
     inv_by_stage = [
-        {"label": "RM",  "value": next(x["value"] for x in wip_pipeline if x["label"] == "RM")},
-        {"label": "WIP", "value": sum(x["value"] for x in wip_pipeline if x["label"] in ("Melting WIP","Atom WIP","Anneal WIP","Grind WIP"))},
-        {"label": "RAP", "value": next(x["value"] for x in wip_pipeline if x["label"] == "RAP")},
-        {"label": "FG",  "value": next(x["value"] for x in wip_pipeline if x["label"] == "FG Stock")},
+        {"label": "RM",  "value": _v("RM")},
+        {"label": "WIP", "value": sum(float(x.get("value", 0.0)) for x in wip_pipeline
+                                      if x.get("label") in ("Melting WIP", "Atom WIP", "Anneal WIP", "Grind WIP"))},
+        {"label": "RAP", "value": _v("RAP")},
+        {"label": "FG",  "value": _v("FG Stock")},
     ]
+
+    # Production Yesterday vs MTD (kg)
     prod_by_stage = [
         {"label": "Melting",      "yday": float(melt_yday.get("actual_kg", 0)), "mtd": float(melt_mtd.get("actual_kg", 0))},
         {"label": "Atomization",  "yday": float(atom_yday_prod or 0),           "mtd": float(atom_mtd_prod or 0)},
@@ -2307,15 +2318,19 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         {"label": "Grinding",     "yday": float(grind_y_qty or 0),              "mtd": float(grind_m_qty or 0)},
         {"label": "FG",           "yday": float(fg_y_qty or 0),                 "mtd": float(fg_m_qty or 0)},
     ]
+
+    # Avg cost/kg cards
     cost_by_stage = [
         {"label": "Anneal", "avg_cost": float(anneal_m_cost_avg or 0)},
         {"label": "Grind",  "avg_cost": float(grind_m_cost_avg  or 0)},
         {"label": "FG",     "avg_cost": float(fg_m_cost_avg     or 0)},
     ]
-    fg_stock_value = next((x["value"] for x in wip_pipeline if x["label"] == "FG Stock"), 0.0)
 
+    fg_stock_value = _v("FG Stock")
+
+    # Downtime Top-3
     def _top3_from_kind_dict(dct: dict[str,int]):
-        items = [{"reason": k.title(), "minutes": int(v or 0)} for k, v in dct.items()]
+        items = [{"reason": k.title(), "minutes": int(v or 0)} for k, v in (dct or {}).items()]
         items.sort(key=lambda x: x["minutes"], reverse=True)
         return items[:3]
 
@@ -2324,9 +2339,11 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "ATOM":    _top3_from_kind_dict(atom_by_m),
         "ANNEAL":  [], "GRIND": [], "FG": [],
     }
-    # Extra downtime (Anneal/Grind/FG) by area (already top-3 lists)
-    def _norm(lst): return [{"reason": r.get("area","OTHER"), "minutes": int(r.get("min",0))} for r in (lst or [])]
-    # recompute quick:
+
+    # Normalize area-based top-3
+    def _norm(lst): 
+        return [{"reason": r.get("area","OTHER"), "minutes": int(r.get("min",0))} for r in (lst or [])]
+
     def _dt_simple(tbl: str, start: dt.date, end: dt.date):
         top = db.execute(text(
             f"select coalesce(area,'OTHER') as area, sum(minutes) m "
