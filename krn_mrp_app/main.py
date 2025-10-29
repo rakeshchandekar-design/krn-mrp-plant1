@@ -2175,30 +2175,37 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         a=_from, b=_to
     )
 
-    # Dispatch (join items with order dates)
-    dispatch_m_qty = _sum(db,
-        """select sum(di.qty_kg)
-           from dispatch_items di join dispatch_orders do on do.id = di.dispatch_id
-           where do.date between :a and :b""",
-        a=_from, b=_to
-    )
-    dispatch_m_val = _sum(db,
-        """select sum(di.value)
-           from dispatch_items di join dispatch_orders do on do.id = di.dispatch_id
-           where do.date between :a and :b""",
-        a=_from, b=_to
-    )
+    # Dispatch (join items with order dates)  — use safe alias "ord" instead of "do"
     dispatch_y_qty = _sum(db,
         """select sum(di.qty_kg)
-           from dispatch_items di join dispatch_orders do on do.id = di.dispatch_id
-           where do.date = :d""",
+        from dispatch_items di
+        join dispatch_orders ord on ord.id = di.dispatch_id
+        where ord.date = :d""",
         d=yest
     )
+
     dispatch_y_val = _sum(db,
         """select sum(di.value)
-           from dispatch_items di join dispatch_orders do on do.id = di.dispatch_id
-           where do.date = :d""",
+        from dispatch_items di
+        join dispatch_orders ord on ord.id = di.dispatch_id
+        where ord.date = :d""",
         d=yest
+    )
+
+    dispatch_m_qty = _sum(db,
+        """select sum(di.qty_kg)
+        from dispatch_items di
+        join dispatch_orders ord on ord.id = di.dispatch_id
+        where ord.date between :a and :b""",
+        a=_from, b=_to
+    )
+
+    dispatch_m_val = _sum(db,
+        """select sum(di.value)
+        from dispatch_items di
+        join dispatch_orders ord on ord.id = di.dispatch_id
+        where ord.date between :a and :b""",
+        a=_from, b=_to
     )
 
     # Extra downtime (Anneal/Grind/FG) totals by area (top 3)
