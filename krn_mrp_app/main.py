@@ -1749,10 +1749,11 @@ def krn_compose_md_view(
     ), {"b": _to}).scalar() or 0.0)
 
     fg_dispatched_val_cum = float(db.execute(text(
-        "select sum(di.value) from dispatch_items di "
-        "join dispatch_orders do on do.id = di.dispatch_id "
-        "where do.date <= :b"
-    ), {"b": _to}).scalar() or 0.0)
+    "select coalesce(sum(di.value),0) "
+    "from dispatch_items di "
+    "join dispatch_orders ord on ord.id = di.dispatch_id "
+    "where ord.date <= :b"
+), {"b": _to}).scalar() or 0.0)
 
     fg_stock_value = max(fg_total_val_now - fg_dispatched_val_cum, 0.0)
 
@@ -2175,7 +2176,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         a=_from, b=_to
     )
 
-    # Dispatch (join items with order dates)  — use safe alias "ord" instead of "do"
+    # Dispatch (join items with order dates) — alias "ord" (never "do")
     dispatch_y_qty = _sum(db,
         """select sum(di.qty_kg)
         from dispatch_items di
