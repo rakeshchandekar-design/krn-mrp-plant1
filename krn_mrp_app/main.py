@@ -1378,7 +1378,7 @@ async def block_writes_for_view(request: Request, call_next):
 # ---- Users: username = department; default password = same as username ----
 # Change passwords here later.
 USER_DB = {
-    "admin":   {"password": "admin",   "role": "admin"},
+    "admin":   {"password": "admin@krn",   "role": "admin"},
     "store":   {"password": "store",   "role": "store"},
     "melting": {"password": "melting", "role": "melting"},
     "atom":    {"password": "atom",    "role": "atom"},
@@ -2291,32 +2291,31 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     )
 
 # ---------- Build MD eagle-view (charts + pill + top-3) ----------
-    # WIP + totals for charts/badges (helper returns a dict)
     wip = krn_build_wip_pipeline(db, today)
-    wip_pipeline         = wip.get("wip_pipeline", [])          # list of {label, qty, value}
-    inv_by_stage         = wip.get("inv_by_stage", [])          # list of {label, value}
-    total_value_in_hand  = float(wip.get("total_value_in_hand", 0.0))
+    wip_pipeline        = wip.get("wip_pipeline", [])   # list[{label, qty, value}]
+    inv_by_stage        = wip.get("inv_by_stage", [])   # list[{label, value}]
+    total_value_in_hand = float(wip.get("total_value_in_hand", 0.0))
 
     # Safe value getter from pipeline
     def _v(lbl: str) -> float:
-        return float(next((x["value"] for x in wip_pipeline if x.get("label") == lbl), 0.0))
+        return float(next((x.get("value", 0.0) for x in wip_pipeline if x.get("label") == lbl), 0.0))
 
     # Recompute buckets for UI
     inv_by_stage = [
         {"label": "RM",  "value": _v("RM")},
         {"label": "WIP", "value": sum(float(x.get("value", 0.0)) for x in wip_pipeline
-                                      if x.get("label") in ("Melting WIP", "Atom WIP", "Anneal WIP", "Grind WIP"))},
+                                    if x.get("label") in ("Melting WIP", "Atom WIP", "Anneal WIP", "Grind WIP"))},
         {"label": "RAP", "value": _v("RAP")},
         {"label": "FG",  "value": _v("FG Stock")},
     ]
 
     # Production Yesterday vs MTD (kg)
     prod_by_stage = [
-        {"label": "Melting",      "yday": float(melt_yday.get("actual_kg", 0)), "mtd": float(melt_mtd.get("actual_kg", 0))},
-        {"label": "Atomization",  "yday": float(atom_yday_prod or 0),           "mtd": float(atom_mtd_prod or 0)},
-        {"label": "Annealing",    "yday": float(anneal_y_qty or 0),             "mtd": float(anneal_m_qty or 0)},
-        {"label": "Grinding",     "yday": float(grind_y_qty or 0),              "mtd": float(grind_m_qty or 0)},
-        {"label": "FG",           "yday": float(fg_y_qty or 0),                 "mtd": float(fg_m_qty or 0)},
+        {"label": "Melting",     "yday": float(melt_yday.get("actual_kg", 0)), "mtd": float(melt_mtd.get("actual_kg", 0))},
+        {"label": "Atomization", "yday": float(atom_yday_prod or 0),           "mtd": float(atom_mtd_prod or 0)},
+        {"label": "Annealing",   "yday": float(anneal_y_qty or 0),             "mtd": float(anneal_m_qty or 0)},
+        {"label": "Grinding",    "yday": float(grind_y_qty or 0),              "mtd": float(grind_m_qty or 0)},
+        {"label": "FG",          "yday": float(fg_y_qty or 0),                 "mtd": float(fg_m_qty or 0)},
     ]
 
     # Avg cost/kg cards
@@ -2329,8 +2328,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     fg_stock_value = _v("FG Stock")
 
     # Downtime Top-3
-    def _top3_from_kind_dict(dct: dict[str,int]):
-        items = [{"reason": k.title(), "minutes": int(v or 0)} for k, v in (dct or {}).items()]
+    def _top3_from_kind_dict(dct: dict[str, int] | None):
+        items = [{"reason": (k or "OTHER").title(), "minutes": int(v or 0)} for k, v in (dct or {}).items()]
         items.sort(key=lambda x: x["minutes"], reverse=True)
         return items[:3]
 
@@ -2340,20 +2339,52 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "ANNEAL":  [], "GRIND": [], "FG": [],
     }
 
-    # Normalize area-based top-3
-    def _norm(lst): 
-        return [{"reason": r.get("area","OTHER"), "minutes": int(r.get("min",0))} for r in (lst or [])]
+    def _norm(lst):
+        return [{"reason": r.get("area", "OTHER"), "minutes": int(r.get("min", 0))} for r in (lst or [])]
 
     def _dt_simple(tbl: str, start: dt.date, end: dt.date):
-        top = db.execute(text(
+        rows = db.execute(text(
             f"select coalesce(area,'OTHER') as area, sum(minutes) m "
-            f"from {tbl} where date between :a and :b group by area order by m desc limit 3"
+            f"from {tbl} where date between :a and :b "
+            f"group by area order by m desc limit 3"
         ), {"a": start, "b": end}).fetchall()
-        return [{"area": r[0], "min": int(r[1] or 0)} for r in top]
+        return [{"area": r[0], "min": int(r[1] or 0)} for r in rows]
 
     dt_top3["ANNEAL"] = _norm(_dt_simple("anneal_downtime", _from, _to))
     dt_top3["GRIND"]  = _norm(_dt_simple("grinding_downtime", _from, _to))
     dt_top3["FG"]     = _norm(_dt_simple("fg_downtime", _from, _to))
+
+    # -------- helpers for safe numbers --------
+    import math
+    def _nz(x, v=0):
+        try:
+            return v if x is None or (isinstance(x, float) and math.isnan(x)) else x
+        except Exception:
+            return v
+
+    # Make sure MTD keys always exist (even if your queries returned None / no rows)
+    _loc = locals()  # snapshot of locals() to read optional vars if defined upstream
+
+    def _get(name: str, default=0):
+        return _nz(_loc.get(name), default)
+
+    defaults = {
+        "dispatch_mtd_qty": 0, "dispatch_mtd_value": 0,
+        "production_mtd_qty": 0, "production_mtd_value": 0,
+        "receipts_mtd_qty": 0,  "receipts_mtd_value": 0,
+        "scrap_mtd_qty": 0,     "scrap_mtd_value": 0,
+    }
+
+    metrics = {
+        "dispatch_mtd_qty":   _get("dispatch_mtd_qty"),
+        "dispatch_mtd_value": _get("dispatch_mtd_value"),
+        "production_mtd_qty": _get("production_mtd_qty"),
+        "production_mtd_value": _get("production_mtd_value"),
+        "receipts_mtd_qty":   _get("receipts_mtd_qty"),
+        "receipts_mtd_value": _get("receipts_mtd_value"),
+        "scrap_mtd_qty":      _get("scrap_mtd_qty"),
+        "scrap_mtd_value":    _get("scrap_mtd_value"),
+    }
 
     # ---------- Context ----------
     ctx = {
@@ -2432,6 +2463,11 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "cost_by_stage":      cost_by_stage,
         "total_value_in_hand": total_value_in_hand,
     }
+
+    # merge defaults then computed metrics so keys always exist
+    ctx.update(defaults)
+    ctx.update(metrics)
+
     return templates.TemplateResponse("dashboard.html", ctx)
 
 # -------------------------------------------------
