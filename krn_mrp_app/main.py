@@ -1877,37 +1877,63 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
         melt_wip_qty += avail
         melt_wip_val += avail * unit
 
-    # 3) Atomization WIP (lots pending/hold/reject) — valued from stored costs with fallback
-    atom_row = db.execute(text("""
-        select
-          coalesce(sum(coalesce(weight,0)), 0) as qty,
-          coalesce(sum(
-            coalesce(total_cost,
-                     coalesce(unit_cost, :fallback) * coalesce(weight,0))
-          ), 0) as val
-        from lots
-        where (qa_status is null or qa_status in ('PENDING','HOLD','REJECTED'))
-    """), {"fallback": rm_avg_cost}).first()
-    atom_wip_qty = float(atom_row[0] or 0.0)
-    atom_wip_val = float(atom_row[1] or 0.0)
-
-    # 4) RAP available (approved lot balance not yet allocated to RAP usage)
-    rap_row = db.execute(text("""
-        with alloc as (
-          select rl.lot_id, coalesce(sum(ra.qty),0) as used
-          from rap_alloc ra
-          join rap_lot rl on rl.id = ra.rap_lot_id
-          group by rl.lot_id
+    # 3) Atomization WIP — pending/hold (ORM; respects actual DB column through model)
+    atom_row = (
+        db.query(
+            func.coalesce(func.sum(Lot.weight), 0.0),
+            func.coalesce(
+                func.sum(
+                    func.coalesce(
+                        Lot.total_cost,
+                        func.coalesce(Lot.unit_cost, 0.0) * func.coalesce(Lot.weight, 0.0),
+                    )
+                ),
+                0.0,
+            ),
         )
-        select
-          coalesce(sum( greatest(coalesce(l.weight,0) - coalesce(a.used,0), 0) ), 0) as qty,
-          coalesce(sum( greatest(coalesce(l.weight,0) - coalesce(a.used,0), 0)
-                        * coalesce(l.unit_cost, :fallback)), 0) as val
-        from rap_lot rl
-        join lots l on l.id = rl.lot_id
-        left join alloc a on a.lot_id = rl.lot_id
-        where l.qa_status = 'APPROVED'
-    """), {"fallback": rm_avg_cost}).first()
+        .filter((Lot.qa_status.is_(None)) | (Lot.qa_status.in_(("PENDING", "HOLD"))))
+        .first()
+    )
+    atom_qty = float(atom_row[0] or 0.0)
+    atom_val = float(atom_row[1] or 0.0)
+
+    # 4) RAP — approved atom lots minus RAP allocations (ORM)
+    alloc_sq = (
+        db.query(
+            RAPLot.lot_id.label("lot_id"),
+            func.coalesce(func.sum(RAPAlloc.qty), 0.0).label("used"),
+        )
+        .join(RAPAlloc, RAPAlloc.rap_lot_id == RAPLot.id, isouter=True)
+        .group_by(RAPLot.lot_id)
+        .subquery()
+    )
+
+    rap_row = (
+        db.query(
+            func.coalesce(
+                func.sum(
+                    func.greatest(
+                        func.coalesce(Lot.weight, 0.0) - func.coalesce(alloc_sq.c.used, 0.0),
+                        0.0,
+                    )
+                ),
+                0.0,
+            ),
+            func.coalesce(
+                func.sum(
+                    func.greatest(
+                        func.coalesce(Lot.weight, 0.0) - func.coalesce(alloc_sq.c.used, 0.0),
+                        0.0,
+                    )
+                    * func.coalesce(Lot.unit_cost, 0.0)
+                ),
+                0.0,
+            ),
+        )
+        .join(alloc_sq, alloc_sq.c.lot_id == Lot.id, isouter=True)
+        .filter(Lot.qa_status == "APPROVED")
+        .first()
+    )
     rap_qty = float(rap_row[0] or 0.0)
     rap_val = float(rap_row[1] or 0.0)
 
@@ -2021,121 +2047,6 @@ def _avg(db, num_sql, den_sql, **kw) -> float:
     num = float(db.execute(text(num_sql), kw).scalar() or 0.0)
     den = float(db.execute(text(den_sql), kw).scalar() or 0.0)
     return (num / den) if den > 0 else 0.0
-
-# -----------------------------------------
-# Helper: Build WIP snapshot across stages
-# (RM + Melting WIP + Atom WIP + RAP + Anneal WIP + Grind WIP + FG)
-# -----------------------------------------
-def krn_build_wip_pipeline(db, today: dt.date):
-    # 1) RM stock — remaining * price
-    rm_row = db.execute(text("""
-        select
-          coalesce(sum(remaining_qty),0) as qty,
-          coalesce(sum(remaining_qty * price),0) as val
-        from grn
-    """)).first()
-    rm_qty = float(rm_row[0] or 0.0)
-    rm_val = float(rm_row[1] or 0.0)
-
-    # 2) Melting WIP — heat output minus allocated to lots
-    alloc_by_heat = {
-        hid: float(qty or 0)
-        for (hid, qty) in db.query(LotHeat.heat_id, func.coalesce(func.sum(LotHeat.qty), 0.0)).group_by(LotHeat.heat_id)
-    }
-    heats = db.query(Heat).all()
-    melt_qty = melt_val = 0.0
-    for h in heats:
-        out_kg = float(h.actual_output or 0.0)
-        used   = float(alloc_by_heat.get(h.id, 0.0))
-        avail  = max(out_kg - used, 0.0)
-        if avail <= 0:
-            continue
-        unit = float(h.unit_cost or 0.0)
-        if unit <= 0 and out_kg > 0:
-            unit = float(h.total_cost or 0.0) / out_kg
-        melt_qty += avail
-        melt_val += avail * unit
-
-    # 3) Atomization WIP — lots pending/hold (use unit_cost fallback)
-    # -- TABLE NAME: lots (change to `lot` if your table is singular)
-    atom_row = db.execute(text("""
-        select
-          coalesce(sum(weight),0) as qty,
-          coalesce(sum(coalesce(total_cost, coalesce(unit_cost,0)*coalesce(weight,0))),0) as val
-        from lots
-        where (qa_status is null or qa_status in ('PENDING','HOLD'))
-    """)).first()
-    atom_qty = float(atom_row[0] or 0.0)
-    atom_val = float(atom_row[1] or 0.0)
-
-    # 4) RAP — approved atom lots minus RAP allocations
-    # -- TABLE NAME: lots (change to `lot` if your table is singular)
-    rap_row = db.execute(text("""
-        with alloc as (
-          select rl.lot_id, coalesce(sum(ra.qty),0) as used
-          from rap_alloc ra
-          join rap_lot rl on rl.id = ra.rap_lot_id
-          group by rl.lot_id
-        )
-        select
-          coalesce(sum( greatest(coalesce(l.weight,0) - coalesce(a.used,0), 0) ), 0) as qty,
-          coalesce(sum( greatest(coalesce(l.weight,0) - coalesce(a.used,0), 0) * coalesce(l.unit_cost,0) ), 0) as val
-        from rap_lot rl
-        join lots l on l.id = rl.lot_id
-        left join alloc a on a.lot_id = rl.lot_id
-        where l.qa_status = 'APPROVED'
-    """)).first()
-    rap_qty = float(rap_row[0] or 0.0)
-    rap_val = float(rap_row[1] or 0.0)
-
-    # 5) Anneal WIP — anneal lots pending/hold
-    ann_row = db.execute(text("""
-        select
-          coalesce(sum(weight_kg),0) as qty,
-          coalesce(sum(weight_kg * coalesce(cost_per_kg,0)),0) as val
-        from anneal_lots
-        where (qa_status is null or qa_status in ('PENDING','HOLD'))
-    """)).first()
-    ann_qty = float(ann_row[0] or 0.0)
-    ann_val = float(ann_row[1] or 0.0)
-
-    # 6) Grind WIP — grinding lots pending/hold
-    grd_row = db.execute(text("""
-        select
-          coalesce(sum(weight_kg),0) as qty,
-          coalesce(sum(weight_kg * coalesce(cost_per_kg,0)),0) as val
-        from grinding_lots
-        where (qa_status is null or qa_status in ('PENDING','HOLD'))
-    """)).first()
-    grd_qty = float(grd_row[0] or 0.0)
-    grd_val = float(grd_row[1] or 0.0)
-
-    # 7) FG Stock — approved FG minus dispatched (qty * cost_per_kg)
-    fg_row = db.execute(text("""
-        with disp as (
-          select fg_lot_id, coalesce(sum(qty_kg),0) as qty
-          from dispatch_items
-          group by fg_lot_id
-        )
-        select
-          coalesce(sum( greatest(coalesce(fl.weight_kg,0) - coalesce(d.qty,0), 0) ), 0) as qty,
-          coalesce(sum( greatest(coalesce(fl.weight_kg,0) - coalesce(d.qty,0), 0) * coalesce(fl.cost_per_kg,0) ), 0) as val
-        from fg_lots fl
-        left join disp d on d.fg_lot_id = fl.id
-        where fl.qa_status = 'APPROVED'
-    """)).first()
-    fg_qty = float(fg_row[0] or 0.0)
-    fg_val = float(fg_row[1] or 0.0)
-
-    return [
-        {"label": "RM",           "qty": rm_qty,  "value": rm_val},
-        {"label": "Melting WIP",  "qty": melt_qty,"value": melt_val},
-        {"label": "Atom WIP",     "qty": atom_qty,"value": atom_val},
-        {"label": "RAP",          "qty": rap_qty, "value": rap_val},
-        {"label": "Anneal WIP",   "qty": ann_qty, "value": ann_val},
-        {"label": "Grind WIP",    "qty": grd_qty, "value": grd_val},
-        {"label": "FG Stock",     "qty": fg_qty,  "value": fg_val},
-    ]
 
 # -------------------------------
 # Dashboard (Admin + View) — final route
