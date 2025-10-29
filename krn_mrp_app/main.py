@@ -1724,24 +1724,25 @@ def _avg(db, num_sql, den_sql, **kw) -> float:
 # --- Atomization KPI: oversize (yesterday, MTD) with safe text→numeric handling ---
 def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) -> tuple[float, float]:
     """
-    Oversize = (PSD-derived >180/212 µm %) * lot weight + Screen 'oversize_80'.
-    Handles p212/p180 stored as VARCHAR (e.g., '40' or '40%') by stripping non-numeric chars.
-    Returns (yesterday_kg, mtd_kg).
+    Oversize = (PSD-derived >180/212 µm %) * lot weight  +  Screening 'oversize_80'.
+    - Accepts p212 / p180 stored as VARCHAR like '40' or '40%' (strips non-digits).
+    - Also works if those columns (or oversize_80) are NUMERIC, by casting to text before regex.
+    Returns: (yesterday_kg, mtd_kg)
     """
     def run(sql: str, **kw) -> float:
         return float(db.execute(text(sql), kw).scalar() or 0.0)
 
-    # helper: make a NUMERIC from a text column that may contain '%' etc.
-    # NULLIF(...,'')::numeric prevents cast errors on empty after stripping.
+    # Always cast to text before regexp_replace so both numeric and text columns are safe.
+    # NULLIF(...,'')::numeric prevents cast errors when the stripped string becomes empty.
     def num(col: str) -> str:
-        return f"NULLIF(regexp_replace({col}, '[^0-9\\.]', '', 'g'), '')::numeric"
+        return f"NULLIF(regexp_replace(({col})::text, '[^0-9\\.]', '', 'g'), '')::numeric"
 
-    # PSD component (>212 or >180, prefer p212 when present)
+    # PSD component (>212 or >180; prefer p212 when present)
     sql_psd_y = f"""
       SELECT COALESCE(SUM(
                COALESCE(l.weight, l.qty, 0)::numeric *
                COALESCE({num('lp.p212')}, {num('lp.p180')}, 0) / 100.0
-             ),0)
+             ), 0)
       FROM lot l
       JOIN lot_psd lp ON lp.lot_id = l.id
       WHERE (
@@ -1755,17 +1756,17 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
       SELECT COALESCE(SUM(
                COALESCE(l.weight, l.qty, 0)::numeric *
                COALESCE({num('lp.p212')}, {num('lp.p180')}, 0) / 100.0
-             ),0)
+             ), 0)
       FROM lot l
       JOIN lot_psd lp ON lp.lot_id = l.id
       WHERE (
           COALESCE({num('lp.p212')}, 0) <> 0
           OR COALESCE({num('lp.p180')}, 0) <> 0
       )
-        AND (COALESCE(l.date, DATE(l.created_at)) BETWEEN :a AND :b)
+        AND COALESCE(l.date, DATE(l.created_at)) BETWEEN :a AND :b
     """
 
-    # Screening component from screen_lot.oversize_80 (text or numeric)
+    # Screening component (screen_lot.oversize_80 may be numeric or text; handle both)
     sql_scr_y = f"""
       SELECT COALESCE(SUM(COALESCE({num('oversize_80')}, 0)), 0)
       FROM screen_lot
@@ -1783,9 +1784,7 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
     y_scr = run(sql_scr_y, d=yest)
     m_scr = run(sql_scr_m, a=start, b=end)
 
-    y_total = y_psd + y_scr
-    m_total = m_psd + m_scr
-    return y_total, m_total
+    return y_psd + y_scr, m_psd + m_scr
 
 def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
     """
