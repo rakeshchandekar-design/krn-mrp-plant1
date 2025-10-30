@@ -1720,6 +1720,85 @@ def _avg(db, num_sql, den_sql, **kw) -> float:
     den = float(db.execute(text(den_sql), kw).scalar() or 0.0)
     return (num / den) if den > 0 else 0.0
 
+# ---------- COST CASCADE HELPERS ----------
+def _wavg_cost_perkg(db, table_name: str, weight_col: str, cost_col: str,
+                     date_expr: str, where_extra: str = "", a=None, b=None) -> float:
+    sql = f"""
+        SELECT CASE WHEN SUM(COALESCE({weight_col},0)) > 0
+               THEN SUM(COALESCE({weight_col},0) * COALESCE({cost_col},0))
+                    / SUM(COALESCE({weight_col},0))
+               ELSE 0 END
+        FROM {table_name}
+        WHERE {date_expr} BETWEEN :a AND :b
+              {where_extra}
+    """
+    return float(db.execute(text(sql), {"a": a, "b": b}).scalar() or 0.0)
+
+def _rm_avg_cost_any(db) -> float:
+    sql = """
+        SELECT CASE WHEN COALESCE(SUM(COALESCE(remaining_qty, qty, 0)),0) > 0
+               THEN COALESCE(SUM(COALESCE(remaining_qty, qty, 0) * COALESCE(price,0)),0)
+                    / COALESCE(SUM(COALESCE(remaining_qty, qty, 0)),0)
+               ELSE 0 END
+        FROM grn
+    """
+    return float(db.execute(text(sql)).scalar() or 0.0)
+
+def _melt_avg_cost(db, a, b) -> float:
+    sql = """
+        SELECT CASE WHEN SUM(COALESCE(actual_output,0)) > 0
+               THEN SUM(
+                        COALESCE(
+                            NULLIF(unit_cost, 0),
+                            CASE WHEN COALESCE(actual_output,0) > 0
+                                 THEN COALESCE(total_cost,0) / NULLIF(actual_output,0)
+                                 ELSE 0 END
+                        ) * COALESCE(actual_output,0)
+                    ) / SUM(COALESCE(actual_output,0))
+               ELSE 0 END
+        FROM heats
+        WHERE DATE(created_at) BETWEEN :a AND :b
+    """
+    return float(db.execute(text(sql), {"a": a, "b": b}).scalar() or 0.0)
+
+def _atom_avg_cost(db, a, b) -> float:
+    sql = """
+        SELECT CASE WHEN SUM(COALESCE(weight,0)) > 0
+               THEN SUM(
+                        COALESCE(
+                            NULLIF(unit_cost, 0),
+                            CASE WHEN COALESCE(weight,0) > 0
+                                 THEN COALESCE(total_cost,0) / NULLIF(weight,0)
+                                 ELSE 0 END
+                        ) * COALESCE(weight,0)
+                    ) / SUM(COALESCE(weight,0))
+               ELSE 0 END
+        FROM lot
+        WHERE DATE(date) BETWEEN :a AND :b
+    """
+    return float(db.execute(text(sql), {"a": a, "b": b}).scalar() or 0.0)
+
+def kpi_cost_cascade(db, a: dt.date, b: dt.date) -> list[dict]:
+    rm_avg   = _rm_avg_cost_any(db)
+    melt_avg = _melt_avg_cost(db, a, b)
+    atom_avg = _atom_avg_cost(db, a, b)
+
+    ann_avg = _wavg_cost_perkg(db, "anneal_lots", "weight_kg", "cost_per_kg",
+                               "DATE(date)", "AND COALESCE(qa_status,'APPROVED')='APPROVED'", a=a, b=b)
+    grd_avg = _wavg_cost_perkg(db, "grinding_lots", "weight_kg", "cost_per_kg",
+                               "DATE(date)", "", a=a, b=b)
+    fg_avg  = _wavg_cost_perkg(db, "fg_lots", "weight_kg", "cost_per_kg",
+                               "DATE(date)", "AND qa_status='APPROVED'", a=a, b=b)
+
+    return [
+        {"label": "RM",       "avg_cost": rm_avg},
+        {"label": "Melting",  "avg_cost": melt_avg},
+        {"label": "Atom",     "avg_cost": atom_avg},
+        {"label": "Anneal",   "avg_cost": ann_avg},
+        {"label": "Grind",    "avg_cost": grd_avg},
+        {"label": "FG",       "avg_cost": fg_avg},
+    ]
+
 # --- schema-aware helpers ---
 def _columns_of(db, table: str) -> set[str]:
     rows = db.execute(
@@ -2513,11 +2592,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     ]
 
     # Avg cost/kg cards
-    cost_by_stage = [
-        {"label": "Anneal", "avg_cost": float(anneal_m_cost_avg or 0)},
-        {"label": "Grind",  "avg_cost": float(grind_m_cost_avg  or 0)},
-        {"label": "FG",     "avg_cost": float(fg_m_cost_avg     or 0)},
-    ]
+    # --- Full RM→FG cost cascade ---
+    cost_by_stage = kpi_cost_cascade(db, _from, _to)
 
     fg_stock_value = _v("FG Stock")
 
