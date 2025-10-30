@@ -1744,22 +1744,43 @@ def _rm_avg_cost_any(db) -> float:
     """
     return float(db.execute(text(sql)).scalar() or 0.0)
 
-def _melt_avg_cost(db, a, b) -> float:
-    sql = """
-        SELECT CASE WHEN SUM(COALESCE(actual_output,0)) > 0
-               THEN SUM(
-                        COALESCE(
-                            NULLIF(unit_cost, 0),
-                            CASE WHEN COALESCE(actual_output,0) > 0
-                                 THEN COALESCE(total_cost,0) / NULLIF(actual_output,0)
-                                 ELSE 0 END
-                        ) * COALESCE(actual_output,0)
-                    ) / SUM(COALESCE(actual_output,0))
-               ELSE 0 END
-        FROM heats
-        WHERE DATE(created_at) BETWEEN :a AND :b
+def _melt_avg_cost(db, a: dt.date, b: dt.date) -> float:
     """
-    return float(db.execute(text(sql), {"a": a, "b": b}).scalar() or 0.0)
+    Weighted avg cost/kg for Melting from heats table.
+    Tries unit_cost; falls back to total_cost/actual_out.
+    """
+    t = "heats"
+    date_expr = _date_expr(db, t)
+
+    out_col  = _pick_col(db, t, ["actual_out_kg", "actual_output", "actual_kg", "output_kg"])
+    unit_col = _pick_col(db, t, ["unit_cost", "avg_cost_per_kg", "cost_per_kg"])
+    tot_col  = _pick_col(db, t, ["total_cost", "cost_total", "total_cost_rs", "total_value"])
+
+    if not out_col:
+        return 0.0  # can't compute without output
+
+    if unit_col:
+        sql = f"""
+        SELECT CASE WHEN SUM(COALESCE({out_col},0)) > 0
+               THEN SUM(COALESCE({unit_col},0) * COALESCE({out_col},0))
+                    / SUM(COALESCE({out_col},0))
+               ELSE 0 END
+        FROM {t}
+        WHERE {date_expr} BETWEEN :a AND :b
+        """
+        return float(db.execute(text(sql), {"a": a, "b": b}).scalar() or 0.0)
+
+    if tot_col:
+        sql = f"""
+        SELECT CASE WHEN SUM(COALESCE({out_col},0)) > 0
+               THEN SUM(COALESCE({tot_col},0)) / NULLIF(SUM(COALESCE({out_col},0)),0)
+               ELSE 0 END
+        FROM {t}
+        WHERE {date_expr} BETWEEN :a AND :b
+        """
+        return float(db.execute(text(sql), {"a": a, "b": b}).scalar() or 0.0)
+
+    return 0.0
 
 def _atom_avg_cost(db, a, b) -> float:
     sql = """
@@ -1778,24 +1799,73 @@ def _atom_avg_cost(db, a, b) -> float:
     """
     return float(db.execute(text(sql), {"a": a, "b": b}).scalar() or 0.0)
 
-def kpi_cost_cascade(db, a: dt.date, b: dt.date) -> list[dict]:
-    rm_avg   = _rm_avg_cost_any(db)
+def kpi_cost_cascade(db, a: dt.date, b: dt.date):
+    """
+    Returns list of {label, avg_cost} for: RM, Melting, Atom, Anneal, Grind, FG.
+    Each stage auto-detects columns; if insufficient data, stage cost=0.
+    """
+
+    # 1) RM (from GRN): avg price = sum(price * qty) / sum(qty)
+    rm_qty   = _pick_col(db, "grn", ["qty", "quantity", "in_qty", "received_qty"])
+    rm_price = _pick_col(db, "grn", ["price", "rate", "unit_price", "cost_per_kg"])
+    if rm_qty and rm_price:
+        rm_sql = f"""
+        SELECT CASE WHEN SUM(COALESCE({rm_qty},0)) > 0
+               THEN SUM(COALESCE({rm_qty},0) * COALESCE({rm_price},0))
+                    / SUM(COALESCE({rm_qty},0))
+               ELSE 0 END
+        FROM grn
+        WHERE {_date_expr(db, 'grn')} BETWEEN :a AND :b
+        """
+        rm_avg = float(db.execute(text(rm_sql), {"a": a, "b": b}).scalar() or 0.0)
+    else:
+        rm_avg = 0.0
+
+    # 2) Melting (heats)
     melt_avg = _melt_avg_cost(db, a, b)
-    atom_avg = _atom_avg_cost(db, a, b)
 
-    ann_avg = _wavg_cost_perkg(db, "anneal_lots", "weight_kg", "cost_per_kg",
-                               "DATE(date)", "AND COALESCE(qa_status,'APPROVED')='APPROVED'", a=a, b=b)
-    grd_avg = _wavg_cost_perkg(db, "grinding_lots", "weight_kg", "cost_per_kg",
-                               "DATE(date)", "", a=a, b=b)
-    fg_avg  = _wavg_cost_perkg(db, "fg_lots", "weight_kg", "cost_per_kg",
-                               "DATE(date)", "AND qa_status='APPROVED'", a=a, b=b)
+    # 3) Atomization (lot / lots)
+    atom_table = "lot" if "lot" in {t.lower() for t in db.execute(text(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
+    )).scalars()} else "lots"
+    atom_avg = _weighted_avg_cost(
+        db, atom_table, a, b,
+        qty_candidates   = ["weight", "qty", "qty_kg", "quantity_kg"],
+        unit_candidates  = ["unit_cost", "avg_cost_per_kg", "cost_per_kg"],
+        total_candidates = ["total_cost", "cost_total", "total_value"]
+    )
 
+    # 4) Anneal (anneal_lots)
+    anneal_avg = _weighted_avg_cost(
+        db, "anneal_lots", a, b,
+        qty_candidates   = ["weight_kg", "qty", "qty_kg"],
+        unit_candidates  = ["cost_per_kg", "unit_cost", "avg_cost_per_kg"],
+        total_candidates = ["total_cost", "cost_total", "value"]
+    )
+
+    # 5) Grind (grinding_lots)
+    grind_avg = _weighted_avg_cost(
+        db, "grinding_lots", a, b,
+        qty_candidates   = ["weight_kg", "qty", "qty_kg"],
+        unit_candidates  = ["cost_per_kg", "unit_cost", "avg_cost_per_kg"],
+        total_candidates = ["total_cost", "cost_total", "value"]
+    )
+
+    # 6) FG (fg_lots)
+    fg_avg = _weighted_avg_cost(
+        db, "fg_lots", a, b,
+        qty_candidates   = ["weight_kg", "qty", "qty_kg"],
+        unit_candidates  = ["cost_per_kg", "unit_cost", "avg_cost_per_kg"],
+        total_candidates = ["total_cost", "cost_total", "value"]
+    )
+
+    # Return in the desired stage order
     return [
         {"label": "RM",       "avg_cost": rm_avg},
         {"label": "Melting",  "avg_cost": melt_avg},
         {"label": "Atom",     "avg_cost": atom_avg},
-        {"label": "Anneal",   "avg_cost": ann_avg},
-        {"label": "Grind",    "avg_cost": grd_avg},
+        {"label": "Anneal",   "avg_cost": anneal_avg},
+        {"label": "Grind",    "avg_cost": grind_avg},
         {"label": "FG",       "avg_cost": fg_avg},
     ]
 
@@ -1827,6 +1897,52 @@ def _first_existing_col(db, table: str, candidates: list[str]) -> str | None:
         if c in cols:
             return c
     return None
+
+def _pick_col(db, table: str, candidates: list[str]) -> str | None:
+    cols = _columns_of(db, table)
+    for c in candidates:
+        if c in cols:
+            return c
+    return None
+
+def _weighted_avg_cost(db, table: str, a: dt.date, b: dt.date,
+                       qty_candidates: list[str],
+                       unit_candidates: list[str],
+                       total_candidates: list[str]) -> float:
+    """
+    Weighted average = sum(unit*qty)/sum(qty)
+    Fallback: sum(total)/sum(qty)
+    """
+    date_expr = _date_expr(db, table)
+    qty  = _pick_col(db, table, qty_candidates)
+    unit = _pick_col(db, table, unit_candidates)
+    tot  = _pick_col(db, table, total_candidates)
+
+    if not qty:
+        return 0.0
+
+    if unit:
+        sql = f"""
+        SELECT CASE WHEN SUM(COALESCE({qty},0)) > 0
+               THEN SUM(COALESCE({unit},0) * COALESCE({qty},0))
+                    / SUM(COALESCE({qty},0))
+               ELSE 0 END
+        FROM {table}
+        WHERE {date_expr} BETWEEN :a AND :b
+        """
+        return float(db.execute(text(sql), {"a": a, "b": b}).scalar() or 0.0)
+
+    if tot:
+        sql = f"""
+        SELECT CASE WHEN SUM(COALESCE({qty},0)) > 0
+               THEN SUM(COALESCE({tot},0)) / NULLIF(SUM(COALESCE({qty},0)),0)
+               ELSE 0 END
+        FROM {table}
+        WHERE {date_expr} BETWEEN :a AND :b
+        """
+        return float(db.execute(text(sql), {"a": a, "b": b}).scalar() or 0.0)
+
+    return 0.0
 
 # --- add this helper (safe text→numeric) ---
 def _num_sql(col: str) -> str:  # <<< CHANGED: new helper added
