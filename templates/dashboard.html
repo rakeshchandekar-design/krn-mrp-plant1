@@ -27,7 +27,7 @@
 </style>
 
 <div class="brand">
-  <div class="name">Executive Dashboard — Plant 1</div>
+  <div class="name">Executive Dashboard</div>
   <img src="/static/KRN_Logo.png" alt="KRN" style="height:42px">
 </div>
 
@@ -63,7 +63,7 @@
   </div>
 
   <div class="card">
-    <h2>Avg Cost/kg (₹) — Anneal · Grind · FG</h2>
+    <h2>Avg Cost/kg (₹) — RM → Melting → Atom → Anneal → Grind → FG</h2>
     <canvas id="costChart" height="160"></canvas>
     <div class="muted" style="margin-top:6px">Range: {{ from_date }} → {{ to_date }}</div>
   </div>
@@ -298,14 +298,59 @@
     'Yesterday (kg)','MTD (kg)'
   );
 
-  // Avg cost/kg
-  makeBar(
-    'costChart',
-    (cost||[]).map(x=>x.label),
-    (cost||[]).map(x=>Number(x.avg_cost || 0)),
-    null,
-    'Avg Cost/kg (₹)'
-  );
+  // Avg cost/kg  (RM → Melting → Atom → Anneal → Grind → FG)
+(function(){
+  const labels = (cost||[]).map(x=>x.label);
+  const data   = (cost||[]).map(x=>Number(x.avg_cost || 0));
+
+  // consistent stage colors (fallback if a label is missing)
+  const colorMap = {
+    "RM": "#1f77b4",
+    "Melting": "#ff7f0e",
+    "Atom": "#2ca02c",
+    "Anneal": "#9467bd",
+    "Grind": "#8c564b",
+    "FG": "#d62728",
+  };
+  const colors = labels.map(l => colorMap[l] || "#6b7280");
+
+  const el = document.getElementById('costChart');
+  if(!el) return;
+
+  new Chart(el, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Avg Cost/kg (₹)',
+        data,
+        backgroundColor: colors
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const v = Number(ctx.raw || 0);
+              return ` ₹ ${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })} / kg`;
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: {
+            callback: v => `₹ ${Number(v).toLocaleString('en-IN')}`
+          }
+        }
+      }
+    }
+  });
+})();
 
   // WIP pipeline (Qty vs Value)
   const wipEl = document.getElementById('wipChart');
