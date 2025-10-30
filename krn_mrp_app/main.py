@@ -1795,13 +1795,14 @@ def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
     Uses rm_consumption entries tagged for anneal with item like 'ammonia',
     and approved anneal_lots output in the window.
     """
+    # <<< FIXED: your table has no 'area' column, so use only 'process' >>>
     nh3_base = """
       FROM rm_consumption
-      WHERE (LOWER(area)='anneal' OR LOWER(process)='anneal')
+      WHERE LOWER(process) = 'anneal'
         AND LOWER(item) LIKE '%ammonia%'
     """
 
-    # <<< CHANGED: use qty instead of qty_kg + safe cast via _num_sql >>>
+    # qty instead of qty_kg + safe cast via _num_sql
     nh3_m = _sum(db,
         f"SELECT COALESCE(SUM(COALESCE({_num_sql('qty')},0)),0) {nh3_base} AND DATE(date) BETWEEN :a AND :b",
         a=start, b=end
