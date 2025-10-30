@@ -1720,6 +1720,12 @@ def _avg(db, num_sql, den_sql, **kw) -> float:
     den = float(db.execute(text(den_sql), kw).scalar() or 0.0)
     return (num / den) if den > 0 else 0.0
 
+# --- add this helper (safe text→numeric) ---
+def _num_sql(col: str) -> str:  # <<< CHANGED: new helper added
+    # Works whether the column is TEXT/VARCHAR or NUMERIC.
+    # Strips %, commas, spaces; keeps digits, dot, minus.
+    return f"NULLIF(regexp_replace(({col})::text, '[^0-9\\.-]', '', 'g'), '')::numeric"
+
 # ---------- NEW KPI HELPERS (no schema changes) ----------
 # --- Atomization KPI: oversize (yesterday, MTD) with safe text→numeric handling ---
 def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) -> tuple[float, float]:
@@ -1732,12 +1738,9 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
     def run(sql: str, **kw) -> float:
         return float(db.execute(text(sql), kw).scalar() or 0.0)
 
-    # Always cast to text before regexp_replace so both numeric and text columns are safe.
-    # NULLIF(...,'')::numeric prevents cast errors when the stripped string becomes empty.
     def num(col: str) -> str:
         return f"NULLIF(regexp_replace(({col})::text, '[^0-9\\.]', '', 'g'), '')::numeric"
 
-    # PSD component (>212 or >180; prefer p212 when present)
     sql_psd_y = f"""
       SELECT COALESCE(SUM(
                COALESCE(l.weight, l.qty, 0)::numeric *
@@ -1766,7 +1769,6 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
         AND COALESCE(l.date, DATE(l.created_at)) BETWEEN :a AND :b
     """
 
-    # Screening component (screen_lot.oversize_80 may be numeric or text; handle both)
     sql_scr_y = f"""
       SELECT COALESCE(SUM(COALESCE({num('oversize_80')}, 0)), 0)
       FROM screen_lot
@@ -1786,6 +1788,7 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
 
     return y_psd + y_scr, m_psd + m_scr
 
+
 def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
     """
     NH3 consumption (kg) and efficiency (kg NH3 / ton approved output).
@@ -1797,8 +1800,16 @@ def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
       WHERE (LOWER(area)='anneal' OR LOWER(process)='anneal')
         AND LOWER(item) LIKE '%ammonia%'
     """
-    nh3_m = _sum(db, f"SELECT COALESCE(SUM(qty_kg),0) {nh3_base} AND DATE(date) BETWEEN :a AND :b", a=start, b=end)
-    nh3_y = _sum(db, f"SELECT COALESCE(SUM(qty_kg),0) {nh3_base} AND DATE(date) = :d", d=yest)
+
+    # <<< CHANGED: use qty instead of qty_kg + safe cast via _num_sql >>>
+    nh3_m = _sum(db,
+        f"SELECT COALESCE(SUM(COALESCE({_num_sql('qty')},0)),0) {nh3_base} AND DATE(date) BETWEEN :a AND :b",
+        a=start, b=end
+    )
+    nh3_y = _sum(db,
+        f"SELECT COALESCE(SUM(COALESCE({_num_sql('qty')},0)),0) {nh3_base} AND DATE(date) = :d",
+        d=yest
+    )
 
     out_base = "FROM anneal_lots WHERE COALESCE(qa_status,'APPROVED')='APPROVED'"
     ok_m = _sum(db, f"SELECT COALESCE(SUM(weight_kg),0) {out_base} AND COALESCE(date, DATE(created_at)) BETWEEN :a AND :b", a=start, b=end)
@@ -1808,17 +1819,19 @@ def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
     eff_y = (nh3_y / ok_y * 1000.0) if ok_y > 0 else 0.0
     return {"nh3_y": nh3_y, "nh3_m": nh3_m, "eff_y": eff_y, "eff_m": eff_m}
 
+
 def kpi_grind_oversize_and_eff(db, start: dt.date, end: dt.date, yest: dt.date):
     """
     Grinding oversize (kg) from screen_lot.oversize_80 and
     simple efficiency = FG out / Grinding input.
     """
+    # <<< CHANGED: oversize_80 handled via _num_sql for text safety >>>
     os_m = _sum(db,
-        "SELECT COALESCE(SUM(COALESCE(oversize_80,0)::numeric),0) FROM screen_lot WHERE COALESCE(date, DATE(created_at)) BETWEEN :a AND :b",
+        f"SELECT COALESCE(SUM(COALESCE({_num_sql('oversize_80')},0)),0) FROM screen_lot WHERE COALESCE(date, DATE(created_at)) BETWEEN :a AND :b",
         a=start, b=end
     )
     os_y = _sum(db,
-        "SELECT COALESCE(SUM(COALESCE(oversize_80,0)::numeric),0) FROM screen_lot WHERE COALESCE(date, DATE(created_at)) = :d",
+        f"SELECT COALESCE(SUM(COALESCE({_num_sql('oversize_80')},0)),0) FROM screen_lot WHERE COALESCE(date, DATE(created_at)) = :d",
         d=yest
     )
 
