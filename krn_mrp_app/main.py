@@ -1788,36 +1788,71 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
 
     return y_psd + y_scr, m_psd + m_scr
 
-
+# --- FIXED: Anneal NH3 KPI that auto-detects the classification column in rm_consumption ---
 def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
     """
     NH3 consumption (kg) and efficiency (kg NH3 / ton approved output).
-    Uses rm_consumption entries tagged for anneal with item like 'ammonia',
-    and approved anneal_lots output in the window.
+
+    Reads from rm_consumption:
+      - Uses LOWER(item) LIKE '%ammonia%'
+      - Tries to narrow to anneal using one of these columns if present:
+        ['process','area','stage','department','dept','section','node','workcenter']
+      - If none exists, computes across all ammonia rows (still correct, just broader).
+
+    Output basis for denominator:
+      - anneal_lots approved output (weight_kg) in the same window.
+
+    Safe numeric parsing via _num_sql('qty') so text like '12.5', '12kg', '12,5' won’t break.
     """
-    # <<< FIXED: your table has no 'area' column, so use only 'process' >>>
-    nh3_base = """
+
+    # --- helper: find the first present column name among candidates (no schema change needed) ---
+    def _first_present_column(table: str, candidates: list[str]) -> str | None:
+        rows = db.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name = :t"),
+            {"t": table.lower()},
+        ).fetchall()
+        present = {r[0] for r in rows}
+        for c in candidates:
+            if c in present:
+                return c
+        return None
+
+    # Which column can we use to target anneal?
+    _class_col = _first_present_column(
+        "rm_consumption",
+        ["process", "area", "stage", "department", "dept", "section", "node", "workcenter"],
+    )
+
+    # Build the WHERE fragment
+    # <<< CHANGED: dynamically include the anneal filter only if a suitable column exists >>>
+    anneal_clause = f"AND LOWER({_class_col}) = 'anneal'" if _class_col else ""
+    nh3_base = f"""
       FROM rm_consumption
-      WHERE LOWER(process) = 'anneal'
-        AND LOWER(item) LIKE '%ammonia%'
+      WHERE LOWER(item) LIKE '%ammonia%'
+      {anneal_clause}
     """
 
-    # qty instead of qty_kg + safe cast via _num_sql
-    nh3_m = _sum(db,
+    # Totals for NH3 (kg), using qty with safe numeric parsing
+    nh3_m = _sum(
+        db,
         f"SELECT COALESCE(SUM(COALESCE({_num_sql('qty')},0)),0) {nh3_base} AND DATE(date) BETWEEN :a AND :b",
-        a=start, b=end
+        a=start, b=end,
     )
-    nh3_y = _sum(db,
+    nh3_y = _sum(
+        db,
         f"SELECT COALESCE(SUM(COALESCE({_num_sql('qty')},0)),0) {nh3_base} AND DATE(date) = :d",
-        d=yest
+        d=yest,
     )
 
+    # Approved anneal output in the same windows (denominator for kg/ton)
     out_base = "FROM anneal_lots WHERE COALESCE(qa_status,'APPROVED')='APPROVED'"
     ok_m = _sum(db, f"SELECT COALESCE(SUM(weight_kg),0) {out_base} AND COALESCE(date, DATE(created_at)) BETWEEN :a AND :b", a=start, b=end)
     ok_y = _sum(db, f"SELECT COALESCE(SUM(weight_kg),0) {out_base} AND COALESCE(date, DATE(created_at)) = :d", d=yest)
 
-    eff_m = (nh3_m / ok_m * 1000.0) if ok_m > 0 else 0.0  # kg/ton
+    # kg NH3 per ton approved output
+    eff_m = (nh3_m / ok_m * 1000.0) if ok_m > 0 else 0.0
     eff_y = (nh3_y / ok_y * 1000.0) if ok_y > 0 else 0.0
+
     return {"nh3_y": nh3_y, "nh3_m": nh3_m, "eff_y": eff_y, "eff_m": eff_m}
 
 
