@@ -1794,15 +1794,17 @@ def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
     NH3 consumption (kg) and efficiency (kg NH3 / ton approved output).
 
     Source: rm_consumption
-    - Finds a classification column to target anneal from:
+    - Classification column candidates (to isolate anneal rows):
         ['process','area','stage','department','dept','section','node','workcenter']
-    - Finds one or more description columns to match 'ammonia' from:
+    - Description column candidates (to match 'ammonia'):
         ['item','material','rm','rm_name','chemical','chem','name','description','desc','remarks','note','notes']
+    - Date/timestamp column candidates:
+        ['date','tx_date','entry_date','doc_date','timestamp','ts','created_at','updated_at']
 
     Behavior:
-    - If no description column exists, returns 0 for NH3 totals (conservative) to avoid counting non-NH3 items.
-    - Safe numeric parsing for qty via _num_sql('qty') so text like '12kg' or '12,5' works.
-    - Denominator uses approved anneal_lots output in the same window.
+    - If no description column is present, returns zeros for NH3 (conservative).
+    - Qty parsing uses a robust SQL expression to handle text like '12kg' or '12,5'.
+    - Denominator uses approved output from anneal_lots via its NOT NULL `date` column.
     """
 
     # helper: list columns present for a table
@@ -1812,6 +1814,15 @@ def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
             {"t": table.lower()},
         ).fetchall()
         return {r[0] for r in rows}
+
+    # helper: robust numeric parser for a column (Postgres)
+    def _num_sql(col: str) -> str:
+        # strip non-numeric except dot/comma/minus, then normalize comma -> dot
+        return (
+            "NULLIF(("
+            "replace(regexp_replace(COALESCE(" + col + "::text,''), '[^0-9,\\.\\-]', '', 'g'), ',', '.')"
+            ")::numeric, NULL)"
+        )
 
     present = _present_columns("rm_consumption")
 
@@ -1824,8 +1835,15 @@ def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
     desc_candidates = ["item","material","rm","rm_name","chemical","chem","name","description","desc","remarks","note","notes"]
     desc_cols = [c for c in desc_candidates if c in present]
 
-    # If we cannot positively identify an ammonia-bearing column, return zeros (avoid miscounting).
-    if not desc_cols:
+    # 3) date/timestamp column to filter rm_consumption by period
+    date_candidates = ["date","tx_date","entry_date","doc_date","timestamp","ts","created_at","updated_at"]
+    date_col = next((c for c in date_candidates if c in present), None)
+    # DATE(expr) is safe for both DATE and TIMESTAMP in Postgres
+    date_expr = f"DATE({date_col})" if date_col else None
+
+    # ---- NH3 numerator (kg) from rm_consumption ----
+    if not desc_cols or not date_expr:
+        # If we can't confidently locate description or date columns, return 0s conservatively
         nh3_m = 0.0
         nh3_y = 0.0
     else:
@@ -1835,23 +1853,24 @@ def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
           WHERE ({like_or})
           {anneal_clause}
         """
-
         nh3_m = _sum(
             db,
-            f"SELECT COALESCE(SUM(COALESCE({_num_sql('qty')},0)),0) {nh3_base} AND DATE(date) BETWEEN :a AND :b",
+            f"SELECT COALESCE(SUM(COALESCE({_num_sql('qty')},0)),0) {nh3_base} AND {date_expr} BETWEEN :a AND :b",
             a=start, b=end,
         )
         nh3_y = _sum(
             db,
-            f"SELECT COALESCE(SUM(COALESCE({_num_sql('qty')},0)),0) {nh3_base} AND DATE(date) = :d",
+            f"SELECT COALESCE(SUM(COALESCE({_num_sql('qty')},0)),0) {nh3_base} AND {date_expr} = :d",
             d=yest,
         )
 
-    # Denominator: approved anneal output
+    # ---- Denominator: approved anneal output from anneal_lots ----
+    # Schema shows: anneal_lots.date is DATE NOT NULL; no created_at column.
     out_base = "FROM anneal_lots WHERE COALESCE(qa_status,'APPROVED')='APPROVED'"
-    ok_m = _sum(db, f"SELECT COALESCE(SUM(weight_kg),0) {out_base} AND COALESCE(date, DATE(created_at)) BETWEEN :a AND :b", a=start, b=end)
-    ok_y = _sum(db, f"SELECT COALESCE(SUM(weight_kg),0) {out_base} AND COALESCE(date, DATE(created_at)) = :d", d=yest)
+    ok_m = _sum(db, f"SELECT COALESCE(SUM(weight_kg),0) {out_base} AND date BETWEEN :a AND :b", a=start, b=end)
+    ok_y = _sum(db, f"SELECT COALESCE(SUM(weight_kg),0) {out_base} AND date = :d", d=yest)
 
+    # ---- KPIs (kg NH3 per ton) ----
     eff_m = (nh3_m / ok_m * 1000.0) if ok_m > 0 else 0.0  # kg/ton
     eff_y = (nh3_y / ok_y * 1000.0) if ok_y > 0 else 0.0
 
