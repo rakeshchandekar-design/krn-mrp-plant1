@@ -1720,6 +1720,35 @@ def _avg(db, num_sql, den_sql, **kw) -> float:
     den = float(db.execute(text(den_sql), kw).scalar() or 0.0)
     return (num / den) if den > 0 else 0.0
 
+# --- schema-aware helpers ---
+def _columns_of(db, table: str) -> set[str]:
+    rows = db.execute(
+        text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema='public' AND table_name=:t
+        """),
+        {"t": table.lower()},
+    ).fetchall()
+    return {r[0] for r in rows}
+
+def _date_expr(db, table: str) -> str:
+    cols = _columns_of(db, table)
+    if "date" in cols:
+        return "date"
+    for c in ("created_at", "updated_at", "timestamp", "ts", "inserted_at"):
+        if c in cols:
+            return f"DATE({c})"
+    # last-resort safety (shouldn't be used, but prevents crashes)
+    return "DATE(NOW())"
+
+def _first_existing_col(db, table: str, candidates: list[str]) -> str | None:
+    cols = _columns_of(db, table)
+    for c in candidates:
+        if c in cols:
+            return c
+    return None
+
 # --- add this helper (safe text→numeric) ---
 def _num_sql(col: str) -> str:  # <<< CHANGED: new helper added
     # Works whether the column is TEXT/VARCHAR or NUMERIC.
@@ -1879,26 +1908,76 @@ def kpi_anneal_ammonia(db, start: dt.date, end: dt.date, yest: dt.date):
 
 def kpi_grind_oversize_and_eff(db, start: dt.date, end: dt.date, yest: dt.date):
     """
-    Grinding oversize (kg) from screen_lot.oversize_80 and
-    simple efficiency = FG out / Grinding input.
+    Grinding KPI (schema-robust):
+      - Oversize kg (from grinding_lots.* if present, else 0)
+      - Efficiency = Approved grinding output / Grinding input (range & yesterday)
     """
-    # <<< CHANGED: oversize_80 handled via _num_sql for text safety >>>
-    os_m = _sum(db,
-        f"SELECT COALESCE(SUM(COALESCE({_num_sql('oversize_80')},0)),0) FROM screen_lot WHERE COALESCE(date, DATE(created_at)) BETWEEN :a AND :b",
-        a=start, b=end
-    )
-    os_y = _sum(db,
-        f"SELECT COALESCE(SUM(COALESCE({_num_sql('oversize_80')},0)),0) FROM screen_lot WHERE COALESCE(date, DATE(created_at)) = :d",
-        d=yest
+
+    # --- date expressions per table (auto-detect) ---
+    gl_date = _date_expr(db, "grinding_lots")
+    fg_date = _date_expr(db, "fg_lots")
+    # If you actually keep oversize in another table, change "grinding_lots" to that table.
+    os_table = "grinding_lots"
+    os_date  = _date_expr(db, os_table)
+
+    # --- pick best available oversize column ---
+    os_col = _first_existing_col(
+        db,
+        os_table,
+        ["oversize_80_kg", "oversize_p80_kg", "oversize_80", "oversize_value"]
     )
 
-    gi_m = _sum(db, "SELECT COALESCE(SUM(weight_kg),0) FROM grinding_lots WHERE COALESCE(date, DATE(created_at)) BETWEEN :a AND :b", a=start, b=end)
-    gi_y = _sum(db, "SELECT COALESCE(SUM(weight_kg),0) FROM grinding_lots WHERE COALESCE(date, DATE(created_at)) = :d", d=yest)
-    go_m = _sum(db, "SELECT COALESCE(SUM(weight_kg),0) FROM fg_lots       WHERE COALESCE(date, DATE(created_at)) BETWEEN :a AND :b", a=start, b=end)
-    go_y = _sum(db, "SELECT COALESCE(SUM(weight_kg),0) FROM fg_lots       WHERE COALESCE(date, DATE(created_at)) = :d", d=yest)
+    # Oversize totals
+    if os_col:
+        os_m = _sum(
+            db,
+            f"SELECT COALESCE(SUM(COALESCE({_num_sql(os_col)},0)),0) "
+            f"FROM {os_table} WHERE {os_date} BETWEEN :a AND :b",
+            a=start, b=end,
+        )
+        os_y = _sum(
+            db,
+            f"SELECT COALESCE(SUM(COALESCE({_num_sql(os_col)},0)),0) "
+            f"FROM {os_table} WHERE {os_date} = :d",
+            d=yest,
+        )
+    else:
+        os_m = 0.0
+        os_y = 0.0
+
+    # Grinding input (all grinding lots)
+    gi_m = _sum(
+        db,
+        f"SELECT COALESCE(SUM(weight_kg),0) FROM grinding_lots "
+        f"WHERE {gl_date} BETWEEN :a AND :b",
+        a=start, b=end,
+    )
+    gi_y = _sum(
+        db,
+        f"SELECT COALESCE(SUM(weight_kg),0) FROM grinding_lots "
+        f"WHERE {gl_date} = :d",
+        d=yest,
+    )
+
+    # Grinding approved output (exclude REJECTED)
+    go_m = _sum(
+        db,
+        f"SELECT COALESCE(SUM(weight_kg),0) FROM grinding_lots "
+        f"WHERE (qa_status IS NULL OR qa_status!='REJECTED') "
+        f"AND {gl_date} BETWEEN :a AND :b",
+        a=start, b=end,
+    )
+    go_y = _sum(
+        db,
+        f"SELECT COALESCE(SUM(weight_kg),0) FROM grinding_lots "
+        f"WHERE (qa_status IS NULL OR qa_status!='REJECTED') "
+        f"AND {gl_date} = :d",
+        d=yest,
+    )
 
     eff_m = (go_m / gi_m * 100.0) if gi_m > 0 else 0.0
     eff_y = (go_y / gi_y * 100.0) if gi_y > 0 else 0.0
+
     return {"os_y": os_y, "os_m": os_m, "eff_y": eff_y, "eff_m": eff_m}
 
 def kpi_fg_gradewise_stock(db):
@@ -1925,22 +2004,26 @@ def kpi_fg_gradewise_stock(db):
 
 def kpi_qa_eagle(db, start: dt.date, end: dt.date):
     """
-    Small QA bird’s-eye: counts by status for heats & lots in the window.
+    QA counts by status for heats & lots in the window (schema-robust dates).
     """
+    heats_date = _date_expr(db, "heats")
+    lots_date  = _date_expr(db, "lots")
+
     counts = {}
-    for s in ("PENDING","APPROVED","HOLD","REJECTED"):
-        qh = text("""
-          SELECT COUNT(*) FROM heats
-          WHERE COALESCE(qa_status,'PENDING') = :s
-            AND DATE(created_at) BETWEEN :a AND :b
-        """)
-        ql = text("""
-          SELECT COUNT(*) FROM lot
-          WHERE COALESCE(qa_status,'PENDING') = :s
-            AND (COALESCE(date, DATE(created_at)) BETWEEN :a AND :b)
-        """)
+    for s in ("PENDING", "APPROVED", "HOLD", "REJECTED"):
+        qh = text(
+            f"SELECT COUNT(*) FROM heats "
+            f"WHERE COALESCE(qa_status,'PENDING') = :s "
+            f"AND {heats_date} BETWEEN :a AND :b"
+        )
+        ql = text(
+            f"SELECT COUNT(*) FROM lots "
+            f"WHERE COALESCE(qa_status,'PENDING') = :s "
+            f"AND {lots_date} BETWEEN :a AND :b"
+        )
         counts[f"heats_{s.lower()}"] = int(db.execute(qh, {"s": s, "a": start, "b": end}).scalar() or 0)
         counts[f"lots_{s.lower()}"]  = int(db.execute(ql, {"s": s, "a": start, "b": end}).scalar() or 0)
+
     return counts
 
 # -----------------------------------------
