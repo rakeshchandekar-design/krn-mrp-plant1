@@ -16,7 +16,7 @@
   @media (max-width:800px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
 
   .card{border:1px solid var(--border);border-radius:10px;padding:12px;background:#fff}
-  .card h2{margin:0 0 6px 0;font-size:16px}
+  .card h2{margin:0 0 6px 0;font-size:16px;display:flex;justify-content:space-between;align-items:flex-end;gap:8px}
   .muted{color:var(--muted);font-size:12px}
 
   table{border-collapse:collapse;width:100%}
@@ -29,7 +29,11 @@
   .kpi .val{font-weight:700}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
 
-  /* Chart containers (fix size for both screen and print) */
+  /* Small figure chips shown next to chart titles */
+  .fig{font-size:12px;color:#374151}
+  .fig b{font-weight:700}
+
+  /* Chart containers (fixed height for screen & print) */
   .chart-container{height:160px}
   .chart-container.tall{height:170px}
 
@@ -45,9 +49,7 @@
     .print-only{display:block!important}
     .card{page-break-inside:avoid;break-inside:avoid}
     .grid-2,.grid-3,.grid-4{gap:10px}
-    .chart-container,
-    .chart-container.tall,
-    canvas{width:100%!important;height:150px!important}
+    .chart-container,.chart-container.tall,canvas{width:100%!important;height:150px!important}
     *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   }
 </style>
@@ -68,7 +70,10 @@
   </div>
   <div style="margin-top:6px">
     <span style="padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:#f9fafb">
-      Total value in hand: <strong>₹ {{ (total_value_in_hand | default(0) | float) | round(0) }}</strong>
+      Total value in hand:
+      <strong>
+        <span class="money" data-rupees="{{ (total_value_in_hand | default(0) | float) }}"></span>
+      </strong>
     </span>
   </div>
 </div>
@@ -85,7 +90,8 @@
     <span class="pill">Yesterday: {{ yesterday }}</span>
     <span class="pill">Today: {{ today }}</span>
     <span class="pill" title="RM + WIP (Melting/Atom/Anneal/Grind) + RAP + FG. No duplication.">
-      Total value in hand: <strong>₹ {{ (total_value_in_hand | default(0) | float) | round(0) }}</strong>
+      Total value in hand:
+      <strong><span class="money" data-rupees="{{ (total_value_in_hand | default(0) | float) }}"></span></strong>
     </span>
   </form>
   <button class="btn" onclick="window.print()">Print / Save PDF</button>
@@ -94,19 +100,28 @@
 <!-- Row A: High-level charts -->
 <div class="grid-3">
   <div class="card">
-    <h2>Inventory — Value by Stage (₹)</h2>
+    <h2>
+      <span>Inventory — Value by Stage</span>
+      <span class="fig" id="invFig"></span>
+    </h2>
     <div class="chart-container"><canvas id="invChart"></canvas></div>
-    <div class="muted" style="margin-top:6px">Snapshot as of today.</div>
+    <div class="muted" id="invNote" style="margin-top:6px">Snapshot as of today.</div>
   </div>
 
   <div class="card">
-    <h2>Output — Yesterday vs MTD (kg)</h2>
+    <h2>
+      <span>Output — Yesterday vs MTD</span>
+      <span class="fig" id="prodFig"></span>
+    </h2>
     <div class="chart-container"><canvas id="prodChart"></canvas></div>
-    <div class="muted" style="margin-top:6px">All production nodes.</div>
+    <div class="muted" id="prodNote" style="margin-top:6px">All production nodes.</div>
   </div>
 
   <div class="card">
-    <h2>Avg Cost/kg (₹) — RM → Melting → Atom → Anneal → Grind → FG</h2>
+    <h2>
+      <span>Avg Cost/kg — RM → Melting → Atom → Anneal → Grind → FG</span>
+      <span class="fig" id="costFig"></span>
+    </h2>
     <div class="chart-container"><canvas id="costChart"></canvas></div>
     <div class="muted" style="margin-top:6px">Range: {{ from_date }} → {{ to_date }}</div>
   </div>
@@ -114,9 +129,12 @@
 
 <!-- WIP pipeline -->
 <div class="card" style="margin-top:14px">
-  <h2>WIP Pipeline — RM → FG</h2>
+  <h2>
+    <span>WIP Pipeline — RM → FG</span>
+    <span class="fig" id="wipFig"></span>
+  </h2>
   <div class="chart-container tall"><canvas id="wipChart"></canvas></div>
-  <div class="muted" style="margin-top:6px">Snapshot as of {{ today }} (Qty in kg, Value in ₹).</div>
+  <div class="muted" id="wipNote" style="margin-top:6px">Snapshot as of {{ today }}.</div>
 </div>
 
 <!-- Row B: Department snapshots -->
@@ -163,7 +181,8 @@
       <tr><th>Yesterday</th><td class="right">{{ (anneal_yday_prod | default(0) | float) | round(0) }} kg</td></tr>
       <tr><th>Avg Cost/kg</th><td class="right">₹ {{ (anneal_avg_cost | default(0) | float) | round(2) }}</td></tr>
       <tr><th>MTD Output</th><td class="right">{{ (anneal_mtd_prod | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>Value (MTD)</th><td class="right">₹ {{ (anneal_value | default(0) | float) | round(0) }}</td></tr>
+      <tr><th>Value (MTD)</th>
+        <td class="right"><span class="money" data-rupees="{{ (anneal_value | default(0) | float) }}"></span></td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
     <table>
@@ -182,7 +201,8 @@
       <tr><th>Yesterday</th><td class="right">{{ (grind_yday_prod | default(0) | float) | round(0) }} kg</td></tr>
       <tr><th>Avg Cost/kg</th><td class="right">₹ {{ (grind_avg_cost | default(0) | float) | round(2) }}</td></tr>
       <tr><th>MTD Output</th><td class="right">{{ (grind_mtd_prod | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>Value (MTD)</th><td class="right">₹ {{ (grind_value | default(0) | float) | round(0) }}</td></tr>
+      <tr><th>Value (MTD)</th>
+        <td class="right"><span class="money" data-rupees="{{ (grind_value | default(0) | float) }}"></span></td></tr>
     </table>
     <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
     <table>
@@ -199,12 +219,13 @@
       <tr><th>FG — Yesterday</th><td class="right">{{ (fg_yday_prod | default(0) | float) | round(0) }} kg</td></tr>
       <tr><th>FG — Avg Cost/kg</th><td class="right">₹ {{ (fg_avg_cost | default(0) | float) | round(2) }}</td></tr>
       <tr><th>FG — MTD Output</th><td class="right">{{ (fg_mtd_prod | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>FG Stock Value (now)</th><td class="right">₹ {{ (fg_stock_value | default(0) | float) | round(0) }}</td></tr>
+      <tr><th>FG Stock Value (now)</th>
+        <td class="right"><span class="money" data-rupees="{{ (fg_stock_value | default(0) | float) }}"></span></td></tr>
       <tr>
         <th>Dispatch (MTD)</th>
         <td class="right">
           {{ (dispatch_mtd_qty | default(0) | float) | round(0) }} kg |
-          ₹ {{ (dispatch_mtd_value | default(0) | float) | round(0) }}
+          <span class="money" data-rupees="{{ (dispatch_mtd_value | default(0) | float) }}"></span>
         </td>
       </tr>
      </table>
@@ -255,12 +276,12 @@
   <div class="card">
     <h2>FG Stock — Grade-wise (On-hand)</h2>
     <table>
-      <tr><th>Grade</th><th class="right">Qty (kg)</th><th class="right">Value (₹)</th></tr>
+      <tr><th>Grade</th><th class="right">Qty (kg)</th><th class="right">Value</th></tr>
       {% for g in fg_stock_by_grade | default([]) %}
         <tr>
           <td>{{ g.grade }}</td>
           <td class="right">{{ (g.qty | default(0) | float) | round(0) }}</td>
-          <td class="right">₹ {{ (g.value | default(0) | float) | round(0) }}</td>
+          <td class="right"><span class="money" data-rupees="{{ (g.value | default(0) | float) }}"></span></td>
         </tr>
       {% endfor %}
       {% if (fg_stock_by_grade | default([]) | length) == 0 %}
@@ -290,83 +311,154 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 (function(){
+  // Raw data from backend
   const inv  = {{ (inv_by_stage  | default([]))  | tojson }};
   const prod = {{ (prod_by_stage | default([]))  | tojson }};
   const cost = {{ (cost_by_stage | default([]))  | tojson }};
   const wip  = {{ (wip_pipeline  | default([]))  | tojson }};
+  const fgByGrade = {{ (fg_stock_by_grade | default([])) | tojson }};
 
-  function makeBar(canvasId, labels, v1, v2, label1, label2){
+  const fgStockValue   = Number({{ (fg_stock_value      | default(0) | float) }});
+  const annVal         = Number({{ (anneal_value        | default(0) | float) }});
+  const grVal          = Number({{ (grind_value         | default(0) | float) }});
+  const dispVal        = Number({{ (dispatch_mtd_value  | default(0) | float) }});
+  const totalInHand    = Number({{ (total_value_in_hand | default(0) | float) }});
+
+  // ---------- Unit helpers ----------
+  // Money → pick ₹ Lakh or ₹ Cr
+  function pickMoneyUnit(maxVal){ return (maxVal >= 1e7) ? {div:1e7, label:"₹ Cr"} : {div:1e5, label:"₹ Lakh"}; }
+  function fmtMoney(val, MONEY){
+    const scaled = Number(val||0) / MONEY.div;
+    return `${MONEY.label} ${scaled.toLocaleString('en-IN', {maximumFractionDigits:2})}`;
+  }
+
+  // Weight → pick kg or MT for charts/figures (keep tables in kg as-is)
+  function pickWeightUnit(maxKg){ return (maxKg >= 1e5) ? {div:1000, label:"MT"} : {div:1, label:"kg"}; }
+  function fmtWeight(valKg, W){ return `${(Number(valKg||0)/W.div).toLocaleString('en-IN', {maximumFractionDigits:1})} ${W.label}`; }
+
+  // Determine money unit from everything we show
+  const moneyPool = []
+    .concat((inv||[]).map(x => Number(x.value||0)))
+    .concat((wip||[]).map(x => Number(x.value||0)))
+    .concat((fgByGrade||[]).map(x => Number(x.value||0)))
+    .concat([fgStockValue, annVal, grVal, dispVal, totalInHand]);
+  const MONEY = pickMoneyUnit(Math.max(0, ...moneyPool.filter(Number.isFinite)));
+
+  // Determine weight unit for charts (sum of stage outputs)
+  const prodPool = []
+    .concat((prod||[]).map(x => Number(x.yday||0)))
+    .concat((prod||[]).map(x => Number(x.mtd ||0)))
+    .concat((wip||[]).map(x => Number(x.qty ||0)));
+  const WEIGHT = pickWeightUnit(Math.max(0, ...prodPool.filter(Number.isFinite)));
+
+  // Update inline money spans (pills + tables)
+  document.querySelectorAll('.money[data-rupees]').forEach(el => {
+    el.textContent = fmtMoney(el.getAttribute('data-rupees'), MONEY);
+  });
+
+  // ---------- Figure chips above charts ----------
+  // Inventory figure = total value across stages
+  const invTotal = (inv||[]).reduce((s,x)=>s+Number(x.value||0),0);
+  const invFig = document.getElementById('invFig');
+  if(invFig) invFig.innerHTML = `<span>Total: <b>${fmtMoney(invTotal, MONEY)}</b></span>`;
+  const invNote = document.getElementById('invNote');
+  if(invNote) invNote.textContent = `Snapshot as of today — values shown in ${MONEY.label}.`;
+
+  // Prod figure = totals for Y and MTD
+  const prodY = (prod||[]).reduce((s,x)=>s+Number(x.yday||0),0);
+  const prodM = (prod||[]).reduce((s,x)=>s+Number(x.mtd ||0),0);
+  const prodFig = document.getElementById('prodFig');
+  if(prodFig) prodFig.innerHTML = `<span>Y: <b>${fmtWeight(prodY, WEIGHT)}</b> • MTD: <b>${fmtWeight(prodM, WEIGHT)}</b></span>`;
+  const prodNote = document.getElementById('prodNote');
+  if(prodNote) prodNote.textContent = `All production nodes — weights shown in ${WEIGHT.label}.`;
+
+  // Cost figure = simple average across stages for the range
+  const costVals = (cost||[]).map(x=>Number(x.avg_cost||0)).filter(Number.isFinite);
+  const costAvg = costVals.length ? (costVals.reduce((a,b)=>a+b,0)/costVals.length) : 0;
+  const costFig = document.getElementById('costFig');
+  if(costFig) costFig.innerHTML = `<span>Avg: <b>₹ ${costAvg.toFixed(2)} / kg</b></span>`;
+
+  // WIP figure = total qty + total value
+  const wipQty = (wip||[]).reduce((s,x)=>s+Number(x.qty||0),0);
+  const wipVal = (wip||[]).reduce((s,x)=>s+Number(x.value||0),0);
+  const wipFig = document.getElementById('wipFig');
+  if(wipFig) wipFig.innerHTML = `<span>Qty: <b>${fmtWeight(wipQty, WEIGHT)}</b> • Value: <b>${fmtMoney(wipVal, MONEY)}</b></span>`;
+  const wipNote = document.getElementById('wipNote');
+  if(wipNote) wipNote.textContent = `Snapshot as of {{ today }} — qty in ${WEIGHT.label}, value in ${MONEY.label}.`;
+
+  // ---------- Chart helpers ----------
+  function makeBar(canvasId, labels, datasetDefs, yTickCb, tooltipLabelCb){
     const el = document.getElementById(canvasId);
     if(!el) return;
     new Chart(el, {
       type:'bar',
-      data:{ labels, datasets:[
-        ...(v1 ? [{label:label1, data:v1}] : []),
-        ...(v2 ? [{label:label2, data:v2}] : []),
-      ]},
+      data:{ labels, datasets: datasetDefs },
       options:{
         responsive:true,
         maintainAspectRatio:false,
-        plugins:{ legend:{ position:'bottom' } },
-        scales:{ y:{ beginAtZero:true } }
+        plugins:{
+          legend:{ position:'bottom' },
+          tooltip:{ callbacks:{ label: tooltipLabelCb } }
+        },
+        scales:{ y:{ beginAtZero:true, ticks:{ callback: yTickCb } } }
       }
     });
   }
 
-  // Inventory value by stage (₹)
-  makeBar('invChart',
+  // 1) Inventory value by stage (money scaled)
+  makeBar(
+    'invChart',
     (inv||[]).map(x=>x.label),
-    (inv||[]).map(x=>Number(x.value||0)),
-    null,'Value (₹)'
+    [{
+      label:`Value (${MONEY.label})`,
+      data:(inv||[]).map(x => Number(x.value||0) / MONEY.div)
+    }],
+    v => `${Number(v).toLocaleString('en-IN')}`,
+    ctx => `${ctx.dataset.label}: ${Number(ctx.raw||0).toLocaleString('en-IN')}`
   );
 
-  // Output — Yesterday vs MTD (kg)
-  makeBar('prodChart',
+  // 2) Output — Yesterday vs MTD (auto kg/MT)
+  makeBar(
+    'prodChart',
     (prod||[]).map(x=>x.label),
-    (prod||[]).map(x=>Number(x.yday||0)),
-    (prod||[]).map(x=>Number(x.mtd ||0)),
-    'Yesterday (kg)','MTD (kg)'
+    [
+      { label:`Yesterday (${WEIGHT.label})`, data:(prod||[]).map(x=>Number(x.yday||0)/WEIGHT.div) },
+      { label:`MTD (${WEIGHT.label})`,       data:(prod||[]).map(x=>Number(x.mtd ||0)/WEIGHT.div) }
+    ],
+    v => Number(v).toLocaleString('en-IN'),
+    ctx => `${ctx.dataset.label}: ${Number(ctx.raw||0).toLocaleString('en-IN')}`
   );
 
-  // Avg cost/kg across stages
+  // 3) Avg cost/kg (₹/kg) — unit price, no scaling
   (function(){
     const labels=(cost||[]).map(x=>x.label);
     const data=(cost||[]).map(x=>Number(x.avg_cost||0));
     const colorMap={RM:"#1f77b4",Melting:"#ff7f0e",Atom:"#2ca02c",Anneal:"#9467bd",Grind:"#8c564b",FG:"#d62728"};
-    const colors=labels.map(l=>colorMap[l]||"#6b7280");
-    const el=document.getElementById('costChart'); if(!el) return;
-    new Chart(el,{
-      type:'bar',
-      data:{ labels, datasets:[{label:'Avg Cost/kg (₹)', data, backgroundColor:colors}]},
-      options:{
-        responsive:true, maintainAspectRatio:false,
-        plugins:{ legend:{position:'bottom'},
-          tooltip:{ callbacks:{ label:ctx=>` ₹ ${Number(ctx.raw||0).toLocaleString('en-IN',{maximumFractionDigits:2})} / kg` } }
-        },
-        scales:{ y:{ beginAtZero:true, ticks:{ callback:v=>`₹ ${Number(v).toLocaleString('en-IN')}` } } }
-      }
-    });
+    makeBar(
+      'costChart',
+      labels,
+      [{ label:'Avg Cost/kg (₹)', data, backgroundColor: labels.map(l=>colorMap[l]||"#6b7280") }],
+      v => `₹ ${Number(v).toLocaleString('en-IN')}`,
+      ctx => `₹ ${Number(ctx.raw||0).toLocaleString('en-IN',{maximumFractionDigits:2})} / kg`
+    );
   })();
 
-  // WIP pipeline
+  // 4) WIP pipeline — Qty + Value
   (function(){
-    const el=document.getElementById('wipChart'); if(!el) return;
-    new Chart(el,{
-      type:'bar',
-      data:{
-        labels:(wip||[]).map(x=>x.label),
-        datasets:[
-          {label:'Qty (kg)', data:(wip||[]).map(x=>Number(x.qty||0))},
-          {label:'Value (₹)', data:(wip||[]).map(x=>Number(x.value||0))}
-        ]
-      },
-      options:{ responsive:true, maintainAspectRatio:false,
-        plugins:{ legend:{position:'bottom'} }, scales:{ y:{ beginAtZero:true } }
-      }
-    });
+    const labels = (wip||[]).map(x=>x.label);
+    makeBar(
+      'wipChart',
+      labels,
+      [
+        { label:`Qty (${WEIGHT.label})`,  data:(wip||[]).map(x=>Number(x.qty||0)/WEIGHT.div) },
+        { label:`Value (${MONEY.label})`, data:(wip||[]).map(x=>Number(x.value||0)/MONEY.div) }
+      ],
+      v => Number(v).toLocaleString('en-IN'),
+      ctx => `${ctx.dataset.label}: ${Number(ctx.raw||0).toLocaleString('en-IN')}`
+    );
   })();
 
-  // Re-layout charts for print
+  // Resize on print to avoid clipping
   window.onbeforeprint = () => {
     if (Chart && Chart.instances) {
       for (const id in Chart.instances) { try { Chart.instances[id].resize(); } catch(e){} }
