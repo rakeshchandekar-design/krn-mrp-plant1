@@ -35,7 +35,7 @@
 
   /* Chart containers (fixed height for screen & print) */
   .chart-container{height:160px}
-  .chart-container.tall{height:170px}
+  .chart-container.tall{height:180px}
 
   /* Screen vs print */
   .screen-only{display:block}
@@ -127,7 +127,7 @@
   </div>
 </div>
 
-<!-- WIP pipeline -->
+<!-- WIP pipeline (dual axis) -->
 <div class="card" style="margin-top:14px">
   <h2>
     <span>WIP Pipeline — RM → FG</span>
@@ -256,7 +256,7 @@
       <tr><th>Eff. (Y)</th><td class="right">{{ (ann_eff_y | default(0) | float) | round(1) }} kg/ton</td></tr>
       <tr><th>Eff. (MTD)</th><td class="right">{{ (ann_eff_m | default(0) | float) | round(1) }} kg/ton</td></tr>
     </table>
-    <div class="muted">Efficiency = kg NH₃ per ton of approved anneal output.</div>
+    <div class="muted">Efficiency = FG out / Grinding input.</div>
   </div>
 
   <div class="card">
@@ -311,7 +311,29 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 (function(){
-  // Raw data from backend
+  // ---- Lightweight "value labels" plugin: draw numbers above bars/points ----
+  const ValueLabels = {
+    id:'valueLabels',
+    afterDatasetsDraw(chart, args, opts){
+      const {ctx} = chart; ctx.save();
+      const fmt = (opts && opts.formatter) ? opts.formatter : (v)=>String(v);
+      chart.data.datasets.forEach((ds, di) => {
+        const meta = chart.getDatasetMeta(di);
+        meta.data.forEach((elem, i) => {
+          const raw = ds.data[i]; if (raw == null) return;
+          const txt = fmt(raw, di, i, ds, chart);
+          ctx.font = '10px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillStyle = '#111';
+          const y = elem.y - 4;
+          ctx.fillText(txt, elem.x, y);
+        });
+      });
+      ctx.restore();
+    }
+  };
+  Chart.register(ValueLabels);
+
+  // ---- Incoming data ----
   const inv  = {{ (inv_by_stage  | default([]))  | tojson }};
   const prod = {{ (prod_by_stage | default([]))  | tojson }};
   const cost = {{ (cost_by_stage | default([]))  | tojson }};
@@ -324,19 +346,19 @@
   const dispVal        = Number({{ (dispatch_mtd_value  | default(0) | float) }});
   const totalInHand    = Number({{ (total_value_in_hand | default(0) | float) }});
 
-  // ---------- Unit helpers ----------
-  // Money → pick ₹ Lakh or ₹ Cr
+  // ---- Unit helpers ----
   function pickMoneyUnit(maxVal){ return (maxVal >= 1e7) ? {div:1e7, label:"₹ Cr"} : {div:1e5, label:"₹ Lakh"}; }
-  function fmtMoney(val, MONEY){
-    const scaled = Number(val||0) / MONEY.div;
-    return `${MONEY.label} ${scaled.toLocaleString('en-IN', {maximumFractionDigits:2})}`;
+  function moneyNumber(val, M){ return Number(val||0)/M.div; }
+  function moneyText(val, M, frac=2){ return `${(Number(val||0)/M.div).toLocaleString('en-IN',{maximumFractionDigits:frac})}`; }
+
+  function pickWeightUnit(maxKg){ return (maxKg >= 1e5) ? {div:1000, label:"MT"} : {div:1, label:"kg"}; }
+  function weightNumber(valKg, W){ return Number(valKg||0)/W.div; }
+  function weightText(valKg, W, fracMT=1){
+    const frac = (W.div===1000) ? fracMT : 0;
+    return (Number(valKg||0)/W.div).toLocaleString('en-IN', {maximumFractionDigits: frac});
   }
 
-  // Weight → pick kg or MT for charts/figures (keep tables in kg as-is)
-  function pickWeightUnit(maxKg){ return (maxKg >= 1e5) ? {div:1000, label:"MT"} : {div:1, label:"kg"}; }
-  function fmtWeight(valKg, W){ return `${(Number(valKg||0)/W.div).toLocaleString('en-IN', {maximumFractionDigits:1})} ${W.label}`; }
-
-  // Determine money unit from everything we show
+  // Decide units from overall magnitudes
   const moneyPool = []
     .concat((inv||[]).map(x => Number(x.value||0)))
     .concat((wip||[]).map(x => Number(x.value||0)))
@@ -344,7 +366,6 @@
     .concat([fgStockValue, annVal, grVal, dispVal, totalInHand]);
   const MONEY = pickMoneyUnit(Math.max(0, ...moneyPool.filter(Number.isFinite)));
 
-  // Determine weight unit for charts (sum of stage outputs)
   const prodPool = []
     .concat((prod||[]).map(x => Number(x.yday||0)))
     .concat((prod||[]).map(x => Number(x.mtd ||0)))
@@ -353,41 +374,38 @@
 
   // Update inline money spans (pills + tables)
   document.querySelectorAll('.money[data-rupees]').forEach(el => {
-    el.textContent = fmtMoney(el.getAttribute('data-rupees'), MONEY);
+    const v = Number(el.getAttribute('data-rupees')||0);
+    el.textContent = `${MONEY.label} ${moneyText(v, MONEY)}`;
   });
 
-  // ---------- Figure chips above charts ----------
-  // Inventory figure = total value across stages
+  // ---- Figure chips (totals near titles) ----
   const invTotal = (inv||[]).reduce((s,x)=>s+Number(x.value||0),0);
   const invFig = document.getElementById('invFig');
-  if(invFig) invFig.innerHTML = `<span>Total: <b>${fmtMoney(invTotal, MONEY)}</b></span>`;
+  if(invFig) invFig.innerHTML = `Total: <b>${MONEY.label} ${moneyText(invTotal, MONEY)}</b>`;
   const invNote = document.getElementById('invNote');
   if(invNote) invNote.textContent = `Snapshot as of today — values shown in ${MONEY.label}.`;
 
-  // Prod figure = totals for Y and MTD
   const prodY = (prod||[]).reduce((s,x)=>s+Number(x.yday||0),0);
   const prodM = (prod||[]).reduce((s,x)=>s+Number(x.mtd ||0),0);
   const prodFig = document.getElementById('prodFig');
-  if(prodFig) prodFig.innerHTML = `<span>Y: <b>${fmtWeight(prodY, WEIGHT)}</b> • MTD: <b>${fmtWeight(prodM, WEIGHT)}</b></span>`;
+  if(prodFig) prodFig.innerHTML = `Y: <b>${weightText(prodY, WEIGHT)}</b> ${WEIGHT.label} • MTD: <b>${weightText(prodM, WEIGHT)}</b> ${WEIGHT.label}`;
   const prodNote = document.getElementById('prodNote');
   if(prodNote) prodNote.textContent = `All production nodes — weights shown in ${WEIGHT.label}.`;
 
-  // Cost figure = simple average across stages for the range
   const costVals = (cost||[]).map(x=>Number(x.avg_cost||0)).filter(Number.isFinite);
   const costAvg = costVals.length ? (costVals.reduce((a,b)=>a+b,0)/costVals.length) : 0;
   const costFig = document.getElementById('costFig');
-  if(costFig) costFig.innerHTML = `<span>Avg: <b>₹ ${costAvg.toFixed(2)} / kg</b></span>`;
+  if(costFig) costFig.innerHTML = `Avg: <b>₹ ${costAvg.toFixed(2)} / kg</b>`;
 
-  // WIP figure = total qty + total value
   const wipQty = (wip||[]).reduce((s,x)=>s+Number(x.qty||0),0);
   const wipVal = (wip||[]).reduce((s,x)=>s+Number(x.value||0),0);
   const wipFig = document.getElementById('wipFig');
-  if(wipFig) wipFig.innerHTML = `<span>Qty: <b>${fmtWeight(wipQty, WEIGHT)}</b> • Value: <b>${fmtMoney(wipVal, MONEY)}</b></span>`;
+  if(wipFig) wipFig.innerHTML = `Qty: <b>${weightText(wipQty, WEIGHT)}</b> ${WEIGHT.label} • Value: <b>${MONEY.label} ${moneyText(wipVal, MONEY)}</b>`;
   const wipNote = document.getElementById('wipNote');
   if(wipNote) wipNote.textContent = `Snapshot as of {{ today }} — qty in ${WEIGHT.label}, value in ${MONEY.label}.`;
 
-  // ---------- Chart helpers ----------
-  function makeBar(canvasId, labels, datasetDefs, yTickCb, tooltipLabelCb){
+  // ---- Generic chart builder with our value-labels plugin ----
+  function makeBar(canvasId, labels, datasetDefs, yTickCb, labelFormatter){
     const el = document.getElementById(canvasId);
     if(!el) return;
     new Chart(el, {
@@ -396,40 +414,48 @@
       options:{
         responsive:true,
         maintainAspectRatio:false,
+        layout:{ padding:{ top:16 } },
         plugins:{
           legend:{ position:'bottom' },
-          tooltip:{ callbacks:{ label: tooltipLabelCb } }
+          tooltip:{ callbacks:{ label:(ctx)=>`${ctx.dataset.label}: ${ctx.formattedValue}` } },
+          valueLabels:{ formatter: labelFormatter }
         },
         scales:{ y:{ beginAtZero:true, ticks:{ callback: yTickCb } } }
       }
     });
   }
 
-  // 1) Inventory value by stage (money scaled)
-  makeBar(
-    'invChart',
-    (inv||[]).map(x=>x.label),
-    [{
-      label:`Value (${MONEY.label})`,
-      data:(inv||[]).map(x => Number(x.value||0) / MONEY.div)
-    }],
-    v => `${Number(v).toLocaleString('en-IN')}`,
-    ctx => `${ctx.dataset.label}: ${Number(ctx.raw||0).toLocaleString('en-IN')}`
-  );
+  // 1) Inventory — value labels per bar in ₹ Lakh/Cr
+  (function(){
+    const labels = (inv||[]).map(x=>x.label);
+    const data   = (inv||[]).map(x=>moneyNumber(x.value||0, MONEY));
+    makeBar(
+      'invChart',
+      labels,
+      [{ label:`Value (${MONEY.label})`, data }],
+      v => Number(v).toLocaleString('en-IN'),
+      raw => `${Number(raw).toLocaleString('en-IN')}`
+    );
+  })();
 
-  // 2) Output — Yesterday vs MTD (auto kg/MT)
-  makeBar(
-    'prodChart',
-    (prod||[]).map(x=>x.label),
-    [
-      { label:`Yesterday (${WEIGHT.label})`, data:(prod||[]).map(x=>Number(x.yday||0)/WEIGHT.div) },
-      { label:`MTD (${WEIGHT.label})`,       data:(prod||[]).map(x=>Number(x.mtd ||0)/WEIGHT.div) }
-    ],
-    v => Number(v).toLocaleString('en-IN'),
-    ctx => `${ctx.dataset.label}: ${Number(ctx.raw||0).toLocaleString('en-IN')}`
-  );
+  // 2) Output — Yesterday vs MTD with labels in kg/MT
+  (function(){
+    const labels = (prod||[]).map(x=>x.label);
+    const yData  = (prod||[]).map(x=>weightNumber(x.yday||0, WEIGHT));
+    const mData  = (prod||[]).map(x=>weightNumber(x.mtd ||0, WEIGHT));
+    makeBar(
+      'prodChart',
+      labels,
+      [
+        { label:`Yesterday (${WEIGHT.label})`, data:yData, backgroundColor:'rgba(59,130,246,0.60)' },
+        { label:`MTD (${WEIGHT.label})`,       data:mData, backgroundColor:'rgba(236,72,153,0.35)' }
+      ],
+      v => Number(v).toLocaleString('en-IN'),
+      raw => `${Number(raw).toLocaleString('en-IN')}`
+    );
+  })();
 
-  // 3) Avg cost/kg (₹/kg) — unit price, no scaling
+  // 3) Avg cost/kg — plain ₹/kg (unit price)
   (function(){
     const labels=(cost||[]).map(x=>x.label);
     const data=(cost||[]).map(x=>Number(x.avg_cost||0));
@@ -439,23 +465,48 @@
       labels,
       [{ label:'Avg Cost/kg (₹)', data, backgroundColor: labels.map(l=>colorMap[l]||"#6b7280") }],
       v => `₹ ${Number(v).toLocaleString('en-IN')}`,
-      ctx => `₹ ${Number(ctx.raw||0).toLocaleString('en-IN',{maximumFractionDigits:2})} / kg`
+      raw => `₹ ${Number(raw).toLocaleString('en-IN',{maximumFractionDigits:2})}`
     );
   })();
 
-  // 4) WIP pipeline — Qty + Value
+  // 4) WIP Pipeline — dual axis: bars (Qty, left) + line (Value, right)
   (function(){
+    const el = document.getElementById('wipChart'); if(!el) return;
     const labels = (wip||[]).map(x=>x.label);
-    makeBar(
-      'wipChart',
-      labels,
-      [
-        { label:`Qty (${WEIGHT.label})`,  data:(wip||[]).map(x=>Number(x.qty||0)/WEIGHT.div) },
-        { label:`Value (${MONEY.label})`, data:(wip||[]).map(x=>Number(x.value||0)/MONEY.div) }
-      ],
-      v => Number(v).toLocaleString('en-IN'),
-      ctx => `${ctx.dataset.label}: ${Number(ctx.raw||0).toLocaleString('en-IN')}`
-    );
+    const qtyBars = (wip||[]).map(x=>weightNumber(x.qty||0, WEIGHT));
+    const valLine = (wip||[]).map(x=>moneyNumber(x.value||0, MONEY));
+
+    new Chart(el, {
+      data:{
+        labels,
+        datasets:[
+          { type:'bar',  yAxisID:'yQty',  label:`Qty (${WEIGHT.label})`,  data:qtyBars, backgroundColor:'rgba(99,102,241,0.55)' },
+          { type:'line', yAxisID:'yVal',  label:`Value (${MONEY.label})`, data:valLine, borderWidth:2, tension:0.25,
+            pointRadius:3, pointHoverRadius:4 }
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false, layout:{ padding:{ top:16 } },
+        plugins:{
+          legend:{ position:'bottom' },
+          tooltip:{ callbacks:{
+            label:(ctx)=>{
+              const k = ctx.dataset.yAxisID==='yQty'
+                ? `${Number(ctx.raw).toLocaleString('en-IN')} ${WEIGHT.label}`
+                : `${Number(ctx.raw).toLocaleString('en-IN')} ${MONEY.label}`;
+              return `${ctx.dataset.label}: ${k}`;
+            }
+          }},
+          valueLabels:{ formatter:(raw, di)=>`${Number(raw).toLocaleString('en-IN')}` } // labels on bars + points
+        },
+        scales:{
+          yQty:{ position:'left', beginAtZero:true,
+                 ticks:{ callback:v=>Number(v).toLocaleString('en-IN') } },
+          yVal:{ position:'right', beginAtZero:true, grid:{ drawOnChartArea:false },
+                 ticks:{ callback:v=>Number(v).toLocaleString('en-IN') } }
+        }
+      }
+    });
   })();
 
   // Resize on print to avoid clipping
