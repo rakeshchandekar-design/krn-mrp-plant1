@@ -2766,25 +2766,25 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     qa_eagle = kpi_qa_eagle(db, _from, _to)
 
     # Fallback: compute on-hand FG by grade inside the route (uses remaining_qty if present)
-_fg_sql = text("""
-  SELECT
-    UPPER(COALESCE(fl.grade, fl.fg_grade, 'KRIP')) AS grade,
-    COALESCE(SUM(COALESCE(fl.remaining_qty, fl.weight_kg, 0)),0) AS qty,
-    COALESCE(SUM(COALESCE(fl.remaining_qty, fl.weight_kg, 0)
-                 * COALESCE(fl.unit_cost, fl.cost_per_kg, 0)),0) AS value
-  FROM fg_lots fl
-  WHERE COALESCE(fl.qa_status,'APPROVED')='APPROVED'
-    AND COALESCE(fl.status,'ON_HAND')='ON_HAND'
-  GROUP BY 1
-  ORDER BY 1
-""")
-try:
-    _rows = db.execute(_fg_sql).fetchall()
-    # If helper returned nothing but SQL did, prefer SQL results
-    if (not fg_by_grade) and _rows:
-        fg_by_grade = [{"grade": r[0], "qty": float(r[1] or 0), "value": float(r[2] or 0)} for r in _rows]
-except Exception:
-    pass
+    _fg_sql = text("""
+    SELECT
+        UPPER(COALESCE(fl.grade, fl.fg_grade, 'KRIP')) AS grade,
+        COALESCE(SUM(COALESCE(fl.remaining_qty, fl.weight_kg, 0)),0) AS qty,
+        COALESCE(SUM(COALESCE(fl.remaining_qty, fl.weight_kg, 0)
+                    * COALESCE(fl.unit_cost, fl.cost_per_kg, 0)),0) AS value
+    FROM fg_lots fl
+    WHERE COALESCE(fl.qa_status,'APPROVED')='APPROVED'
+        AND COALESCE(fl.status,'ON_HAND')='ON_HAND'
+    GROUP BY 1
+    ORDER BY 1
+    """)
+    try:
+        _rows = db.execute(_fg_sql).fetchall()
+        # If helper returned nothing but SQL did, prefer SQL results
+        if (not fg_by_grade) and _rows:
+            fg_by_grade = [{"grade": r[0], "qty": float(r[1] or 0), "value": float(r[2] or 0)} for r in _rows]
+    except Exception:
+        pass
 
     # ---------- Context ----------
     ctx = {
