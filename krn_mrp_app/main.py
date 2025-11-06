@@ -2880,17 +2880,17 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     # Safe defaults so Jinja never breaks if any metric is missing
     defaults = {
-        "dispatch_mtd_qty": 0, "dispatch_mtd_value": 0,
-        "production_mtd_qty": 0, "production_mtd_value": 0,
-        "receipts_mtd_qty": 0,  "receipts_mtd_value": 0,
-        "scrap_mtd_qty": 0,     "scrap_mtd_value": 0,
-
-        # New KPI defaults
-        "atom_oversize_y": 0, "atom_oversize_m": 0,
-        "ann_nh3_y": 0, "ann_nh3_m": 0, "ann_eff_y": 0, "ann_eff_m": 0,
-        "gr_os_y": 0, "gr_os_m": 0, "gr_eff_y": 0, "gr_eff_m": 0,
-        "fg_stock_by_grade": [], "qa_eagle": {},
-    }
+    "dispatch_mtd_qty": 0, "dispatch_mtd_value": 0,
+    "production_mtd_qty": 0, "production_mtd_value": 0,
+    "receipts_mtd_qty": 0,  "receipts_mtd_value": 0,
+    "scrap_mtd_qty": 0,     "scrap_mtd_value": 0,
+    "atom_oversize_y": 0, "atom_oversize_m": 0,
+    "ann_nh3_y": 0, "ann_nh3_m": 0, "ann_eff_y": 0, "ann_eff_m": 0,
+    "gr_os_y": 0, "gr_os_m": 0, "gr_eff_y": 0, "gr_eff_m": 0,
+    # REMOVE: "fg_stock_by_grade": [],
+    # keep qa_eagle default if you need it:
+    "qa_eagle": {},
+}
 
     metrics = {
         "dispatch_mtd_qty":   _get("dispatch_mtd_qty"),
