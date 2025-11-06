@@ -2175,65 +2175,72 @@ def kpi_grind_oversize_and_eff(db, start: dt.date, end: dt.date, yest: dt.date):
 
     return {"os_y": os_y, "os_m": os_m, "eff_y": eff_y, "eff_m": eff_m}
 
+from sqlalchemy.sql import text
+
 def kpi_fg_gradewise_stock(db):
     """
-    Remaining FG on hand by grade (qty kg and value), schema-robust.
-    Works even if your column names differ (grade / product / sku…,
-    weight_kg / qty_kg…, cost_per_kg / unit_cost…).
+    Remaining FG on hand by grade (qty kg and value).
+    Uses fg_lots.remaining_qty when available; otherwise falls back to
+    (weight - dispatched).
     """
 
-    # Figure out columns available
     fl_cols = _columns_of(db, "fg_lots")
-    di_cols = _columns_of(db, "dispatch_items")
 
     grade_col = _first_existing_col(db, "fg_lots",
         ["grade", "fg_grade", "product", "sku", "grade_name", "item", "material"]
     )
-    weight_col = _first_existing_col(db, "fg_lots",
-        ["weight_kg", "qty_kg", "quantity_kg", "qty"]
-    )
-    cost_col = _first_existing_col(db, "fg_lots",
-        ["cost_per_kg", "unit_cost", "avg_cost_per_kg"]
-    )
+    weight_col = _first_existing_col(db, "fg_lots", ["weight_kg", "qty_kg", "quantity_kg", "qty"])
+    remaining_col = "remaining_qty" if "remaining_qty" in fl_cols else None
+    cost_col = _first_existing_col(db, "fg_lots", ["unit_cost", "cost_per_kg", "avg_cost_per_kg"])
+    status_exists = "status" in fl_cols
     qa_exists = "qa_status" in fl_cols
 
-    di_qty_col = _first_existing_col(db, "dispatch_items",
-        ["qty_kg", "qty", "quantity_kg"]
-    )
-    di_fk_col = _first_existing_col(db, "dispatch_items",
-        ["fg_lot_id", "lot_id", "fg_id"]
-    )
-
-    # If critical columns are missing, return empty safely
-    if not weight_col or not cost_col:
-        return []
-
-    # Grade expression (fallback label if grade-like column absent)
+    # Grade expression
     grade_expr = f"UPPER(COALESCE(fl.{grade_col}, 'KRIP'))" if grade_col else "'KRIP'"
 
-    # Dispatch subquery only if we can identify qty and FK columns
-    if di_qty_col and di_fk_col:
-        disp_cte = f"""
-            WITH disp AS (
-              SELECT {di_fk_col} AS fg_lot_id, COALESCE(SUM({di_qty_col}),0) AS qty
-              FROM dispatch_items
-              GROUP BY {di_fk_col}
-            )
-        """
-        disp_join = "LEFT JOIN disp d ON d.fg_lot_id = fl.id"
-        disp_qty  = "COALESCE(d.qty,0)"
-    else:
-        disp_cte = ""
-        disp_join = ""
-        disp_qty  = "0"
+    # WHERE clause (live, approved)
+    where_parts = []
+    if status_exists:
+        where_parts.append("fl.status = 'ON_HAND'")
+    if qa_exists:
+        where_parts.append("COALESCE(fl.qa_status,'APPROVED') = 'APPROVED'")
+    where_q = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
-    where_q = "WHERE COALESCE(fl.qa_status,'APPROVED')='APPROVED'" if qa_exists else ""
+    # Primary stock expression
+    if remaining_col:
+        # Simple, correct: already net of dispatch
+        stock_expr = f"COALESCE(fl.{remaining_col}, 0)"
+        disp_cte, disp_join = "", ""
+    else:
+        # Fallback: compute remaining as weight - dispatched
+        di_qty_col = _first_existing_col(db, "dispatch_items", ["qty_kg", "qty", "quantity_kg"])
+        di_fk_col  = _first_existing_col(db, "dispatch_items", ["fg_lot_id", "lot_id", "fg_id"])
+        if not weight_col:
+            return []  # not enough info to compute stock
+        if di_qty_col and di_fk_col:
+            disp_cte = f"""
+                WITH disp AS (
+                  SELECT {di_fk_col} AS fg_lot_id, COALESCE(SUM({di_qty_col}),0) AS qty
+                  FROM dispatch_items
+                  GROUP BY {di_fk_col}
+                )
+            """
+            disp_join = "LEFT JOIN disp d ON d.fg_lot_id = fl.id"
+            disp_qty  = "COALESCE(d.qty,0)"
+        else:
+            disp_cte, disp_join, disp_qty = "", "", "0"
+        stock_expr = f"GREATEST(COALESCE(fl.{weight_col},0) - {disp_qty}, 0)"
+
+    # Cost expression
+    if not cost_col:
+        return []
+    val_expr = f"{stock_expr} * COALESCE(fl.{cost_col}, 0)"
 
     sql = f"""
       {disp_cte}
       SELECT {grade_expr} AS grade,
-             COALESCE(SUM(GREATEST(COALESCE(fl.{weight_col},0) - {disp_qty}, 0)), 0) AS qty,
-             COALESCE(SUM(GREATEST(COALESCE(fl.{weight_col},0) - {disp_qty}, 0) * COALESCE(fl.{cost_col},0)), 0) AS value
+             COALESCE(SUM({stock_expr}), 0) AS qty,
+             COALESCE(SUM({val_expr}), 0)     AS value
       FROM fg_lots fl
       {disp_join}
       {where_q}
