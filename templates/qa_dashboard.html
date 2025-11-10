@@ -4,87 +4,121 @@
 
 {% block head_extra %}
 <style>
-  :root {
-    --border:#d1d5db; --muted:#6b7280; --chip:#111827; --shadow:rgba(0,0,0,.05);
+  :root{
+    /* KRN theme */
+    --primary:#1f4eed; --primary-600:#173ad1; --accent:#f59e0b;
+    --success:#16a34a; --warning:#f59e0b; --danger:#dc2626;
+    --bg:#ffffff; --muted:#6b7280; --border:#e5e7eb; --chip:#111827;
+    --shadow:0 1px 2px rgba(0,0,0,.06), 0 1px 1px rgba(0,0,0,.04);
   }
-  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:12px}
-  @media (max-width: 920px){.grid{grid-template-columns:1fr}}
-  .card{border:1px solid var(--border);border-radius:10px;padding:14px;background:#fff;box-shadow:0 1px 3px var(--shadow);margin-bottom:16px}
-  .muted{color:var(--muted);font-size:12px}
-  .kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-  @media (min-width: 992px){.kpi{grid-template-columns:repeat(5,1fr)}}
-  .kpi .box{border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:#fafafa}
-  .kpi .val{font-weight:700;font-size:20px}
-  .toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 12px}
-  .btn{padding:8px 14px;border-radius:8px;background:#111827;color:#fff;text-decoration:none;border:none}
-  .btn.secondary{background:#374151}
-  .btn.ghost{background:#e5e7eb;color:#111827;border:1px solid var(--border)}
-  input[type="date"]{padding:4px 6px;border-radius:6px;border:1px solid var(--border)}
-  table{border-collapse:collapse;width:100%;margin-top:6px}
-  th,td{border:1px solid var(--border);padding:8px;text-align:left}
-  th{background:#f9fafb;font-weight:600}
-  .chip{display:inline-block;background:var(--chip);color:#fff;border-radius:999px;padding:2px 8px;font-size:12px}
+  .card{background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:16px;margin-bottom:16px}
   .section-title{display:flex;align-items:center;gap:8px;margin:0 0 8px 0;font-size:18px;font-weight:600}
   .section-title .icon{font-size:20px;line-height:1;opacity:.9}
+  .muted{color:var(--muted);font-size:12px}
+
+  /* Layout */
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:12px}
+  @media(max-width:920px){.grid{grid-template-columns:1fr}}
+  .container{max-width:1100px}
+
+  /* Buttons / tabs */
+  .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;border:1px solid var(--primary);background:var(--primary);color:#fff;text-decoration:none;cursor:pointer}
+  .btn:hover{background:var(--primary-600);border-color:var(--primary-600)}
+  .btn.secondary{background:#fff;color:var(--primary);border-color:var(--primary)}
+  .btn.secondary:hover{background:#eef2ff}
+  .btn.ghost{background:#fff;color:#111827;border:1px solid var(--border)}
+  .btn.ghost:hover{background:#f9fafb}
+
+  /* Inputs */
+  input[type="date"]{padding:6px 8px;border-radius:8px;border:1px solid var(--border)}
+
+  /* Tables */
+  table{border-collapse:collapse;width:100%;margin-top:6px}
+  th,td{border-bottom:1px solid var(--border);padding:10px;text-align:left}
+  th{background:#f9fafb;font-weight:600}
+
+  /* Chips */
+  .chip{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;font-size:12px;color:#fff;background:#374151}
+  .chip.success{background:var(--success)}
+  .chip.warn{background:var(--warning)}
+  .chip.danger{background:var(--danger)}
+  .chip.info{background:var(--primary)}
+
+  /* KPI blocks */
+  .kpi-grid{display:grid;gap:16px}
+  @media(min-width:960px){.kpi-grid{grid-template-columns:repeat(2,1fr)}}
+  .kpi-card{border:1px solid var(--border);border-radius:12px;background:#fff;padding:14px}
+  .kpi-row{display:grid;grid-template-columns:160px 1fr;gap:12px;align-items:center;margin:8px 0}
+  .kpi-title{font-weight:600}
+  .kpi-val{font-weight:700}
+  .bar{height:8px;border-radius:999px;background:#eef2ff;overflow:hidden}
+  .bar>span{display:block;height:100%;background:var(--primary)}
+
+  /* Queue */
+  .queue-grid{display:grid;gap:12px}
+  @media(min-width:960px){.queue-grid{grid-template-columns:repeat(3,1fr)}}
+  .q-box{border:1px solid var(--border);border-radius:12px;background:#fafafa;padding:12px}
+  .q-big{font-size:22px;font-weight:800}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container mx-auto max-w-6xl">
+<div class="container mx-auto">
   <div class="flex items-center justify-between mb-3">
     <h1 class="text-2xl font-semibold">QA Dashboard</h1>
     <a class="text-indigo-600 hover:underline" href="/">Home</a>
   </div>
 
-  <!-- KPI & Queue -->
-  <div class="grid">
-    <div class="card">
-      <h2 class="text-lg font-semibold mb-2">KPIs (This Month)</h2>
-      <div class="kpi">
-        <div class="box">
-          <div class="muted">Heats — Approved</div>
-          <div class="val">{{ '%.1f' % (kpi_heats.approved if kpi_heats else 0) }}</div>
-          <div class="muted">Hold: {{ '%.1f' % (kpi_heats.hold if kpi_heats else 0) }} | Rej: {{ '%.1f' % (kpi_heats.rejected if kpi_heats else 0) }}</div>
+  <!-- KPIs + Queue -->
+  <div class="kpi-grid">
+    <!-- KPIs -->
+    <div class="kpi-card">
+      <div class="section-title"><span>📊</span><span>KPIs (This Month)</span></div>
+
+      {% set h_tot  = (kpi_heats.approved|float  + kpi_heats.hold|float  + kpi_heats.rejected|float)  if kpi_heats  else 0 %}
+      {% set l_tot  = (kpi_lots.approved|float   + kpi_lots.hold|float   + kpi_lots.rejected|float)   if kpi_lots   else 0 %}
+      {% set an_tot = (kpi_anneal.approved|float + kpi_anneal.hold|float + kpi_anneal.rejected|float) if kpi_anneal else 0 %}
+      {% set g_tot  = (kpi_grind.approved|float  + kpi_grind.hold|float  + kpi_grind.rejected|float)  if kpi_grind  else 0 %}
+      {% set fg_tot = (kpi_fg.approved|float     + kpi_fg.hold|float     + kpi_fg.rejected|float)     if kpi_fg     else 0 %}
+
+      {% macro row(name, data, tot) -%}
+        <div class="kpi-row">
+          <div class="kpi-title">{{ name }}</div>
+          <div>
+            <div class="flex items-center justify-between">
+              <div class="kpi-val">{{ '%.1f' % (data.approved if data else 0) }}</div>
+              <div class="muted">Hold {{ '%.1f' % (data.hold if data else 0) }} · Rej {{ '%.1f' % (data.rejected if data else 0) }}</div>
+            </div>
+            {% set pct = (100.0*(data.approved|float)/tot) if tot>0 else 0 %}
+            <div class="bar" title="Approved share"><span style="width: {{ '%.1f' % pct }}%"></span></div>
+          </div>
         </div>
-        <div class="box">
-          <div class="muted">Atomization — Approved</div>
-          <div class="val">{{ '%.1f' % (kpi_lots.approved if kpi_lots else 0) }}</div>
-          <div class="muted">Hold: {{ '%.1f' % (kpi_lots.hold if kpi_lots else 0) }} | Rej: {{ '%.1f' % (kpi_lots.rejected if kpi_lots else 0) }}</div>
-        </div>
-        <div class="box">
-          <div class="muted">Annealing — Approved</div>
-          <div class="val">{{ '%.1f' % (kpi_anneal.approved if kpi_anneal else 0) }}</div>
-          <div class="muted">Hold: {{ '%.1f' % (kpi_anneal.hold if kpi_anneal else 0) }} | Rej: {{ '%.1f' % (kpi_anneal.rejected if kpi_anneal else 0) }}</div>
-        </div>
-        <div class="box">
-          <div class="muted">Grinding — Approved</div>
-          <div class="val">{{ '%.1f' % (kpi_grind.approved if kpi_grind else 0) }}</div>
-          <div class="muted">Hold: {{ '%.1f' % (kpi_grind.hold if kpi_grind else 0) }} | Rej: {{ '%.1f' % (kpi_grind.rejected if kpi_grind else 0) }}</div>
-        </div>
-        <div class="box">
-          <div class="muted">FG — Approved</div>
-          <div class="val">{{ '%.1f' % (kpi_fg.approved if kpi_fg else 0) }}</div>
-          <div class="muted">Hold: {{ '%.1f' % (kpi_fg.hold if kpi_fg else 0) }} | Rej: {{ '%.1f' % (kpi_fg.rejected if kpi_fg else 0) }}</div>
-        </div>
-      </div>
+      {%- endmacro %}
+
+      {{ row('Heats', kpi_heats, h_tot) }}
+      {{ row('Atomization', kpi_lots, l_tot) }}
+      {{ row('Annealing', kpi_anneal, an_tot) }}
+      {{ row('Grinding', kpi_grind, g_tot) }}
+      {{ row('FG', kpi_fg, fg_tot) }}
     </div>
 
-    <div class="card">
-      <h2 class="text-lg font-semibold mb-2">QA Queue</h2>
-      <div class="kpi">
-        <div class="box">
+    <!-- Queue -->
+    <div class="kpi-card">
+      <div class="section-title"><span>🧾</span><span>QA Queue</span></div>
+      <div class="queue-grid">
+        <div class="q-box">
           <div class="muted">Pending — Heats / Lots / Anneal / Grind / FG</div>
-          <div class="val">{{ queue_pending.heats or 0 }} / {{ queue_pending.lots or 0 }} / {{ queue_pending.anneal or 0 }} / {{ queue_pending.grind or 0 }} / {{ queue_pending.fg or 0 }}</div>
+          <div class="q-big">{{ queue_pending.heats or 0 }} / {{ queue_pending.lots or 0 }} / {{ queue_pending.anneal or 0 }} / {{ queue_pending.grind or 0 }} / {{ queue_pending.fg or 0 }}</div>
           <div class="muted">Total: {{ queue_pending.total or 0 }}</div>
         </div>
-        <div class="box">
+        <div class="q-box">
           <div class="muted">Today Completed — Heats / Lots / Anneal / Grind / FG</div>
-          <div class="val">{{ queue_today.heats or 0 }} / {{ queue_today.lots or 0 }} / {{ queue_today.anneal or 0 }} / {{ queue_today.grind or 0 }} / {{ queue_today.fg or 0 }}</div>
+          <div class="q-big">{{ queue_today.heats or 0 }} / {{ queue_today.lots or 0 }} / {{ queue_today.anneal or 0 }} / {{ queue_today.grind or 0 }} / {{ queue_today.fg or 0 }}</div>
           <div class="muted">Total: {{ queue_today.total or 0 }}</div>
         </div>
-        <div class="box">
+        <div class="q-box">
           <div class="muted">Today</div>
-          <div class="val">{{ today_iso }}</div>
+          <div class="q-big">{{ today_iso }}</div>
         </div>
       </div>
     </div>
@@ -123,9 +157,17 @@
           <td>{{ h.heat_no[:4] }}-{{ h.heat_no[4:6] }}-{{ h.heat_no[6:8] }}</td>
           <td>{{ heat_grades[h.id] or '' }}</td>
           <td>{{ '%.1f' % (h.actual_output or 0) }}</td>
-          <td><span class="chip">{{ h.qa_status or 'PENDING' }}</span></td>
+          <td>
+            <span class="chip
+              {% if (h.qa_status or 'PENDING')=='APPROVED' %}success
+              {% elif (h.qa_status or 'PENDING')=='HOLD' %}warn
+              {% elif (h.qa_status or 'PENDING')=='REJECTED' %}danger
+              {% else %}info{% endif %}">
+              {{ h.qa_status or 'PENDING' }}
+            </span>
+          </td>
           <td>{{ h.qa_remarks or '' }}</td>
-          <td><a href="/qa/heat/{{ h.id }}">QA</a></td>
+          <td><a class="text-indigo-600" href="/qa/heat/{{ h.id }}">QA</a></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -153,7 +195,15 @@
           <td>{{ l.lot_no[:4] }}-{{ l.lot_no[4:6] }}-{{ l.lot_no[6:8] }}</td>
           <td>{{ l.grade or '' }}</td>
           <td>{{ '%.1f' % (l.weight or 0) }}</td>
-          <td><span class="chip">{{ l.qa_status or 'PENDING' }}</span></td>
+          <td>
+            <span class="chip
+              {% if (l.qa_status or 'PENDING')=='APPROVED' %}success
+              {% elif (l.qa_status or 'PENDING')=='HOLD' %}warn
+              {% elif (l.qa_status or 'PENDING')=='REJECTED' %}danger
+              {% else %}info{% endif %}">
+              {{ l.qa_status or 'PENDING' }}
+            </span>
+          </td>
           <td>{{ l.remarks or '' }}</td>
         </tr>
         {% endfor %}
@@ -183,7 +233,15 @@
           <td>{{ a.grade or '' }}</td>
           <td>{{ '%.1f' % (a.weight_kg or 0) }}</td>
           <td>{{ a.oxygen or '' }}</td>
-          <td><span class="chip">{{ a.qa_status or 'PENDING' }}</span></td>
+          <td>
+            <span class="chip
+              {% if (a.qa_status or 'PENDING')=='APPROVED' %}success
+              {% elif (a.qa_status or 'PENDING')=='HOLD' %}warn
+              {% elif (a.qa_status or 'PENDING')=='REJECTED' %}danger
+              {% else %}info{% endif %}">
+              {{ a.qa_status or 'PENDING' }}
+            </span>
+          </td>
           <td>{{ a.remarks or '' }}</td>
         </tr>
         {% endfor %}
@@ -213,7 +271,15 @@
           <td>{{ g.grade or '' }}</td>
           <td>{{ '%.1f' % (g.weight_kg or 0) }}</td>
           <td>{{ g.compressibility or '' }}</td>
-          <td><span class="chip">{{ g.qa_status or 'PENDING' }}</span></td>
+          <td>
+            <span class="chip
+              {% if (g.qa_status or 'PENDING')=='APPROVED' %}success
+              {% elif (g.qa_status or 'PENDING')=='HOLD' %}warn
+              {% elif (g.qa_status or 'PENDING')=='REJECTED' %}danger
+              {% else %}info{% endif %}">
+              {{ g.qa_status or 'PENDING' }}
+            </span>
+          </td>
           <td>{{ g.remarks or '' }}</td>
         </tr>
         {% endfor %}
@@ -242,12 +308,20 @@
           <td>{{ f.date }}</td>
           <td>{{ f.fg_grade or '' }}</td>
           <td>{{ '%.1f' % (f.weight_kg or 0) }}</td>
-          <td><span class="chip">{{ f.qa_status or 'PENDING' }}</span></td>
+          <td>
+            <span class="chip
+              {% if (f.qa_status or 'PENDING')=='APPROVED' %}success
+              {% elif (f.qa_status or 'PENDING')=='HOLD' %}warn
+              {% elif (f.qa_status or 'PENDING')=='REJECTED' %}danger
+              {% else %}info{% endif %}">
+              {{ f.qa_status or 'PENDING' }}
+            </span>
+          </td>
           <td>{{ f.remarks or '' }}</td>
           <td>
-            <a href="/fg/qa/{{ f.id }}">QA</a>
-            <a href="/fg/trace/{{ f.id }}" target="_blank">Trace</a>
-            <a href="/fg/pdf/{{ f.id }}" target="_blank">PDF</a>
+            <a class="text-indigo-600" href="/fg/qa/{{ f.id }}">QA</a>
+            <a class="text-indigo-600" href="/fg/trace/{{ f.id }}" target="_blank">Trace</a>
+            <a class="text-indigo-600" href="/fg/pdf/{{ f.id }}" target="_blank">PDF</a>
           </td>
         </tr>
         {% endfor %}
