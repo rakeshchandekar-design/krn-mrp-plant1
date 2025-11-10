@@ -3301,6 +3301,8 @@ def melting_new(
         downtime_min=int(downtime_min),
         downtime_type=downtime_type,
         downtime_note=downtime_note,
+        qa_status="PENDING",   # ← add this line
+        stage="MELTING",       # ← and this line
     )
     db.add(heat); db.flush()
 
@@ -3447,6 +3449,7 @@ def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
 
 @app.post("/qa/heat/{heat_id}")
 def qa_heat_save(
+    request: Request,                     # ← add this
     heat_id: int,
     C: str = Form(""), Si: str = Form(""), S: str = Form(""), P: str = Form(""),
     Cu: str = Form(""), Ni: str = Form(""), Mn: str = Form(""), Fe: str = Form(""),
@@ -3459,7 +3462,6 @@ def qa_heat_save(
     
     if not role_allowed(request, {"admin", "qa"}):
         return PlainTextResponse("Forbidden", status_code=403)
-
 
     # strict numeric, non-blank, > 0
     fields = {"C": C, "Si": Si, "S": S, "P": P, "Cu": Cu, "Ni": Ni, "Mn": Mn, "Fe": Fe}
