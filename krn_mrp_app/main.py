@@ -1379,14 +1379,14 @@ async def block_writes_for_view(request: Request, call_next):
 # Change passwords here later.
 USER_DB = {
     "admin":   {"password": "admin@krn",   "role": "admin"},
-    "store":   {"password": "store",   "role": "store"},
-    "melting": {"password": "melting", "role": "melting"},
-    "atom":    {"password": "atom",    "role": "atom"},
-    "rap":     {"password": "rap",     "role": "rap"},
-    "anneal":  {"password": "anneal", "role": "anneal"},
-    "grind":   {"password": "grind", "role": "grind"},
-    "fg":      {"password": "fg", "role": "fg"},
-    "qa":      {"password": "qa",      "role": "qa"},
+    "store":   {"password": "store@2025",   "role": "store"},
+    "melting": {"password": "melting@2025", "role": "melting"},
+    "atom":    {"password": "atom@2025",    "role": "atom"},
+    "rap":     {"password": "rap@2025",     "role": "rap"},
+    "anneal":  {"password": "anneal@2025", "role": "anneal"},
+    "grind":   {"password": "grind@2025", "role": "grind"},
+    "fg":      {"password": "fg@2025", "role": "fg"},
+    "qa":      {"password": "qa@2025",      "role": "qa"},
     "krn":     {"password": "krn",    "role": "view"},
 }
 
