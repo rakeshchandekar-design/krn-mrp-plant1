@@ -3423,16 +3423,17 @@ def downtime_export(db: Session = Depends(get_db)):
 # -------------------------------------------------
 # QA redirect + Heat QA
 # -------------------------------------------------
-@app.get("/qa")
-def qa_redirect():
-    return RedirectResponse("/qa-dashboard", status_code=303)
-
 @app.get("/qa/heat/{heat_id}", response_class=HTMLResponse)
 def qa_heat_form(heat_id: int, request: Request, db: Session = Depends(get_db)):
+
+    # 🔒 block non-QA/non-admin users hitting the URL directly
+    if not role_allowed(request, {"admin", "qa"}):
+        return PlainTextResponse("User Not Authorized", status_code=403)
+
     heat = db.get(Heat, heat_id)
     if not heat:
         return PlainTextResponse("Heat not found", status_code=404)
-
+    
     chem = heat.chemistry
     if not chem:
         chem = HeatChem(heat=heat)
