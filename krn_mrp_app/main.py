@@ -3117,9 +3117,9 @@ def consume_fifo(db: Session, rm_type: str, qty_needed: float, heat: Heat) -> fl
 @app.get("/melting", response_class=HTMLResponse)
 def melting_page(
     request: Request,
-    start: Optional[str] = None,   # YYYY-MM-DD
-    end: Optional[str] = None,     # YYYY-MM-DD
-    all: Optional[int] = 0,        # if 1 => show all heats with available > 0
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    all: Optional[int] = 0,
     db: Session = Depends(get_db),
 ):
     if not role_allowed(request, {"admin", "melting"}):
@@ -3150,7 +3150,7 @@ def melting_page(
 
     today = dt.date.today()
 
-    # KPIs (today)
+    # KPIs
     todays = [r["heat"] for r in rows if r["date"] == today and (r["heat"].actual_output or 0) > 0]
     kwhpt_vals = []
     for h in todays:
@@ -3205,15 +3205,14 @@ def melting_page(
             parts.append(f"{rm}: {items_txt}")
         trace_map[h.id] = "; ".join(parts) if parts else "-"
 
+    min_back_date = today - dt.timedelta(days=4)
+
     return templates.TemplateResponse(
         "melting.html",
         {
             "request": request,
             "role": current_role(request),
-
-            # ✅ add this so the template can disable the form for non-melting users
             "read_only": (not role_allowed(request, {"admin", "melting"})),
-
             "rm_types": RM_TYPES,
             "pending": visible_heats,
             "heat_grades": {r["heat"].id: r["grade"] for r in rows},
@@ -3227,34 +3226,36 @@ def melting_page(
                 "krfs_qty": krfs_qty,
                 "krfs_val": krfs_val
             },
-            "today_iso": today.isoformat(),   # used to cap date inputs (max)
+            "today_iso": today.isoformat(),
             "start": s,
             "end": e,
             "power_target": POWER_TARGET_KWH_PER_TON,
             "trace_map": trace_map,
+
+            # ✅ new context for backdate selection
+            "heat_date_max": today.isoformat(),
+            "heat_date_min": min_back_date.isoformat(),
         },
     )
 
+
 # -------------------------------------------------
-# Create Heat (same logic; inline alert if GRN insufficient)
+# Create Heat (enhanced: backdate up to 4 days)
 # -------------------------------------------------
 @app.post("/melting/new")
 def melting_new(
     request: Request,
+    heat_date: str = Form(...),             # ✅ new date field
     notes: Optional[str] = Form(None),
-
     slag_qty: float = Form(...),
     power_kwh: float = Form(...),
-
     downtime_min: int = Form(...),
     downtime_type: str = Form("production"),
     downtime_note: str = Form(""),
-
     rm_type_1: Optional[str] = Form(None), rm_qty_1: Optional[str] = Form(None),
     rm_type_2: Optional[str] = Form(None), rm_qty_2: Optional[str] = Form(None),
     rm_type_3: Optional[str] = Form(None), rm_qty_3: Optional[str] = Form(None),
     rm_type_4: Optional[str] = Form(None), rm_qty_4: Optional[str] = Form(None),
-
     db: Session = Depends(get_db),
 ):
     def _to_float(x: Optional[str]) -> Optional[float]:
@@ -3289,10 +3290,25 @@ def melting_new(
         downtime_type = None
         downtime_note = ""
 
-    # Create heat number
-    today = dt.date.today().strftime("%Y%m%d")
-    seq = (db.query(func.count(Heat.id)).filter(Heat.heat_no.like(f"{today}-%")).scalar() or 0) + 1
-    heat_no = f"{today}-{seq:03d}"
+    # ✅ Validate and use selected date
+    try:
+        d_sel = dt.date.fromisoformat(heat_date.strip())
+    except Exception:
+        return PlainTextResponse("Invalid date format.", status_code=400)
+
+    today = dt.date.today()
+    if d_sel > today:
+        return PlainTextResponse("Future date not allowed.", status_code=400)
+    if d_sel < today - dt.timedelta(days=4):
+        return PlainTextResponse("Backdating allowed only up to 4 days.", status_code=400)
+
+    # ✅ Generate heat number using selected date
+    date_str = d_sel.strftime("%Y%m%d")
+    seq = (db.query(func.count(Heat.id))
+             .filter(Heat.heat_no.like(f"{date_str}-%"))
+             .scalar() or 0) + 1
+    heat_no = f"{date_str}-{seq:03d}"
+
     heat = Heat(
         heat_no=heat_no,
         notes=notes or "",
@@ -3301,8 +3317,8 @@ def melting_new(
         downtime_min=int(downtime_min),
         downtime_type=downtime_type,
         downtime_note=downtime_note,
-        qa_status="PENDING",   # ← add this line
-        stage="MELTING",       # ← and this line
+        qa_status="PENDING",
+        stage="MELTING",
     )
     db.add(heat); db.flush()
 
@@ -3314,13 +3330,11 @@ def melting_new(
             html = f"""<script>alert("{msg}");window.location="/melting";</script>"""
             return HTMLResponse(html)
 
-    # Consume FIFO + accumulate RM cost
-    total_inputs = 0.0
-    total_rm_cost = 0.0
+    # FIFO + RM cost
+    total_inputs = total_rm_cost = 0.0
     used_fesi = False
     for t, q in parsed:
-        if t == "FeSi":
-            used_fesi = True
+        if t == "FeSi": used_fesi = True
         total_rm_cost += consume_fifo(db, t, q, heat)
         total_inputs += q
 
