@@ -4172,6 +4172,47 @@ def qa_dashboard(
     today_grind  = sum(1 for g in grinds_today if (g["qa_status"] or "").upper() != "PENDING")
     today_fg     = sum(1 for f in fgs_today if (f["qa_status"] or "").upper() != "PENDING")
 
+    # ---------------- Yesterday Summary ----------------
+    yesterday = today - dt.timedelta(days=1)
+
+    # Completed yesterday (non-pending items dated yesterday)
+    anneals_yday = _anneal_rows_in_range(db, yesterday, yesterday)
+    grinds_yday  = _grinding_rows_in_range(db, yesterday, yesterday)
+    fgs_yday     = _fg_rows_in_range(db, yesterday, yesterday)
+
+    yday_heats  = sum(1 for h in heats_all if _hd(h) == yesterday and (h.qa_status or "").upper() != "PENDING")
+    yday_lots   = sum(1 for l in lots_all  if _ld(l) == yesterday and (l.qa_status or "").upper() != "PENDING")
+    yday_anneal = sum(1 for a in anneals_yday if (a["qa_status"] or "").upper() != "PENDING")
+    yday_grind  = sum(1 for g in grinds_yday  if (g["qa_status"] or "").upper() != "PENDING")
+    yday_fg     = sum(1 for f in fgs_yday     if (f["qa_status"] or "").upper() != "PENDING")
+
+    # Pending as of end of yesterday (items dated <= yesterday and still PENDING)
+    pending_yday_heats  = sum(1 for h in heats_all  if _hd(h) <= yesterday and (h.qa_status or "").upper() == "PENDING")
+    pending_yday_lots   = sum(1 for l in lots_all   if _ld(l) <= yesterday and (l.qa_status or "").upper() == "PENDING")
+    pending_yday_anneal = sum(1 for a in anneals_all if (a.get("date") or today) <= yesterday and (a["qa_status"] or "").upper() == "PENDING")
+    pending_yday_grind  = sum(1 for g in grinds_all  if (g.get("date") or today) <= yesterday and (g["qa_status"] or "").upper() == "PENDING")
+    pending_yday_fg     = sum(1 for f in fgs_all     if (f.get("date") or today) <= yesterday and (f["qa_status"] or "").upper() == "PENDING")
+
+    queue_yday = {
+        "heats": int(yday_heats),
+        "lots": int(yday_lots),
+        "anneal": int(yday_anneal),
+        "grind": int(yday_grind),
+        "fg": int(yday_fg),
+    }
+    pending_yday = {
+        "heats": int(pending_yday_heats),
+        "lots": int(pending_yday_lots),
+        "anneal": int(pending_yday_anneal),
+        "grind": int(pending_yday_grind),
+        "fg": int(pending_yday_fg),
+    }
+    queue_yday["total"]   = sum(queue_yday.values())
+    pending_yday["total"] = sum(pending_yday.values())
+
+    # Efficiency: completed yesterday / pending at day start
+    yday_eff_pct = (100.0 * queue_yday["total"] / pending_yday["total"]) if pending_yday["total"] > 0 else 0.0
+
     pending_count = pending_heats + pending_lots + pending_anneal + pending_grind + pending_fg
     todays_count  = today_heats + today_lots + today_anneal + today_grind + today_fg
 
@@ -4221,6 +4262,10 @@ def qa_dashboard(
             "start": "" if show_all else s_iso,
             "end": "" if show_all else e_iso,
             "today_iso": today.isoformat(),
+            "yday_iso": yesterday.isoformat(),
+            "queue_yday": queue_yday,
+            "pending_yday": pending_yday,
+            "yday_eff_pct": yday_eff_pct,
         },
     )
 
