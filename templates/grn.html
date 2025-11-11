@@ -23,34 +23,73 @@
     </form>
   </div>
 
-  <!-- Live stock summary -->
-  <div class="card">
-    <h3>Live Stock (Remaining &gt; 0)</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>RM Type</th>
-          <th class="right">Available (kg)</th>
-          <th class="right">Remaining Cost (₹)</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in rm_summary %}
+  <!-- Live Stock + Yesterday Used (side by side) -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+
+    <!-- LEFT: Live Stock (your existing table, unchanged inside) -->
+    <div class="card">
+      <h3>Live Stock (Remaining &gt; 0)</h3>
+      <table>
+        <thead>
           <tr>
-            <td>{{ row.rm_type }}</td>
-            <td class="right">{{ '%.1f' % (row.available or 0) }}</td>
-            <td class="right">{{ '%.2f' % (row.cost or 0) }}</td>
+            <th>RM Type</th>
+            <th class="right">Available (kg)</th>
+            <th class="right">Remaining Cost (₹)</th>
           </tr>
-        {% endfor %}
-      </tbody>
-      <tfoot>
-        <tr>
-          <th style="text-align:right">Total</th>
-          <th class="right">{{ '%.1f' % (rm_total_qty or 0) }}</th>
-          <th class="right">{{ '%.2f' % (rm_total_cost or 0) }}</th>
-        </tr>
-      </tfoot>
-    </table>
+        </thead>
+        <tbody>
+          {% for row in rm_summary %}
+            <tr>
+              <td>{{ row.rm_type }}</td>
+              <td class="right">{{ '%.1f' % (row.available or 0) }}</td>
+              <td class="right">{{ '%.2f' % (row.cost or 0) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th style="text-align:right">Total</th>
+            <th class="right">{{ '%.1f' % (rm_total_qty or 0) }}</th>
+            <th class="right">{{ '%.2f' % (rm_total_cost or 0) }}</th>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <!-- RIGHT: Yesterday Used -->
+    <div class="card">
+      <h3>Yesterday Used — {{ yday_iso }}</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>RM Type</th>
+            <th class="right">Qty (kg)</th>
+            <th class="right">Value (₹)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if yday_usage and yday_usage|length > 0 %}
+            {% for r in yday_usage %}
+            <tr>
+              <td>{{ r.rm_type }}</td>
+              <td class="right">{{ '%.1f' % (r.qty or 0) }}</td>
+              <td class="right">{{ '%.2f' % (r.value or 0) }}</td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="3" class="muted">No usage recorded yesterday.</td></tr>
+          {% endif %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th>Total</th>
+            <th class="right">{{ '%.1f' % (yday_tot_qty or 0) }}</th>
+            <th class="right">{{ '%.2f' % (yday_tot_val or 0) }}</th>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
   </div>
 
   <!-- GRN table -->
