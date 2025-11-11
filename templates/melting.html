@@ -131,6 +131,18 @@
     <form class="blue-ui" method="post" action="/melting/new">
       <fieldset {% if read_only %}disabled{% endif %}>
 
+        {# ✅ NEW: Heat Date (today to 4 days back) #}
+        <div class="form-row" style="margin-bottom:8px;">
+          <label>Heat Date <span style="color:#ef4444">*</span></label>
+          <input type="date"
+                 name="heat_date"
+                 required
+                 max="{{ heat_date_max }}"
+                 min="{{ heat_date_min }}"
+                 value="{{ today_iso }}">
+          <div class="muted">You can backdate up to 4 days. Future dates are blocked.</div>
+        </div>
+
         <div style="display:flex;gap:12px;flex-wrap:wrap;">
           <div class="form-row">
             <label>Notes</label>
