@@ -3363,7 +3363,6 @@ def melting_new(
         downtime_type=downtime_type,
         downtime_note=downtime_note,
         qa_status="PENDING",
-        stage="MELTING",
     )
     db.add(heat); db.flush()
 
