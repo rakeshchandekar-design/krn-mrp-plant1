@@ -3150,18 +3150,21 @@ def melting_page(
 
     today = dt.date.today()
 
-    # KPIs
-    todays = [r["heat"] for r in rows if r["date"] == today and (r["heat"].actual_output or 0) > 0]
+    # KPIs (use yesterday so the full day is captured)
+    kpi_day = today - dt.timedelta(days=1)
+
+    y_heat_list = [r["heat"] for r in rows if r["date"] == kpi_day and (r["heat"].actual_output or 0) > 0]
+
     kwhpt_vals = []
-    for h in todays:
+    for h in y_heat_list:
         if (h.power_kwh or 0) > 0 and (h.actual_output or 0) > 0:
             kwhpt_vals.append((h.power_kwh / h.actual_output) * 1000.0)
-    today_kwhpt = (sum(kwhpt_vals) / len(kwhpt_vals)) if kwhpt_vals else 0.0
+    today_kwhpt = (sum(kwhpt_vals) / len(kwhpt_vals)) if kwhpt_vals else 0.0  # kept var name for template
 
-    tot_out_today = sum((r["heat"].actual_output or 0.0) for r in rows if r["date"] == today)
-    tot_in_today  = sum((r["heat"].total_inputs  or 0.0) for r in rows if r["date"] == today)
-    yield_today = (100.0 * tot_out_today / tot_in_today) if tot_in_today > 0 else 0.0
-    eff_today   = (100.0 * tot_out_today / DAILY_CAPACITY_KG) if DAILY_CAPACITY_KG > 0 else 0.0
+    tot_out_today = sum((r["heat"].actual_output or 0.0) for r in rows if r["date"] == kpi_day)
+    tot_in_today  = sum((r["heat"].total_inputs  or 0.0) for r in rows if r["date"] == kpi_day)
+    yield_today   = (100.0 * tot_out_today / tot_in_today) if tot_in_today > 0 else 0.0
+    eff_today     = (100.0 * tot_out_today / DAILY_CAPACITY_KG) if DAILY_CAPACITY_KG > 0 else 0.0
 
     # Last 5 days
     last5 = []
