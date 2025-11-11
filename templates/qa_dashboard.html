@@ -1,79 +1,48 @@
 {% extends "base.html" %}
-
 {% block title %}QA Dashboard{% endblock %}
 
 {% block head_extra %}
 <style>
   :root{
-    /* KRN theme */
     --primary:#1f4eed; --primary-600:#173ad1; --accent:#f59e0b;
     --success:#16a34a; --warning:#f59e0b; --danger:#dc2626;
-    --bg:#ffffff; --muted:#6b7280; --border:#e5e7eb; --chip:#111827;
+    --bg:#ffffff; --muted:#6b7280; --border:#e5e7eb;
     --shadow:0 1px 2px rgba(0,0,0,.06), 0 1px 1px rgba(0,0,0,.04);
   }
   .card{background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:16px;margin-bottom:16px}
   .section-title{display:flex;align-items:center;gap:8px;margin:0 0 8px 0;font-size:18px;font-weight:600}
-  .section-title .icon{font-size:20px;line-height:1;opacity:.9}
   .muted{color:var(--muted);font-size:12px}
-
-  /* Layout */
-  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:12px}
-  @media(max-width:920px){.grid{grid-template-columns:1fr}}
   .container{max-width:1100px}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:960px){.grid-2{grid-template-columns:1fr}}
 
-  /* Buttons / tabs */
+  table{border-collapse:collapse;width:100%;margin-top:6px}
+  th,td{border-bottom:1px solid var(--border);padding:10px;text-align:left}
+  th{background:#f9fafb;font-weight:600}
+  .right{text-align:right}
+  .chip{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;font-size:12px;color:#fff;background:#374151}
+  .chip.success{background:#16a34a}
+  .chip.warn{background:#f59e0b}
+  .chip.danger{background:#dc2626}
+  .chip.info{background:#1f4eed}
   .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;border:1px solid var(--primary);background:var(--primary);color:#fff;text-decoration:none;cursor:pointer}
   .btn:hover{background:var(--primary-600);border-color:var(--primary-600)}
   .btn.secondary{background:#fff;color:var(--primary);border-color:var(--primary)}
   .btn.secondary:hover{background:#eef2ff}
   .btn.ghost{background:#fff;color:#111827;border:1px solid var(--border)}
   .btn.ghost:hover{background:#f9fafb}
-
-  /* Inputs */
-  input[type="date"]{padding:6px 8px;border-radius:8px;border:1px solid var(--border)}
-
-  /* Tables */
-  table{border-collapse:collapse;width:100%;margin-top:6px}
-  th,td{border-bottom:1px solid var(--border);padding:10px;text-align:left}
-  th{background:#f9fafb;font-weight:600}
-
-  /* Chips */
-  .chip{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;font-size:12px;color:#fff;background:#374151}
-  .chip.success{background:var(--success)}
-  .chip.warn{background:var(--warning)}
-  .chip.danger{background:var(--danger)}
-  .chip.info{background:var(--primary)}
-
-  /* KPI blocks */
-  .kpi-grid{display:grid;gap:16px}
-  @media(min-width:960px){.kpi-grid{grid-template-columns:repeat(2,1fr)}}
-  .kpi-card{border:1px solid var(--border);border-radius:12px;background:#fff;padding:14px}
-  .kpi-row{display:grid;grid-template-columns:160px 1fr;gap:12px;align-items:center;margin:8px 0}
-  .kpi-title{font-weight:600}
-  .kpi-val{font-weight:700}
-  .bar{height:8px;border-radius:999px;background:#eef2ff;overflow:hidden}
-  .bar>span{display:block;height:100%;background:var(--primary)}
-
-  /* Queue */
-  .queue-grid{display:grid;gap:12px}
-  @media(min-width:960px){.queue-grid{grid-template-columns:repeat(3,1fr)}}
-  .q-box{border:1px solid var(--border);border-radius:12px;background:#fafafa;padding:12px}
-  .q-big{font-size:22px;font-weight:800}
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="container mx-auto">
-  <div class="flex items-center justify-between mb-3">
-    <h1 class="text-2xl font-semibold">QA Dashboard</h1>
-    <a class="text-indigo-600 hover:underline" href="/">Home</a>
-  </div>
+  <h1 class="text-2xl font-semibold" style="margin-bottom:12px">QA Dashboard</h1>
 
-  <!-- KPIs + Queue -->
-  <div class="kpi-grid">
+  <!-- KPIs (left) + Queue (right) -->
+  <div class="grid-2">
     <!-- KPIs -->
-    <div class="kpi-card">
-      <div class="section-title"><span>📊</span><span>KPIs (This Month)</span></div>
+    <div class="card">
+      <div class="section-title">📊 <span>KPIs (This Month)</span></div>
 
       {% set h_tot  = (kpi_heats.approved|float  + kpi_heats.hold|float  + kpi_heats.rejected|float)  if kpi_heats  else 0 %}
       {% set l_tot  = (kpi_lots.approved|float   + kpi_lots.hold|float   + kpi_lots.rejected|float)   if kpi_lots   else 0 %}
@@ -81,53 +50,81 @@
       {% set g_tot  = (kpi_grind.approved|float  + kpi_grind.hold|float  + kpi_grind.rejected|float)  if kpi_grind  else 0 %}
       {% set fg_tot = (kpi_fg.approved|float     + kpi_fg.hold|float     + kpi_fg.rejected|float)     if kpi_fg     else 0 %}
 
-      {% macro row(name, data, tot) -%}
-        <div class="kpi-row">
-          <div class="kpi-title">{{ name }}</div>
-          <div>
-            <div class="flex items-center justify-between">
-              <div class="kpi-val">{{ '%.1f' % (data.approved if data else 0) }}</div>
-              <div class="muted">Hold {{ '%.1f' % (data.hold if data else 0) }} · Rej {{ '%.1f' % (data.rejected if data else 0) }}</div>
-            </div>
-            {% set pct = (100.0*(data.approved|float)/tot) if tot>0 else 0 %}
-            <div class="bar" title="Approved share"><span style="width: {{ '%.1f' % pct }}%"></span></div>
-          </div>
+      {% macro kpi_table(title, data, tot) -%}
+        <div style="margin-top:8px">
+          <div class="muted" style="font-weight:600;margin:6px 0 2px">{{ title }}</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th class="right">Qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Approved</td><td class="right">{{ '%.1f' % (data.approved if data else 0) }}</td></tr>
+              <tr><td>Hold</td><td class="right">{{ '%.1f' % (data.hold if data else 0) }}</td></tr>
+              <tr><td>Rejected</td><td class="right">{{ '%.1f' % (data.rejected if data else 0) }}</td></tr>
+            </tbody>
+            <tfoot>
+              <tr><th>Total</th><th class="right">{{ '%.1f' % (tot or 0) }}</th></tr>
+            </tfoot>
+          </table>
         </div>
       {%- endmacro %}
 
-      {{ row('Heats', kpi_heats, h_tot) }}
-      {{ row('Atomization', kpi_lots, l_tot) }}
-      {{ row('Annealing', kpi_anneal, an_tot) }}
-      {{ row('Grinding', kpi_grind, g_tot) }}
-      {{ row('FG', kpi_fg, fg_tot) }}
+      {{ kpi_table('Heats',        kpi_heats,  h_tot) }}
+      {{ kpi_table('Atomization',  kpi_lots,   l_tot) }}
+      {{ kpi_table('Annealing',    kpi_anneal, an_tot) }}
+      {{ kpi_table('Grinding',     kpi_grind,  g_tot) }}
+      {{ kpi_table('FG',           kpi_fg,     fg_tot) }}
     </div>
 
     <!-- Queue -->
-    <div class="kpi-card">
-      <div class="section-title"><span>🧾</span><span>QA Queue</span></div>
-      <div class="queue-grid">
-        <div class="q-box">
-          <div class="muted">Pending — Heats / Lots / Anneal / Grind / FG</div>
-          <div class="q-big">{{ queue_pending.heats or 0 }} / {{ queue_pending.lots or 0 }} / {{ queue_pending.anneal or 0 }} / {{ queue_pending.grind or 0 }} / {{ queue_pending.fg or 0 }}</div>
-          <div class="muted">Total: {{ queue_pending.total or 0 }}</div>
-        </div>
-        <div class="q-box">
-          <div class="muted">Today Completed — Heats / Lots / Anneal / Grind / FG</div>
-          <div class="q-big">{{ queue_today.heats or 0 }} / {{ queue_today.lots or 0 }} / {{ queue_today.anneal or 0 }} / {{ queue_today.grind or 0 }} / {{ queue_today.fg or 0 }}</div>
-          <div class="muted">Total: {{ queue_today.total or 0 }}</div>
-        </div>
-        <div class="q-box">
-          <div class="muted">Today</div>
-          <div class="q-big">{{ today_iso }}</div>
-        </div>
-      </div>
+    <div class="card">
+      <div class="section-title">🧾 <span>QA Queue</span></div>
+
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th class="right">Heats</th>
+            <th class="right">Lots</th>
+            <th class="right">Anneal</th>
+            <th class="right">Grind</th>
+            <th class="right">FG</th>
+            <th class="right">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Pending</td>
+            <td class="right">{{ queue_pending.heats  or 0 }}</td>
+            <td class="right">{{ queue_pending.lots   or 0 }}</td>
+            <td class="right">{{ queue_pending.anneal or 0 }}</td>
+            <td class="right">{{ queue_pending.grind  or 0 }}</td>
+            <td class="right">{{ queue_pending.fg     or 0 }}</td>
+            <td class="right">{{ queue_pending.total  or 0 }}</td>
+          </tr>
+          <tr>
+            <td>Today Completed</td>
+            <td class="right">{{ queue_today.heats  or 0 }}</td>
+            <td class="right">{{ queue_today.lots   or 0 }}</td>
+            <td class="right">{{ queue_today.anneal or 0 }}</td>
+            <td class="right">{{ queue_today.grind  or 0 }}</td>
+            <td class="right">{{ queue_today.fg     or 0 }}</td>
+            <td class="right">{{ queue_today.total  or 0 }}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style="margin-top:12px" class="muted">Date: {{ today_iso }}</div>
     </div>
   </div>
 
-  <!-- Filter -->
+  <!-- Filter (unchanged) -->
   <div class="card">
     <h3 class="text-base font-semibold m-0 mb-2">Filter</h3>
-    <form class="toolbar" method="get" action="/qa-dashboard">
+    <form class="toolbar" method="get" action="/qa-dashboard" style="display:flex;gap:8px;flex-wrap:wrap">
       <span>From</span>
       <input name="start" type="date" value="{{ start or today_iso }}">
       <span>To</span>
@@ -139,9 +136,9 @@
     </form>
   </div>
 
-  <!-- Melting — Heats -->
+  <!-- Melting — Heats (unchanged) -->
   <div class="card">
-    <h2 class="section-title"><span class="icon">🔥</span><span>Melting — Heats</span></h2>
+    <h2 class="section-title"><span>🔥</span><span>Melting — Heats</span></h2>
     {% if heats and heats|length > 0 %}
     <table>
       <thead>
@@ -177,9 +174,9 @@
     {% endif %}
   </div>
 
-  <!-- Atomization — Lots -->
+  <!-- Atomization — Lots (unchanged) -->
   <div class="card">
-    <h2 class="section-title"><span class="icon">🧪</span><span>Atomization — Lots</span></h2>
+    <h2 class="section-title"><span>🧪</span><span>Atomization — Lots</span></h2>
     {% if lots and lots|length > 0 %}
     <table>
       <thead>
@@ -214,9 +211,9 @@
     {% endif %}
   </div>
 
-  <!-- Annealing — Batches -->
+  <!-- Annealing — Batches (unchanged) -->
   <div class="card">
-    <h2 class="section-title"><span class="icon">🔥🛠️</span><span>Annealing — Batches</span></h2>
+    <h2 class="section-title"><span>🔥🛠️</span><span>Annealing — Batches</span></h2>
     {% if anneals and anneals|length > 0 %}
     <table>
       <thead>
@@ -252,9 +249,9 @@
     {% endif %}
   </div>
 
-  <!-- Grinding — Batches -->
+  <!-- Grinding — Batches (unchanged) -->
   <div class="card">
-    <h2 class="section-title"><span class="icon">⚙️</span><span>Grinding — Batches</span></h2>
+    <h2 class="section-title"><span>⚙️</span><span>Grinding — Batches</span></h2>
     {% if grinds and grinds|length > 0 %}
     <table>
       <thead>
@@ -290,9 +287,9 @@
     {% endif %}
   </div>
 
-  <!-- Packing & FG — Lots -->
+  <!-- Packing & FG — Lots (unchanged) -->
   <div class="card">
-    <h2 class="section-title"><span class="icon">📦</span><span>Packing & FG — Lots</span></h2>
+    <h2 class="section-title"><span>📦</span><span>Packing & FG — Lots</span></h2>
     {% if fgs and fgs|length > 0 %}
     <table>
       <thead>
