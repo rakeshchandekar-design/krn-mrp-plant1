@@ -6,27 +6,41 @@
   :root{
     --primary:#1f4eed; --primary-600:#173ad1; --accent:#f59e0b;
     --success:#16a34a; --warning:#f59e0b; --danger:#dc2626;
-    --muted:#6b7280; --border:#e5e7eb;
+    --muted:#6b7280; --border:#e5e7eb; --bg:#ffffff;
     --shadow:0 1px 2px rgba(0,0,0,.06), 0 1px 1px rgba(0,0,0,.04);
   }
   .wrap{max-width:1240px;margin:16px auto;padding:0 16px}
-  .card{background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:14px;margin-bottom:16px}
-  .title{margin:0 0 10px 0;font-size:22px;font-weight:700}
-  .h6{margin:0 0 6px 0;font-size:14px;font-weight:600}
-  table{width:100%;border-collapse:collapse}
-  th,td{padding:9px;border-bottom:1px solid var(--border);text-align:left}
-  th{background:#f9fafb;font-weight:600}
+  .page-title{margin:0 0 12px 0;font-size:26px;font-weight:800;letter-spacing:.2px}
+
+  /* Cards & text */
+  .card{background:#fff;border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:14px;margin-bottom:16px}
+  .muted{color:var(--muted)}
   .right{text-align:right}
-  .chip{padding:2px 8px;border-radius:999px;color:#fff;font-size:12px}
-  .ok{background:var(--success)} .warn{background:var(--warning)} .bad{background:var(--danger)}
-  /* Tiles */
-  .tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:8px}
-  .tile{border:1px solid var(--border);border-radius:12px;padding:12px}
-  .t-name{font-size:12px;color:var(--muted)}
-  .t-val{font-size:22px;font-weight:800;margin-top:4px}
-  /* Two-column KPI/Queue */
-  .grid2{display:grid;gap:16px;grid-template-columns:1.2fr .8fr}
+
+  /* Section headers with emoji badge */
+  .section-title{display:flex;align-items:center;gap:10px;margin:0 0 10px 0;font-size:18px;font-weight:700}
+  .emoji{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:#eef2ff;border:1px solid #e5e7eb;font-size:18px}
+
+  /* Tables */
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:10px;border-bottom:1px solid var(--border);text-align:left}
+  th{background:#f9fafb;font-weight:600}
+  tfoot th{background:#fff}
+
+  /* Status chips */
+  .chip{padding:2px 10px;border-radius:999px;color:#fff;font-size:12px;display:inline-block;min-width:78px;text-align:center}
+  .ok{background:var(--success)} .warn{background:var(--warning)} .bad{background:var(--danger)} .info{background:var(--primary)}
+
+  /* Top KPI tiles */
+  .tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+  .tile{border:1px solid var(--border);border-radius:12px;padding:12px;background:#fff}
+  .tile .name{display:flex;align-items:center;gap:8px;color:#111827;font-size:12px;font-weight:600}
+  .tile .val{font-size:22px;font-weight:800;margin-top:6px}
+
+  /* Two-column layout for “breakdown” vs “queue + yesterday” */
+  .grid2{display:grid;gap:16px;grid-template-columns:1.1fr .9fr}
   @media(max-width:980px){.grid2{grid-template-columns:1fr}}
+
   /* Filter toolbar */
   .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   input[type="date"]{padding:6px 8px;border:1px solid var(--border);border-radius:8px}
@@ -38,59 +52,47 @@
 
 {% block content %}
 <div class="wrap">
-  <h1 class="title">QA Dashboard</h1>
+  <h1 class="page-title">QA Dashboard</h1>
 
-  {# ---------- Top metric tiles (uses existing kpi_* + queue_* data) ---------- #}
-  {% set h_app  = (kpi_heats.approved  if kpi_heats  else 0) | float %}
-  {% set l_app  = (kpi_lots.approved   if kpi_lots   else 0) | float %}
-  {% set an_app = (kpi_anneal.approved if kpi_anneal else 0) | float %}
-  {% set g_app  = (kpi_grind.approved  if kpi_grind  else 0) | float %}
-  {% set fg_app = (kpi_fg.approved     if kpi_fg     else 0) | float %}
-  {% set pend_tot = (queue_pending.total or 0) | float %}
+  <!-- Quick KPIs (tiles) -->
+  <div class="card">
+    <div class="section-title"><span class="emoji">📊</span><span>Quick KPIs (Month-to-Date)</span></div>
+    {% set h_app  = (kpi_heats.approved  if kpi_heats  else 0) | float %}
+    {% set l_app  = (kpi_lots.approved   if kpi_lots   else 0) | float %}
+    {% set an_app = (kpi_anneal.approved if kpi_anneal else 0) | float %}
+    {% set g_app  = (kpi_grind.approved  if kpi_grind  else 0) | float %}
+    {% set fg_app = (kpi_fg.approved     if kpi_fg     else 0) | float %}
+    {% set pend_tot = (queue_pending.total or 0) | float %}
 
-  <div class="card" style="margin-top:6px">
-  <div class="h6">Quick KPIs (Month-to-Date)</div>
-  {% set h_app  = (kpi_heats.approved  if kpi_heats  else 0) | float %}
-  {% set l_app  = (kpi_lots.approved   if kpi_lots   else 0) | float %}
-  {% set an_app = (kpi_anneal.approved if kpi_anneal else 0) | float %}
-  {% set g_app  = (kpi_grind.approved  if kpi_grind  else 0) | float %}
-  {% set fg_app = (kpi_fg.approved     if kpi_fg     else 0) | float %}
-  {% set pend_tot = (queue_pending.total or 0) | float %}
-  <table>
-    <thead>
-      <tr><th>Metric</th><th class="right">Qty</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>Heats Approved (M)</td>       <td class="right">{{ '%.1f' % h_app }}</td></tr>
-      <tr><td>Atomization Approved (M)</td> <td class="right">{{ '%.1f' % l_app }}</td></tr>
-      <tr><td>Annealing Approved (M)</td>   <td class="right">{{ '%.1f' % an_app }}</td></tr>
-      <tr><td>Grinding Approved (M)</td>    <td class="right">{{ '%.1f' % g_app }}</td></tr>
-      <tr><td>FG Approved (M)</td>          <td class="right">{{ '%.1f' % fg_app }}</td></tr>
-      <tr><td>Pending (All Queues)</td>     <td class="right">{{ '%.0f' % pend_tot }}</td></tr>
-    </tbody>
-  </table>
-</div>
+    <div class="tiles">
+      <div class="tile"><div class="name"><span class="emoji">🔥</span>Heats Approved (M)</div><div class="val">{{ '%.1f' % h_app }}</div></div>
+      <div class="tile"><div class="name"><span class="emoji">🧪</span>Atomization Approved (M)</div><div class="val">{{ '%.1f' % l_app }}</div></div>
+      <div class="tile"><div class="name"><span class="emoji">🔥🛠️</span>Annealing Approved (M)</div><div class="val">{{ '%.1f' % an_app }}</div></div>
+      <div class="tile"><div class="name"><span class="emoji">⚙️</span>Grinding Approved (M)</div><div class="val">{{ '%.1f' % g_app }}</div></div>
+      <div class="tile"><div class="name"><span class="emoji">📦</span>FG Approved (M)</div><div class="val">{{ '%.1f' % fg_app }}</div></div>
+      <div class="tile"><div class="name"><span class="emoji">🧾</span>Pending (All Queues)</div><div class="val">{{ '%.0f' % pend_tot }}</div></div>
+    </div>
+  </div>
 
-  {# ---------- KPI breakdown vs Queue (balanced columns) ---------- #}
-  {% macro krow(name, data) -%}
-    {% set appr = (data.approved  if data else 0)|float %}
-    {% set hold = (data.hold      if data else 0)|float %}
-    {% set rej  = (data.rejected  if data else 0)|float %}
-    {% set tot  = appr + hold + rej %}
-    {% set apct = (100.0*appr/tot) if tot>0 else 0 %}
-    <tr>
-      <td>{{ name }}</td>
-      <td class="right">{{ '%.1f' % appr }}</td>
-      <td class="right">{{ '%.1f' % hold }}</td>
-      <td class="right">{{ '%.1f' % rej }}</td>
-      <td class="right">{{ '%.1f' % tot }}</td>
-      <td class="right">{{ '%.1f' % apct }}%</td>
-    </tr>
-  {%- endmacro %}
-
+  <!-- Breakdown vs Queue -->
   <div class="grid2">
     <div class="card">
-      <div class="h6">Stage Breakdown (This Month)</div>
+      <div class="section-title"><span class="emoji">🧯</span><span>Stage Breakdown (This Month)</span></div>
+      {% macro krow(name, data) -%}
+        {% set appr = (data.approved  if data else 0)|float %}
+        {% set hold = (data.hold      if data else 0)|float %}
+        {% set rej  = (data.rejected  if data else 0)|float %}
+        {% set tot  = appr + hold + rej %}
+        {% set apct = (100.0*appr/tot) if tot>0 else 0 %}
+        <tr>
+          <td>{{ name }}</td>
+          <td class="right">{{ '%.1f' % appr }}</td>
+          <td class="right">{{ '%.1f' % hold }}</td>
+          <td class="right">{{ '%.1f' % rej }}</td>
+          <td class="right">{{ '%.1f' % tot }}</td>
+          <td class="right">{{ '%.1f' % apct }}%</td>
+        </tr>
+      {%- endmacro %}
       <table>
         <thead>
           <tr>
@@ -103,18 +105,18 @@
           </tr>
         </thead>
         <tbody>
-          {{ krow('Heats',        kpi_heats) }}
-          {{ krow('Atomization',  kpi_lots) }}
-          {{ krow('Annealing',    kpi_anneal) }}
-          {{ krow('Grinding',     kpi_grind) }}
-          {{ krow('FG',           kpi_fg) }}
+          {{ krow('🔥 Heats',        kpi_heats) }}
+          {{ krow('🧪 Atomization',  kpi_lots) }}
+          {{ krow('🔥🛠️ Annealing',  kpi_anneal) }}
+          {{ krow('⚙️ Grinding',     kpi_grind) }}
+          {{ krow('📦 FG',           kpi_fg) }}
         </tbody>
       </table>
     </div>
 
     <div>
       <div class="card">
-        <div class="h6">QA Queue</div>
+        <div class="section-title"><span class="emoji">🧾</span><span>QA Queue</span></div>
         <table>
           <thead>
             <tr><th></th><th class="right">Heats</th><th class="right">Lots</th><th class="right">Anneal</th><th class="right">Grind</th><th class="right">FG</th><th class="right">Total</th></tr>
@@ -143,21 +145,23 @@
       </div>
 
       <div class="card">
-  <div class="h6">Yesterday Summary</div>
-  <table>
-    <tbody>
-      <tr><td>Date</td>                 <td class="right">{{ yday_iso }}</td></tr>
-      <tr><td>Pending at day start*</td><td class="right">{{ pending_yday.total or 0 }}</td></tr>
-      <tr><td>Completed yesterday</td>  <td class="right">{{ queue_yday.total or 0 }}</td></tr>
-      <tr><td>Efficiency</td>           <td class="right">{{ '%.1f' % (yday_eff_pct or 0) }}%</td></tr>
-    </tbody>
-  </table>
-  <p class="muted" style="margin:6px 0 0 0">*As of end of previous day.</p>
-</div>
-    
-  {# ---------- Filter ---------- #}
+        <div class="section-title"><span class="emoji">📅</span><span>Yesterday Summary</span></div>
+        <table>
+          <tbody>
+            <tr><td>Date</td>                 <td class="right">{{ yday_iso }}</td></tr>
+            <tr><td>Pending at day start*</td><td class="right">{{ pending_yday.total or 0 }}</td></tr>
+            <tr><td>Completed yesterday</td>  <td class="right">{{ queue_yday.total or 0 }}</td></tr>
+            <tr><td>Efficiency</td>           <td class="right">{{ '%.1f' % (yday_eff_pct or 0) }}%</td></tr>
+          </tbody>
+        </table>
+        <p class="muted" style="margin:6px 0 0 0">*As of end of previous day.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filter -->
   <div class="card">
-    <div class="h6">Filter</div>
+    <div class="section-title"><span class="emoji">🔎</span><span>Filter</span></div>
     <form class="toolbar" method="get" action="/qa-dashboard">
       <span>From</span><input name="start" type="date" value="{{ start or today_iso }}">
       <span>To</span><input name="end" type="date" value="{{ end or today_iso }}">
@@ -168,23 +172,21 @@
     </form>
   </div>
 
-  {# ---------- Detail sections (unchanged) ---------- #}
+  <!-- Detail sections -->
   <div class="card">
-    <div class="h6">Melting — Heats</div>
+    <div class="section-title"><span class="emoji">🔥</span><span>Melting — Heats</span></div>
     {% if heats and heats|length > 0 %}
     <table>
       <thead><tr><th>Heat No</th><th>Date</th><th>Grade</th><th>Output (kg)</th><th>QA Status</th><th>Remarks</th><th>Action</th></tr></thead>
       <tbody>
         {% for h in heats %}
+        {% set st = (h.qa_status or 'PENDING') %}
         <tr>
           <td>{{ h.heat_no }}</td>
           <td>{{ h.heat_no[:4] }}-{{ h.heat_no[4:6] }}-{{ h.heat_no[6:8] }}</td>
           <td>{{ heat_grades[h.id] or '' }}</td>
           <td>{{ '%.1f' % (h.actual_output or 0) }}</td>
-          <td>
-            {% set st = (h.qa_status or 'PENDING') %}
-            <span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% endif %}">{{ st }}</span>
-          </td>
+          <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% else %}info{% endif %}">{{ st }}</span></td>
           <td>{{ h.qa_remarks or '' }}</td>
           <td><a href="/qa/heat/{{ h.id }}">QA</a></td>
         </tr>
@@ -195,79 +197,79 @@
   </div>
 
   <div class="card">
-    <div class="h6">Atomization — Lots</div>
+    <div class="section-title"><span class="emoji">🧪</span><span>Atomization — Lots</span></div>
     {% if lots and lots|length > 0 %}
     <table>
       <thead><tr><th>Lot No</th><th>Date</th><th>Grade</th><th>Weight (kg)</th><th>QA Status</th><th>Remarks</th></tr></thead>
       <tbody>
-      {% for l in lots %}
+        {% for l in lots %}
         {% set st = (l.qa_status or 'PENDING') %}
         <tr>
           <td>{{ l.lot_no }}</td>
           <td>{{ l.lot_no[:4] }}-{{ l.lot_no[4:6] }}-{{ l.lot_no[6:8] }}</td>
           <td>{{ l.grade or '' }}</td>
           <td>{{ '%.1f' % (l.weight or 0) }}</td>
-          <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% endif %}">{{ st }}</span></td>
+          <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% else %}info{% endif %}">{{ st }}</span></td>
           <td>{{ l.remarks or '' }}</td>
         </tr>
-      {% endfor %}
+        {% endfor %}
       </tbody>
     </table>
     {% else %}<p class="muted">No atomization lots in this date range.</p>{% endif %}
   </div>
 
   <div class="card">
-    <div class="h6">Annealing — Batches</div>
+    <div class="section-title"><span class="emoji">🔥🛠️</span><span>Annealing — Batches</span></div>
     {% if anneals and anneals|length > 0 %}
     <table>
       <thead><tr><th>Lot No</th><th>Date</th><th>Grade</th><th>Weight (kg)</th><th>O₂ (%)</th><th>QA Status</th><th>Remarks</th></tr></thead>
       <tbody>
-      {% for a in anneals %}
+        {% for a in anneals %}
         {% set st = (a.qa_status or 'PENDING') %}
         <tr>
           <td>{{ a.lot_no }}</td><td>{{ a.date }}</td><td>{{ a.grade or '' }}</td>
           <td>{{ '%.1f' % (a.weight_kg or 0) }}</td><td>{{ a.oxygen or '' }}</td>
-          <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% endif %}">{{ st }}</span></td>
+          <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% else %}info{% endif %}">{{ st }}</span></td>
           <td>{{ a.remarks or '' }}</td>
         </tr>
-      {% endfor %}
+        {% endfor %}
       </tbody>
     </table>
     {% else %}<p class="muted">No annealing batches in this date range.</p>{% endif %}
   </div>
 
   <div class="card">
-    <div class="h6">Grinding — Batches</div>
+    <div class="section-title"><span class="emoji">⚙️</span><span>Grinding — Batches</span></div>
     {% if grinds and grinds|length > 0 %}
     <table>
       <thead><tr><th>Lot No</th><th>Date</th><th>Grade</th><th>Weight (kg)</th><th>Compressibility</th><th>QA Status</th><th>Remarks</th></tr></thead>
       <tbody>
-      {% for g in grinds %}
+        {% for g in grinds %}
         {% set st = (g.qa_status or 'PENDING') %}
         <tr>
           <td>{{ g.lot_no }}</td><td>{{ g.date }}</td><td>{{ g.grade or '' }}</td>
           <td>{{ '%.1f' % (g.weight_kg or 0) }}</td><td>{{ g.compressibility or '' }}</td>
-          <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% endif %}">{{ st }}</span></td>
+          <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% else %}info{% endif %}">{{ st }}</span></td>
           <td>{{ g.remarks or '' }}</td>
         </tr>
-      {% endfor %}
+        {% endfor %}
       </tbody>
     </table>
     {% else %}<p class="muted">No grinding batches in this date range.</p>{% endif %}
   </div>
 
   <div class="card">
-    <div class="h6">Packing & FG — Lots</div>
+    <div class="section-title"><span class="emoji">📦</span><span>Packing & FG — Lots</span></div>
     {% if fgs and fgs|length > 0 %}
     <table>
       <thead><tr><th>Lot No</th><th>Date</th><th>FG Grade</th><th>Weight (kg)</th><th>QA Status</th><th>Remarks</th><th>Action</th></tr></thead>
       <tbody>
-      {% for f in fgs %}
+        {% for f in fgs %}
         {% set st = (f.qa_status or 'PENDING') %}
         <tr>
           <td>{{ f.lot_no }}</td><td>{{ f.date }}</td><td>{{ f.fg_grade or '' }}</td>
           <td>{{ '%.1f' % (f.weight_kg or 0) }}</td>
-          <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% endif %}">{{ st }}</span></td>
+          <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% else %}info{% endif %}">{{ st }}</span></td>
           <td>{{ f.remarks or '' }}</td>
           <td>
             <a href="/fg/qa/{{ f.id }}">QA</a>
@@ -275,7 +277,7 @@
             <a href="/fg/pdf/{{ f.id }}" target="_blank">PDF</a>
           </td>
         </tr>
-      {% endfor %}
+        {% endfor %}
       </tbody>
     </table>
     {% else %}<p class="muted">No FG lots in this date range.</p>{% endif %}
