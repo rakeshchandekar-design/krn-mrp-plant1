@@ -251,7 +251,13 @@
           <td class="right">{{ '%.1f' % ( ((h.actual_output or 0.0) / max((h.total_inputs or 0.0), 1e-9)) * 100.0 ) }}</td>
           <td>{{ h.qa_status }}</td>
           <td><a class="btn ghost" href="/traceability/heat/{{ h.id }}">View</a></td>
-          <td><a href="/qa/heat/{{ h.id }}">QA</a></td>
+          <td>
+          {% if role in ['admin', 'qa'] %}
+            <a href="/qa/heat/{{ h.id }}">QA</a>
+          {% else %}
+            <a href="#" onclick="alert('User Not Authorized'); return false;" class="btn ghost">QA</a>
+          {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
