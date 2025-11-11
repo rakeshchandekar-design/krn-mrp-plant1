@@ -48,14 +48,28 @@
   {% set fg_app = (kpi_fg.approved     if kpi_fg     else 0) | float %}
   {% set pend_tot = (queue_pending.total or 0) | float %}
 
-  <div class="tiles">
-    <div class="tile"><div class="t-name">Heats Approved (M)</div><div class="t-val">{{ '%.1f' % h_app }}</div></div>
-    <div class="tile"><div class="t-name">Atomization Approved (M)</div><div class="t-val">{{ '%.1f' % l_app }}</div></div>
-    <div class="tile"><div class="t-name">Annealing Approved (M)</div><div class="t-val">{{ '%.1f' % an_app }}</div></div>
-    <div class="tile"><div class="t-name">Grinding Approved (M)</div><div class="t-val">{{ '%.1f' % g_app }}</div></div>
-    <div class="tile"><div class="t-name">FG Approved (M)</div><div class="t-val">{{ '%.1f' % fg_app }}</div></div>
-    <div class="tile"><div class="t-name">Pending (All Queues)</div><div class="t-val">{{ '%.0f' % pend_tot }}</div></div>
-  </div>
+  <div class="card" style="margin-top:6px">
+  <div class="h6">Quick KPIs (Month-to-Date)</div>
+  {% set h_app  = (kpi_heats.approved  if kpi_heats  else 0) | float %}
+  {% set l_app  = (kpi_lots.approved   if kpi_lots   else 0) | float %}
+  {% set an_app = (kpi_anneal.approved if kpi_anneal else 0) | float %}
+  {% set g_app  = (kpi_grind.approved  if kpi_grind  else 0) | float %}
+  {% set fg_app = (kpi_fg.approved     if kpi_fg     else 0) | float %}
+  {% set pend_tot = (queue_pending.total or 0) | float %}
+  <table>
+    <thead>
+      <tr><th>Metric</th><th class="right">Qty</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Heats Approved (M)</td>       <td class="right">{{ '%.1f' % h_app }}</td></tr>
+      <tr><td>Atomization Approved (M)</td> <td class="right">{{ '%.1f' % l_app }}</td></tr>
+      <tr><td>Annealing Approved (M)</td>   <td class="right">{{ '%.1f' % an_app }}</td></tr>
+      <tr><td>Grinding Approved (M)</td>    <td class="right">{{ '%.1f' % g_app }}</td></tr>
+      <tr><td>FG Approved (M)</td>          <td class="right">{{ '%.1f' % fg_app }}</td></tr>
+      <tr><td>Pending (All Queues)</td>     <td class="right">{{ '%.0f' % pend_tot }}</td></tr>
+    </tbody>
+  </table>
+</div>
 
   {# ---------- KPI breakdown vs Queue (balanced columns) ---------- #}
   {% macro krow(name, data) -%}
@@ -129,21 +143,18 @@
       </div>
 
       <div class="card">
-        <div class="h6">Today Summary</div>
-        {% set ctot = (queue_today.total or 0)|float %}
-        {% set ratio = (ctot/pend_tot*100.0) if pend_tot>0 else 0 %}
-        <table>
-          <tbody>
-            <tr><td>Date</td><td class="right">{{ today_iso }}</td></tr>
-            <tr><td>Pending Total</td><td class="right">{{ '%.0f' % pend_tot }}</td></tr>
-            <tr><td>Completed Today</td><td class="right">{{ '%.0f' % ctot }}</td></tr>
-            <tr><td>Completion vs Pending</td><td class="right">{{ '%.1f' % ratio }}%</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
+  <div class="h6">Yesterday Summary</div>
+  <table>
+    <tbody>
+      <tr><td>Date</td>                 <td class="right">{{ yday_iso }}</td></tr>
+      <tr><td>Pending at day start*</td><td class="right">{{ pending_yday.total or 0 }}</td></tr>
+      <tr><td>Completed yesterday</td>  <td class="right">{{ queue_yday.total or 0 }}</td></tr>
+      <tr><td>Efficiency</td>           <td class="right">{{ '%.1f' % (yday_eff_pct or 0) }}%</td></tr>
+    </tbody>
+  </table>
+  <p class="muted" style="margin:6px 0 0 0">*As of end of previous day.</p>
+</div>
+    
   {# ---------- Filter ---------- #}
   <div class="card">
     <div class="h6">Filter</div>
