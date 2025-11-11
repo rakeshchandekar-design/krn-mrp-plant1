@@ -1040,10 +1040,10 @@ def _fg_latest_coa_for_lot(fg_lot_id: int) -> dict|None:
 # -------------------------------------------------
 # Constants
 # -------------------------------------------------
-RM_TYPES = ["MS Scrap", "Turnings", "CRC", "TMT end cuts", "FeSi"]
+RM_TYPES = ["MS Scrap", "Turnings", "CRC", "TMT end cuts", "FeSi", "Others"]
 
 def rm_price_defaults():
-    return {"MS Scrap": 34.0, "Turnings": 33.0, "CRC": 40.0, "TMT end cuts": 37.0, "FeSi": 104.0}
+    return {"MS Scrap": 34.0, "Turnings": 33.0, "CRC": 40.0, "TMT end cuts": 37.0, "FeSi": 104.0, "Others": 0.0}
 
 # -------------------------------------------------
 # Models
