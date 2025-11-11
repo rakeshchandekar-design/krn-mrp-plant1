@@ -2947,6 +2947,41 @@ def grn_list(
     rm_total_qty = sum(r["available"] for r in rm_summary)
     rm_total_cost = sum(r["cost"] for r in rm_summary)
 
+    # Totals for live stock (for footer row in template)
+    rm_total_qty = sum(r["available"] for r in rm_summary)
+    rm_total_cost = sum(r["cost"] for r in rm_summary)
+
+    # ---------- ADD THIS BLOCK: "Yesterday Used" summary ----------
+    # We use the heat_no prefix YYYYMMDD-### to select yesterday's heats.
+    yday = dt.date.today() - dt.timedelta(days=1)
+    prefix = yday.strftime("%Y%m%d") + "-"
+
+    y_rows = (
+        db.query(
+            HeatRM.rm_type.label("rm_type"),
+            func.coalesce(func.sum(HeatRM.qty), 0.0).label("qty"),
+            func.coalesce(func.sum(HeatRM.qty * func.coalesce(GRN.price, 0.0)), 0.0).label("value"),
+        )
+        .join(Heat, HeatRM.heat_id == Heat.id)
+        .join(GRN, HeatRM.grn_id == GRN.id)
+        .filter(Heat.heat_no.like(f"{prefix}%"))
+        .group_by(HeatRM.rm_type)
+        .all()
+    )
+
+    yday_usage = []
+    yday_tot_qty = 0.0
+    yday_tot_val = 0.0
+    for r in y_rows:
+        yday_usage.append({
+            "rm_type": r.rm_type,
+            "qty": float(r.qty or 0.0),
+            "value": float(r.value or 0.0),
+        })
+        yday_tot_qty += float(r.qty or 0.0)
+        yday_tot_val += float(r.value or 0.0)
+    # ---------- /ADD BLOCK ----------
+
     today = dt.date.today()
     return templates.TemplateResponse(
         "grn.html",
@@ -2962,8 +2997,15 @@ def grn_list(
             "rm_summary": rm_summary,
             "rm_total_qty": rm_total_qty,
             "rm_total_cost": rm_total_cost,
-            "today": today,
-            "today_iso": today.isoformat(),
+
+            # NEW for right-hand card
+            "yday_iso": yday.isoformat(),
+            "yday_usage": yday_usage,
+            "yday_tot_qty": yday_tot_qty,
+            "yday_tot_val": yday_tot_val,
+
+            "today": dt.date.today(),
+            "today_iso": dt.date.today().isoformat(),
         },
     )
 
