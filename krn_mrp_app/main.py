@@ -850,49 +850,49 @@ with engine.begin() as conn:
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dispatch_orders_date ON dispatch_orders(date)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dispatch_items_dispatch ON dispatch_items(dispatch_id)"))
 
-    # --- Safety: add any missing columns
-    for coldef in [
-        "customer_gstin TEXT",
-        "customer_address TEXT",
-        "transporter TEXT",
-        "vehicle_no TEXT",
-        "lr_no TEXT",
-        "contact TEXT",
-        "remarks TEXT",
-    ]:
-        col = coldef.split()[0]
-        if not _table_has_column(conn, "dispatch_orders", col):
-            if str(engine.url).startswith("sqlite"):
-                conn.execute(text(f"ALTER TABLE dispatch_orders ADD COLUMN {coldef}"))
-            else:
-                conn.execute(text(f"ALTER TABLE dispatch_orders ADD COLUMN IF NOT EXISTS {col} {coldef.split(' ',1)[1]}"))
+        # --- Safety: add any missing columns
+        for coldef in [
+            "customer_gstin TEXT",
+            "customer_address TEXT",
+            "transporter TEXT",
+            "vehicle_no TEXT",
+            "lr_no TEXT",
+            "contact TEXT",
+            "remarks TEXT",
+        ]:
+            col = coldef.split()[0]
+            if not _table_has_column(conn, "dispatch_orders", col):
+                if str(engine.url).startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE dispatch_orders ADD COLUMN {coldef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE dispatch_orders ADD COLUMN IF NOT EXISTS {col} {coldef.split(' ',1)[1]}"))
 
-    for coldef in [
-        "cost_per_kg REAL DEFAULT 0",
-        "value REAL DEFAULT 0",
-    ]:
-        col = coldef.split()[0]
-        if not _table_has_column(conn, "dispatch_items", col):
-            if str(engine.url).startswith("sqlite"):
-                conn.execute(text(f"ALTER TABLE dispatch_items ADD COLUMN {coldef}"))
-            else:
-                sql = coldef.replace("REAL", "DOUBLE PRECISION")
-                conn.execute(text(f"ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
+        for coldef in [
+            "cost_per_kg REAL DEFAULT 0",
+            "value REAL DEFAULT 0",
+        ]:
+            col = coldef.split()[0]
+            if not _table_has_column(conn, "dispatch_items", col):
+                if str(engine.url).startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE dispatch_items ADD COLUMN {coldef}"))
+                else:
+                    sql = coldef.replace("REAL", "DOUBLE PRECISION")
+                    conn.execute(text(f"ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
 
-    # ---- GRN extra columns (safe migrations) ----
-    for coldef in [
-        "transporter TEXT",
-        "vehicle_no TEXT",
-        "invoice_file TEXT",
-        "ewaybill_file TEXT",
-    ]:
-        col = coldef.split()[0]
-        if not _table_has_column(conn, "grn", col):
-            if str(engine.url).startswith("sqlite"):
-                conn.execute(text(f"ALTER TABLE grn ADD COLUMN {coldef}"))
-            else:
-                # Postgres types map cleanly from TEXT
-                conn.execute(text(f"ALTER TABLE grn ADD COLUMN IF NOT EXISTS {col} TEXT"))
+        # ---- GRN extra columns (safe migrations) ----
+        for coldef in [
+            "transporter TEXT",
+            "vehicle_no TEXT",
+            "invoice_file TEXT",
+            "ewaybill_file TEXT",
+        ]:
+            col = coldef.split()[0]
+            if not _table_has_column(conn, "grn", col):
+                if str(engine.url).startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE grn ADD COLUMN {coldef}"))
+                else:
+                    # Postgres types map cleanly from TEXT
+                    conn.execute(text(f"ALTER TABLE grn ADD COLUMN IF NOT EXISTS {col} TEXT"))
 
 # ================================
 # --- Dispatch helpers (read-only)
@@ -1267,7 +1267,7 @@ if not os.path.isdir(STATIC_DIR):
 app = FastAPI()
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 # session middleware (keep the secret; regenerate for production)
-app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", secrets.token_hex(16)))
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", "dev-only-change-me"))
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
@@ -1378,16 +1378,16 @@ async def block_writes_for_view(request: Request, call_next):
 # ---- Users: username = department; default password = same as username ----
 # Change passwords here later.
 USER_DB = {
-    "admin":   {"password": "admin@krn",   "role": "admin"},
-    "store":   {"password": "store@2025",   "role": "store"},
-    "melting": {"password": "melting@2025", "role": "melting"},
-    "atom":    {"password": "atom@2025",    "role": "atom"},
-    "rap":     {"password": "rap@2025",     "role": "rap"},
-    "anneal":  {"password": "anneal@2025", "role": "anneal"},
-    "grind":   {"password": "grind@2025", "role": "grind"},
-    "fg":      {"password": "fg@2025", "role": "fg"},
-    "qa":      {"password": "qa@2025",      "role": "qa"},
-    "krn":     {"password": "krn",    "role": "view"},
+    "admin":   {"password": os.getenv("KRN_ADMIN_PASSWORD",   "admin@krn"),   "role": "admin"},
+    "store":   {"password": os.getenv("KRN_STORE_PASSWORD",   "store@2025"),   "role": "store"},
+    "melting": {"password": os.getenv("KRN_MELTING_PASSWORD", "melting@2025"), "role": "melting"},
+    "atom":    {"password": os.getenv("KRN_ATOM_PASSWORD",    "atom@2025"),    "role": "atom"},
+    "rap":     {"password": os.getenv("KRN_RAP_PASSWORD",     "rap@2025"),     "role": "rap"},
+    "anneal":  {"password": os.getenv("KRN_ANNEAL_PASSWORD",  "anneal@2025"),  "role": "anneal"},
+    "grind":   {"password": os.getenv("KRN_GRIND_PASSWORD",   "grind@2025"),   "role": "grind"},
+    "fg":      {"password": os.getenv("KRN_FG_PASSWORD",      "fg@2025"),      "role": "fg"},
+    "qa":      {"password": os.getenv("KRN_QA_PASSWORD",      "qa@2025"),      "role": "qa"},
+    "krn":     {"password": os.getenv("KRN_VIEW_PASSWORD",    "krn"),          "role": "view"},
 }
 
 def current_username(request: Request) -> str:
