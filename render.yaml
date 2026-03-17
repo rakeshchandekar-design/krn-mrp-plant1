@@ -7,6 +7,28 @@ services:
     startCommand: "uvicorn krn_mrp_app.main:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: DATABASE_URL
-        value: postgresql+psycopg://neondb_owner:npg_cKjEtJ6bX1fd@ep-wild-king-a15fllug-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: KRN_ADMIN_PASSWORD
+        sync: false
+      - key: KRN_STORE_PASSWORD
+        sync: false
+      - key: KRN_MELTING_PASSWORD
+        sync: false
+      - key: KRN_ATOM_PASSWORD
+        sync: false
+      - key: KRN_RAP_PASSWORD
+        sync: false
+      - key: KRN_ANNEAL_PASSWORD
+        sync: false
+      - key: KRN_GRIND_PASSWORD
+        sync: false
+      - key: KRN_FG_PASSWORD
+        sync: false
+      - key: KRN_QA_PASSWORD
+        sync: false
+      - key: KRN_VIEW_PASSWORD
+        sync: false
