@@ -122,6 +122,21 @@ def _table_has_column(conn, table: str, col: str) -> bool:
         """)
         return conn.execute(q, {"t": table, "c": col}).first() is not None
 
+
+def _table_exists(conn, table: str) -> bool:
+    if str(engine.url).startswith("sqlite"):
+        rows = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name=:t"), {"t": table}).fetchall()
+        return bool(rows)
+    q = text("""
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name = :t
+        LIMIT 1
+    """)
+    return conn.execute(q, {"t": table}).first() is not None
+
+
 def migrate_schema(engine):
     with engine.begin() as conn:
         # Heat costing columns
@@ -885,19 +900,22 @@ with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS {col} {sql.split(' ',1)[1]}"))
 
         # ---- GRN extra columns (safe migrations) ----
-        for coldef in [
-            "transporter TEXT",
-            "vehicle_no TEXT",
-            "invoice_file TEXT",
-            "ewaybill_file TEXT",
-        ]:
-            col = coldef.split()[0]
-            if not _table_has_column(conn, "grn", col):
-                if str(engine.url).startswith("sqlite"):
-                    conn.execute(text(f"ALTER TABLE grn ADD COLUMN {coldef}"))
-                else:
-                    # Postgres types map cleanly from TEXT
-                    conn.execute(text(f"ALTER TABLE grn ADD COLUMN IF NOT EXISTS {col} TEXT"))
+        # On a brand-new database, `grn` is created later by Base.metadata.create_all()
+        # during startup /setup. So guard these ALTERs to avoid crashing app import.
+        if _table_exists(conn, "grn"):
+            for coldef in [
+                "transporter TEXT",
+                "vehicle_no TEXT",
+                "invoice_file TEXT",
+                "ewaybill_file TEXT",
+            ]:
+                col = coldef.split()[0]
+                if not _table_has_column(conn, "grn", col):
+                    if str(engine.url).startswith("sqlite"):
+                        conn.execute(text(f"ALTER TABLE grn ADD COLUMN {coldef}"))
+                    else:
+                        # Postgres types map cleanly from TEXT
+                        conn.execute(text(f"ALTER TABLE grn ADD COLUMN IF NOT EXISTS {col} TEXT"))
 
 # ================================
 # --- Dispatch helpers (read-only)
