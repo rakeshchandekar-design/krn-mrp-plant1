@@ -1999,7 +1999,7 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
           COALESCE({num('lp.p212')}, 0) <> 0
           OR COALESCE({num('lp.p180')}, 0) <> 0
       )
-        AND COALESCE(l.date, DATE(l.created_at)) = :d
+        AND DATE(l.created_at) = :d
     """
 
     sql_psd_m = f"""
@@ -2013,7 +2013,7 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
           COALESCE({num('lp.p212')}, 0) <> 0
           OR COALESCE({num('lp.p180')}, 0) <> 0
       )
-        AND COALESCE(l.date, DATE(l.created_at)) BETWEEN :a AND :b
+        AND DATE(l.created_at) BETWEEN :a AND :b
     """
 
     sql_scr_y = f"""
