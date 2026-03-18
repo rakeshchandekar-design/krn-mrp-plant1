@@ -16,11 +16,16 @@ def _normalize_db_url(url: str) -> str:
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
 
-DATABASE_URL = _normalize_db_url(os.getenv("DATABASE_URL", "sqlite:///./krn_mrp.db"))
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise Exception("DATABASE_URL is not set. Cannot start app.")
+
+DATABASE_URL = _normalize_db_url(DATABASE_URL)
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    connect_args={},
     pool_pre_ping=True,
     future=True,
 )

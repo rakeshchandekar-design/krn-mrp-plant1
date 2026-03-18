@@ -7,7 +7,7 @@
 - Atomization lots from approved heats, 3,000 kg default
 - Lot-by-lot PDF traceability (with KRN logo)
 - Simple top navigation, role links (Stores/QA/RAP/Admin)
-- Render/Neon ready. Uses SQLite by default; set `DATABASE_URL` to use Postgres.
+- Render/Neon ready. Uses PostgreSQL/Neon in deployment. `DATABASE_URL` is required.
 
 ## Quick start (Render)
 1. Create a new Web Service from this repo.
