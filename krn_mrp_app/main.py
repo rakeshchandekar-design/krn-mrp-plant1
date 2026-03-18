@@ -1990,7 +1990,7 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
 
     sql_psd_y = f"""
       SELECT COALESCE(SUM(
-               COALESCE(l.weight, l.qty, 0)::numeric *
+               COALESCE(l.weight, 0)::numeric *
                COALESCE({num('lp.p212')}, {num('lp.p180')}, 0) / 100.0
              ), 0)
       FROM lot l
@@ -2004,7 +2004,7 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
 
     sql_psd_m = f"""
       SELECT COALESCE(SUM(
-               COALESCE(l.weight, l.qty, 0)::numeric *
+               COALESCE(l.weight, 0)::numeric *
                COALESCE({num('lp.p212')}, {num('lp.p180')}, 0) / 100.0
              ), 0)
       FROM lot l
@@ -3874,8 +3874,9 @@ def _anneal_rows_in_range(db, start_date, end_date):
     """)).scalar()
 
     if not qa_fk:
-        # Fail early with a clear message instead of a cryptic f405
-        raise RuntimeError("anneal_qa must have anneal_lot_id or anneal_id")
+        # Fresh/clean databases may not yet have anneal QA linkage columns.
+        # Return no rows instead of crashing the whole QA dashboard.
+        return []
 
     # If the table uses anneal_id, alias it out as anneal_lot_id so the rest of the code can stay the same
     latest_sql = f"""
