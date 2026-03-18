@@ -1978,15 +1978,50 @@ def _num_sql(col: str) -> str:  # <<< CHANGED: new helper added
 def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) -> tuple[float, float]:
     """
     Oversize = (PSD-derived >180/212 µm %) * lot weight  +  Screening 'oversize_80'.
-    - Accepts p212 / p180 stored as VARCHAR like '40' or '40%' (strips non-digits).
-    - Also works if those columns (or oversize_80) are NUMERIC, by casting to text before regex.
-    Returns: (yesterday_kg, mtd_kg)
+
+    This version is schema-safe for fresh / migrated databases:
+    - Works even if `lot` has no `date` or `created_at`
+    - Works even if `screen_lot` has no `date` or `created_at`
+    - Falls back to unfiltered totals when no date-like column exists
     """
     def run(sql: str, **kw) -> float:
         return float(db.execute(text(sql), kw).scalar() or 0.0)
 
     def num(col: str) -> str:
         return f"NULLIF(regexp_replace(({col})::text, '[^0-9\\.]', '', 'g'), '')::numeric"
+
+    def date_expr(table_name: str, alias: str = "") -> str | None:
+        rows = db.execute(text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = :t
+        """), {"t": table_name}).fetchall()
+        cols = {r[0] for r in rows}
+        prefix = f"{alias}." if alias else ""
+        if "date" in cols:
+            return f"{prefix}date"
+        if "created_at" in cols:
+            return f"DATE({prefix}created_at)"
+        if "created_on" in cols:
+            return f"DATE({prefix}created_on)"
+        if "timestamp" in cols:
+            return f"DATE({prefix}timestamp)"
+        return None
+
+    lot_date = date_expr("lot", "l")
+    screen_date = date_expr("screen_lot")
+
+    lot_where_y = ""
+    lot_where_m = ""
+    if lot_date:
+        lot_where_y = f" AND {lot_date} = :d"
+        lot_where_m = f" AND {lot_date} BETWEEN :a AND :b"
+
+    screen_where_y = ""
+    screen_where_m = ""
+    if screen_date:
+        screen_where_y = f" AND {screen_date} = :d"
+        screen_where_m = f" AND {screen_date} BETWEEN :a AND :b"
 
     sql_psd_y = f"""
       SELECT COALESCE(SUM(
@@ -1998,8 +2033,7 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
       WHERE (
           COALESCE({num('lp.p212')}, 0) <> 0
           OR COALESCE({num('lp.p180')}, 0) <> 0
-      )
-        AND DATE(l.created_at) = :d
+      ){lot_where_y}
     """
 
     sql_psd_m = f"""
@@ -2012,20 +2046,19 @@ def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) 
       WHERE (
           COALESCE({num('lp.p212')}, 0) <> 0
           OR COALESCE({num('lp.p180')}, 0) <> 0
-      )
-        AND DATE(l.created_at) BETWEEN :a AND :b
+      ){lot_where_m}
     """
 
     sql_scr_y = f"""
       SELECT COALESCE(SUM(COALESCE({num('oversize_80')}, 0)), 0)
       FROM screen_lot
-      WHERE COALESCE(date, DATE(created_at)) = :d
+      WHERE 1=1{screen_where_y}
     """
 
     sql_scr_m = f"""
       SELECT COALESCE(SUM(COALESCE({num('oversize_80')}, 0)), 0)
       FROM screen_lot
-      WHERE COALESCE(date, DATE(created_at)) BETWEEN :a AND :b
+      WHERE 1=1{screen_where_m}
     """
 
     y_psd = run(sql_psd_y, d=yest)
