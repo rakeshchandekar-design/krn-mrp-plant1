@@ -1977,94 +1977,98 @@ def _num_sql(col: str) -> str:  # <<< CHANGED: new helper added
 # --- Atomization KPI: oversize (yesterday, MTD) with safe text→numeric handling ---
 def kpi_atom_oversize(db: Session, start: dt.date, end: dt.date, yest: dt.date) -> tuple[float, float]:
     """
-    Oversize = (PSD-derived >180/212 µm %) * lot weight  +  Screening 'oversize_80'.
+    Oversize = PSD-derived oversize from lot/lot_psd + screening oversize from screen_lot.
 
-    This version is schema-safe for fresh / migrated databases:
-    - Works even if `lot` has no `date` or `created_at`
-    - Works even if `screen_lot` has no `date` or `created_at`
-    - Falls back to unfiltered totals when no date-like column exists
+    Fresh or partially-used databases may not yet have all dashboard-related
+    tables/columns, so this KPI must never crash. Missing pieces simply
+    contribute 0.
     """
     def run(sql: str, **kw) -> float:
         return float(db.execute(text(sql), kw).scalar() or 0.0)
 
     def num(col: str) -> str:
-        return f"NULLIF(regexp_replace(({col})::text, '[^0-9\\.]', '', 'g'), '')::numeric"
+        return f"NULLIF(regexp_replace(({col})::text, '[^0-9\.]', '', 'g'), '')::numeric"
 
-    def date_expr(table_name: str, alias: str = "") -> str | None:
+    def cols(table_name: str) -> set[str]:
         rows = db.execute(text("""
             SELECT column_name
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = :t
         """), {"t": table_name}).fetchall()
-        cols = {r[0] for r in rows}
+        return {r[0] for r in rows}
+
+    def date_expr(table_name: str, alias: str = "") -> str | None:
+        c = cols(table_name)
+        if not c:
+            return None
         prefix = f"{alias}." if alias else ""
-        if "date" in cols:
+        if "date" in c:
             return f"{prefix}date"
-        if "created_at" in cols:
-            return f"DATE({prefix}created_at)"
-        if "created_on" in cols:
-            return f"DATE({prefix}created_on)"
-        if "timestamp" in cols:
-            return f"DATE({prefix}timestamp)"
+        for name in ("created_at", "created_on", "timestamp", "updated_at", "ts", "inserted_at"):
+            if name in c:
+                return f"DATE({prefix}{name})"
         return None
 
-    lot_date = date_expr("lot", "l")
-    screen_date = date_expr("screen_lot")
+    lot_cols = cols("lot")
+    psd_cols = cols("lot_psd")
+    screen_cols = cols("screen_lot")
 
-    lot_where_y = ""
-    lot_where_m = ""
-    if lot_date:
-        lot_where_y = f" AND {lot_date} = :d"
-        lot_where_m = f" AND {lot_date} BETWEEN :a AND :b"
+    y_psd = m_psd = 0.0
+    if lot_cols and psd_cols and "id" in lot_cols and "lot_id" in psd_cols:
+        weight_expr = "COALESCE(l.weight, 0)" if "weight" in lot_cols else "0"
+        p212_expr = num("lp.p212") if "p212" in psd_cols else "0"
+        p180_expr = num("lp.p180") if "p180" in psd_cols else "0"
+        lot_date = date_expr("lot", "l")
+        lot_where_y = f" AND {lot_date} = :d" if lot_date else ""
+        lot_where_m = f" AND {lot_date} BETWEEN :a AND :b" if lot_date else ""
 
-    screen_where_y = ""
-    screen_where_m = ""
-    if screen_date:
-        screen_where_y = f" AND {screen_date} = :d"
-        screen_where_m = f" AND {screen_date} BETWEEN :a AND :b"
+        sql_psd_y = f"""
+          SELECT COALESCE(SUM(
+                   ({weight_expr})::numeric *
+                   COALESCE({p212_expr}, {p180_expr}, 0) / 100.0
+                 ), 0)
+          FROM lot l
+          JOIN lot_psd lp ON lp.lot_id = l.id
+          WHERE (
+              COALESCE({p212_expr}, 0) <> 0
+              OR COALESCE({p180_expr}, 0) <> 0
+          ){lot_where_y}
+        """
 
-    sql_psd_y = f"""
-      SELECT COALESCE(SUM(
-               COALESCE(l.weight, 0)::numeric *
-               COALESCE({num('lp.p212')}, {num('lp.p180')}, 0) / 100.0
-             ), 0)
-      FROM lot l
-      JOIN lot_psd lp ON lp.lot_id = l.id
-      WHERE (
-          COALESCE({num('lp.p212')}, 0) <> 0
-          OR COALESCE({num('lp.p180')}, 0) <> 0
-      ){lot_where_y}
-    """
+        sql_psd_m = f"""
+          SELECT COALESCE(SUM(
+                   ({weight_expr})::numeric *
+                   COALESCE({p212_expr}, {p180_expr}, 0) / 100.0
+                 ), 0)
+          FROM lot l
+          JOIN lot_psd lp ON lp.lot_id = l.id
+          WHERE (
+              COALESCE({p212_expr}, 0) <> 0
+              OR COALESCE({p180_expr}, 0) <> 0
+          ){lot_where_m}
+        """
+        y_psd = run(sql_psd_y, d=yest)
+        m_psd = run(sql_psd_m, a=start, b=end)
 
-    sql_psd_m = f"""
-      SELECT COALESCE(SUM(
-               COALESCE(l.weight, 0)::numeric *
-               COALESCE({num('lp.p212')}, {num('lp.p180')}, 0) / 100.0
-             ), 0)
-      FROM lot l
-      JOIN lot_psd lp ON lp.lot_id = l.id
-      WHERE (
-          COALESCE({num('lp.p212')}, 0) <> 0
-          OR COALESCE({num('lp.p180')}, 0) <> 0
-      ){lot_where_m}
-    """
+    y_scr = m_scr = 0.0
+    if screen_cols and "oversize_80" in screen_cols:
+        screen_date = date_expr("screen_lot")
+        screen_where_y = f" AND {screen_date} = :d" if screen_date else ""
+        screen_where_m = f" AND {screen_date} BETWEEN :a AND :b" if screen_date else ""
 
-    sql_scr_y = f"""
-      SELECT COALESCE(SUM(COALESCE({num('oversize_80')}, 0)), 0)
-      FROM screen_lot
-      WHERE 1=1{screen_where_y}
-    """
+        sql_scr_y = f"""
+          SELECT COALESCE(SUM(COALESCE({num('oversize_80')}, 0)), 0)
+          FROM screen_lot
+          WHERE 1=1{screen_where_y}
+        """
 
-    sql_scr_m = f"""
-      SELECT COALESCE(SUM(COALESCE({num('oversize_80')}, 0)), 0)
-      FROM screen_lot
-      WHERE 1=1{screen_where_m}
-    """
-
-    y_psd = run(sql_psd_y, d=yest)
-    m_psd = run(sql_psd_m, a=start, b=end)
-    y_scr = run(sql_scr_y, d=yest)
-    m_scr = run(sql_scr_m, a=start, b=end)
+        sql_scr_m = f"""
+          SELECT COALESCE(SUM(COALESCE({num('oversize_80')}, 0)), 0)
+          FROM screen_lot
+          WHERE 1=1{screen_where_m}
+        """
+        y_scr = run(sql_scr_y, d=yest)
+        m_scr = run(sql_scr_m, a=start, b=end)
 
     return y_psd + y_scr, m_psd + m_scr
 
