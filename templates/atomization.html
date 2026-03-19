@@ -240,7 +240,7 @@
             {% if role == 'admin' %}<td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>{% endif %}
             <td>{{ lot.qa_status or '' }}</td>
             <td><a class="btn btn-secondary" style="background:#e5e7eb;color:#111827;border:none" href="/traceability/lot/{{ lot.id }}">Trace</a></td>
-            <td><a class="btn" href="/pdf/lot/{{ lot.id }}">PDF</a></td>
+            <td><a class="btn" href="/pdf/lot/{{ lot.id }}">PDF</a> <a class="btn" href="/lot/{{ lot.id }}/jobcard" target="_blank">Job Card</a></td>
             <td><a class="btn btn-secondary" href="/qa/lot/{{ lot.id }}">Lot QA</a></td>
           </tr>
         {% endfor %}

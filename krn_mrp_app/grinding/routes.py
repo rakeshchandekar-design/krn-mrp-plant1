@@ -15,6 +15,14 @@ templates = Jinja2Templates(directory="templates")
 
 # --------- CONFIG ---------
 GRIND_ADD_COST = 6.0  # ₹/kg add over weighted Anneal cost
+
+def _compose_trace_id(parts):
+    vals=[]
+    for p in parts:
+        s=(str(p or "").strip())
+        if s and s not in vals:
+            vals.append(s)
+    return vals[0] if len(vals)==1 else ("+".join(vals)[:240] if vals else "")
 OVERSIZE_MIN_SHARE = 0.07  # +80 + +40 must be ≥ 7% of created lot
 TARGET_KG_PER_DAY = 10000.0  # daily target capacity for KPI
 
@@ -207,10 +215,10 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
             INSERT INTO grinding_lots
                 (date, lot_no, src_alloc_json, grade, weight_kg,
                  input_cost_per_kg, process_cost_per_kg, cost_per_kg,
-                 oversize_p80_kg, oversize_p40_kg, qa_status)
+                 oversize_p80_kg, oversize_p40_kg, qa_status, trace_id, job_card_no)
             VALUES
                 (:date, :lot_no, :src_alloc_json, :grade, :weight_kg,
-                 :input_cost, :proc_cost, :cost, :p80, :p40, 'PENDING')
+                 :input_cost, :proc_cost, :cost, :p80, :p40, 'PENDING', :trace_id, :job_card_no)
         """), {
             "date": date.today(),
             "lot_no": lot_no,
@@ -222,6 +230,8 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
             "cost": cost_per_kg,
             "p80": p80,
             "p40": p40,
+            "trace_id": _compose_trace_id(list(allocations.keys())),
+            "job_card_no": f"JC-GRD-{lot_no}",
         })
 
     return RedirectResponse("/grind/lots", status_code=303)
@@ -574,3 +584,11 @@ async def grind_downtime_csv(request: Request, dep: None = Depends(require_roles
         media_type="text/csv",
         headers={"Content-Disposition":"attachment; filename=grinding_downtime.csv"}
     )
+
+
+@router.get("/jobcard/{grind_id}", response_class=HTMLResponse)
+async def grind_jobcard(request: Request, grind_id: int, dep: None = Depends(require_roles("admin","grind","view"))):
+    with engine.begin() as conn:
+        head = conn.execute(text("SELECT * FROM grinding_lots WHERE id=:id"), {"id": grind_id}).mappings().first()
+        if not head: raise HTTPException(404, "Grinding lot not found")
+    return templates.TemplateResponse("jobcard_stage.html", {"request": request, "stage": "GRINDING", "header": head, "trace_id": head.get("trace_id") or head.get("lot_no"), "job_card_no": head.get("job_card_no") or f"JC-GRD-{head.get('lot_no')}"})

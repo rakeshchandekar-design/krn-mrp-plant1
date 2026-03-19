@@ -20,6 +20,14 @@ templates = Jinja2Templates(directory="templates")
 TARGET_KG_PER_DAY = 6000.0
 ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
 
+def _compose_trace_id(parts):
+    vals=[]
+    for p in parts:
+        s=(str(p or "").strip())
+        if s and s not in vals:
+            vals.append(s)
+    return vals[0] if len(vals)==1 else ("+".join(vals)[:240] if vals else "")
+
 
 # ---- Plant-2 balance for Annealing (ONLY lots transferred to Plant 2) ----
 def fetch_plant2_balance():
@@ -389,10 +397,10 @@ async def anneal_create_post(
             text("""
                 INSERT INTO anneal_lots
                     (date, lot_no, src_alloc_json, grade, weight_kg,
-                     rap_cost_per_kg, cost_per_kg, ammonia_kg, qa_status)
+                     rap_cost_per_kg, cost_per_kg, ammonia_kg, qa_status, trace_id, job_card_no)
                 VALUES
                     (:date, :lot_no, :src_alloc_json, :grade, :weight_kg,
-                     :rap_cost_per_kg, :cost_per_kg, :ammonia_kg, 'PENDING')
+                     :rap_cost_per_kg, :cost_per_kg, :ammonia_kg, 'PENDING', :trace_id, :job_card_no)
             """),
             {
                 "date": date.today(),
@@ -403,6 +411,8 @@ async def anneal_create_post(
                 "rap_cost_per_kg": rap_cost_per_kg,
                 "cost_per_kg": cost_per_kg,
                 "ammonia_kg": ammonia_kg,
+                "trace_id": _compose_trace_id([lot_no] + list(allocations.keys())),
+                "job_card_no": f"JC-ANL-{lot_no}",
             },
         )
 
@@ -1372,3 +1382,11 @@ async def anneal_pdf_view(
             "qa": qa,
         },
     )
+
+
+@router.get("/jobcard/{anneal_id}", response_class=HTMLResponse)
+async def anneal_jobcard(request: Request, anneal_id: int, dep: None = Depends(require_roles("admin","anneal","view"))):
+    with engine.begin() as conn:
+        head = conn.execute(text("SELECT * FROM anneal_lots WHERE id=:id"), {"id": anneal_id}).mappings().first()
+        if not head: raise HTTPException(404, "Anneal lot not found")
+    return templates.TemplateResponse("jobcard_stage.html", {"request": request, "stage": "ANNEALING", "header": head, "trace_id": head.get("trace_id") or head.get("lot_no"), "job_card_no": head.get("job_card_no") or f"JC-ANL-{head.get('lot_no')}"})

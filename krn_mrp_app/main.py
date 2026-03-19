@@ -61,6 +61,24 @@ def date_field(model):
             return getattr(model, name)
     raise AttributeError(f"{model.__name__} has no date-like column")
 
+
+# -------- Trace / Job card helpers --------
+def _compose_trace_id(parts):
+    vals=[]
+    for p in parts:
+        s=(str(p or '').strip())
+        if s and s not in vals:
+            vals.append(s)
+    if not vals:
+        return ''
+    if len(vals)==1:
+        return vals[0]
+    joined = '+'.join(vals)
+    return joined[:240]
+
+def _next_job_card(prefix: str, existing_count: int) -> str:
+    return f"JC-{prefix}-{dt.date.today().strftime('%Y%m%d')}-{existing_count+1:03d}"
+
 # -------------------------------------------------
 # Costing constants (baseline)
 # -------------------------------------------------
@@ -192,7 +210,26 @@ def migrate_schema(engine):
             else:
                 conn.execute(text("ALTER TABLE grn ADD COLUMN IF NOT EXISTS grn_no TEXT UNIQUE"))
 
-        # Day-level downtime table for MELTING (existing)
+                # Trace / job card columns
+        for table, coldef in [
+            ("heat", "trace_id TEXT"),
+            ("lot", "trace_id TEXT"),
+            ("lot", "job_card_no TEXT"),
+            ("anneal_lots", "trace_id TEXT"),
+            ("anneal_lots", "job_card_no TEXT"),
+            ("grinding_lots", "trace_id TEXT"),
+            ("grinding_lots", "job_card_no TEXT"),
+            ("fg_lots", "trace_id TEXT"),
+            ("fg_lots", "job_card_no TEXT")
+        ]:
+            col = coldef.split()[0]
+            if _table_exists(conn, table) and not _table_has_column(conn, table, col):
+                if str(engine.url).startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {coldef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {coldef.split(' ',1)[1]}"))
+
+# Day-level downtime table for MELTING (existing)
         if str(engine.url).startswith("sqlite"):
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS downtime (
@@ -360,6 +397,8 @@ def migrate_schema(engine):
                     o_pct REAL, compressibility REAL,
                     remarks TEXT,
                     created_by TEXT,
+                    trace_id TEXT,
+                    job_card_no TEXT,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """))
@@ -389,6 +428,8 @@ def migrate_schema(engine):
                     s_pct DOUBLE PRECISION, p_pct DOUBLE PRECISION,
                     o_pct DOUBLE PRECISION, compressibility DOUBLE PRECISION,
                     remarks TEXT, created_by TEXT,
+                    trace_id TEXT,
+                    job_card_no TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """))
@@ -1113,6 +1154,7 @@ class Heat(Base):
 
     # partial allocations (mirror of allocated qty in lots)
     alloc_used = Column(Float, default=0.0)
+    trace_id = Column(String, index=True)
 
     rm_consumptions = relationship("HeatRM", back_populates="heat", cascade="all, delete-orphan")
     chemistry = relationship("HeatChem", uselist=False, back_populates="heat")
@@ -1148,6 +1190,8 @@ class Lot(Base):
     # costing
     unit_cost = Column(Float, default=0.0)
     total_cost = Column(Float, default=0.0)
+    trace_id = Column(String, index=True)
+    job_card_no = Column(String, unique=True, index=True)
 
     heats = relationship("LotHeat", back_populates="lot", cascade="all, delete-orphan")
     chemistry = relationship("LotChem", uselist=False, back_populates="lot")
@@ -3462,6 +3506,7 @@ def melting_new(
         downtime_type=downtime_type,
         downtime_note=downtime_note,
         qa_status="PENDING",
+        trace_id=heat_no,
     )
     db.add(heat); db.flush()
 
@@ -3839,7 +3884,7 @@ async def atom_new(
         lot_no = f"{grade}-{today}-{seq:03d}"
 
         # ---- Create lot ----
-        lot = Lot(lot_no=lot_no, weight=float(lot_weight or 0.0), grade=grade)
+        lot = Lot(lot_no=lot_no, weight=float(lot_weight or 0.0), grade=grade, trace_id=lot_no, job_card_no=_next_job_card("LOT", (db.query(func.count(Lot.id)).scalar() or 0)))
         db.add(lot)
         db.flush()
 
@@ -4496,6 +4541,32 @@ def trace_lot(lot_id: int, request: Request, db: Session = Depends(get_db)):
 # -------------------------------------------------
 # Traceability - HEAT (for trace_heat.html)
 # -------------------------------------------------
+
+
+@app.get("/lot/{lot_id}/jobcard", response_class=HTMLResponse)
+def lot_jobcard(request: Request, lot_id: int, db: Session = Depends(get_db)):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        return PlainTextResponse("Lot not found", status_code=404)
+    heat_rows = db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()
+    heats = [db.get(Heat, lh.heat_id) for lh in heat_rows]
+    return templates.TemplateResponse("jobcard_lot.html", {
+        "request": request, "stage": "ATOMIZATION LOT", "header": lot,
+        "trace_id": lot.trace_id or lot.lot_no,
+        "job_card_no": lot.job_card_no or f"JC-LOT-{lot.lot_no}",
+        "heats": [h for h in heats if h],
+    })
+
+@app.get("/traceability/thread/{trace_id}", response_class=HTMLResponse)
+def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db)):
+    lots = db.query(Lot).filter(Lot.trace_id == trace_id).all()
+    heat_ids = sorted({lh.heat_id for lot in lots for lh in db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()})
+    heats = [db.get(Heat, hid) for hid in heat_ids if db.get(Heat, hid)]
+    anneals = db.execute(text("SELECT id, lot_no, date, grade, weight_kg, qa_status FROM anneal_lots WHERE trace_id=:t ORDER BY id DESC"), {"t": trace_id}).mappings().all() if _table_exists(engine.connect(), 'anneal_lots') else []
+    grinds = db.execute(text("SELECT id, lot_no, date, grade, weight_kg, qa_status FROM grinding_lots WHERE trace_id=:t ORDER BY id DESC"), {"t": trace_id}).mappings().all() if _table_exists(engine.connect(), 'grinding_lots') else []
+    fgs = db.execute(text("SELECT id, lot_no, date, family, fg_grade, weight_kg, qa_status FROM fg_lots WHERE trace_id=:t ORDER BY id DESC"), {"t": trace_id}).mappings().all() if _table_exists(engine.connect(), 'fg_lots') else []
+    return templates.TemplateResponse("trace_thread.html", {"request": request, "trace_id": trace_id, "lots": lots, "heats": heats, "anneals": anneals, "grinds": grinds, "fgs": fgs})
+
 @app.get("/traceability/heat/{heat_id}", response_class=HTMLResponse)
 def trace_heat(heat_id: int, request: Request, db: Session = Depends(get_db)):
     heat = (

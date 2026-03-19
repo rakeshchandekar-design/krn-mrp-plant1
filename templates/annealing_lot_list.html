@@ -66,7 +66,7 @@
       <td>{{ x.qa_status }}</td>
      <td>
   <a href="/anneal/trace/{{ x.id }}">Trace</a> | 
-  <a href="/anneal/pdf/{{ x.id }}" target="_blank">PDF</a>
+  <a href="/anneal/pdf/{{ x.id }}" target="_blank">PDF</a> | <a href="/anneal/jobcard/{{ x.id }}" target="_blank">Job Card</a>
   {% if x.qa_status %}
     <br><small>QA: {{ x.qa_status }}</small>
   {% endif %}

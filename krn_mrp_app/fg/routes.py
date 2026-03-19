@@ -68,6 +68,14 @@ AUTO_QA_FIELDS_CHEM = ["C","Si","S","P","Cu","Ni","Mn","Fe"]
 AUTO_QA_FIELDS_PHYS = ["ad","flow","compressibility"]
 AUTO_QA_FIELDS_PSD  = ["p212","p180","n180p150","n150p75","n75p45","n45"]
 
+def _compose_trace_id(parts):
+    vals=[]
+    for p in parts:
+        s=(str(p or "").strip())
+        if s and s not in vals:
+            vals.append(s)
+    return vals[0] if len(vals)==1 else ("+".join(vals)[:240] if vals else "")
+
 # ----------------- Helpers -----------------
 def _is_admin(request: Request) -> bool:
     s = getattr(request, "state", None)
@@ -342,10 +350,10 @@ async def fg_create_post(
             INSERT INTO fg_lots
                 (date, lot_no, family, fg_grade, weight_kg,
                  base_cost_per_kg, surcharge_per_kg, cost_per_kg,
-                 src_alloc_json, qa_status, remarks)
+                 src_alloc_json, qa_status, remarks, trace_id, job_card_no)
             VALUES
                 (:date, :lot_no, :family, :fg_grade, :weight_kg,
-                 :base_cost, :surcharge, :cost, :src_alloc_json, 'PENDING', :remarks)
+                 :base_cost, :surcharge, :cost, :src_alloc_json, 'PENDING', :remarks, :trace_id, :job_card_no)
         """), {
             "date": date.today(),
             "lot_no": lot_no,
@@ -357,6 +365,8 @@ async def fg_create_post(
             "cost_per_kg": cost_per_kg,
             "src_alloc_json": json.dumps(allocations),
             "remarks": remarks or "",
+            "trace_id": _compose_trace_id(list(allocations.keys())),
+            "job_card_no": f"JC-FG-{lot_no}",
         })
 
     return RedirectResponse("/fg/lots", status_code=303)
@@ -643,3 +653,11 @@ async def fg_qa_save(
         conn.execute(text("UPDATE fg_lots SET qa_status=:st WHERE id=:id"), {"st": dnorm, "id": fg_id})
 
     return RedirectResponse("/qa-dashboard", status_code=303)
+
+
+@router.get("/jobcard/{fg_id}", response_class=HTMLResponse)
+async def fg_jobcard(request: Request, fg_id: int, dep: None = Depends(require_roles("admin","fg","view"))):
+    with engine.begin() as conn:
+        head = conn.execute(text("SELECT * FROM fg_lots WHERE id=:id"), {"id": fg_id}).mappings().first()
+        if not head: raise HTTPException(404, "FG lot not found")
+    return templates.TemplateResponse("jobcard_stage.html", {"request": request, "stage": "FINAL PRODUCT", "header": head, "trace_id": head.get("trace_id") or head.get("lot_no"), "job_card_no": head.get("job_card_no") or f"JC-FG-{head.get('lot_no')}"})
