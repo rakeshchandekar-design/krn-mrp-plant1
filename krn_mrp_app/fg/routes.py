@@ -19,25 +19,25 @@ templates = Jinja2Templates(directory="templates")
 # Config: Surcharges (₹/kg) by FG grade
 # -----------------------------------
 FG_SURCHARGE: Dict[str, float] = {
-    # From KIP grades
-    "KIP 80.29": 10.0,
-    "KIP 100.29": 15.0,
-    "KIP 100.25": 15.0,
+    # KIP family (existing surcharges increased by ₹4)
+    "KIP 80.29": 14.0,
+    "KIP 100.29": 19.0,
+    "KIP 100.25": 19.0,
+    "KIPH 100.29": 20.0,
+    "KIP 40.29": 9.0,
+    "KIP 20": 6.0,
 
-    # Premixes (from KIP)
-    "Premixes 01.01": 25.0,
-    "Premixes 01.02": 25.0,
-    "Premixes 01.03": 25.0,
-    "Premixes 02.01": 25.0,
-    "Premixes 02.02": 25.0,
-    "Premixes 02.03": 25.0,
+    # Premixes (existing surcharges increased by ₹4)
+    "Premixes 01.01": 29.0,
+    "Premixes 01.02": 29.0,
+    "Premixes 01.03": 29.0,
+    "Premixes 02.01": 29.0,
+    "Premixes 02.02": 29.0,
+    "Premixes 02.03": 29.0,
 
-    # From KFS grades
-    "KFS 15/45": 20.0,
-    "KFS 15/60": 20.0,
-
-    # Oversize from Grinding (+80, +40)
-    "KIP 40.29": 5.0,
+    # KFS family (existing surcharges increased by ₹4)
+    "KFS 15/45": 24.0,
+    "KFS 15/60": 24.0,
 }
 
 # Which FG grades belong to which family (validation lock)
@@ -46,6 +46,11 @@ FG_FAMILY: Dict[str, str] = {
     "KIP 80.29": "KIP",
     "KIP 100.29": "KIP",
     "KIP 100.25": "KIP",
+    "KIPH 100.29": "KIP",
+    "KIP 40.29": "KIP",
+    "KIP 20": "KIP",
+
+    # Premixes
     "Premixes 01.01": "KIP",
     "Premixes 01.02": "KIP",
     "Premixes 01.03": "KIP",
@@ -56,9 +61,6 @@ FG_FAMILY: Dict[str, str] = {
     # KFS family
     "KFS 15/45": "KFS",
     "KFS 15/60": "KFS",
-
-    # Oversize flow considered KIP product per spec
-    "KIP 40.29": "KIP",
 }
 
 # For QA auto-prefill: take average of available params (same as your anneal logic style)
@@ -90,29 +92,36 @@ def _table_exists(conn, name: str) -> bool:
     except Exception:
         return False
 
-def _load_grinding_allocations_used(conn) -> Dict[str, float]:
-    """ Sum allocations already used in FG from fg_lots.src_alloc_json """
-    used: Dict[str, float] = {}
+def _load_fg_allocations_used(conn) -> tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+    """Split FG allocations into main grinding, +80 oversize and +40 oversize usage."""
+    main_used: Dict[str, float] = {}
+    ov80_used: Dict[str, float] = {}
+    ov40_used: Dict[str, float] = {}
     if not _table_exists(conn, "fg_lots"):
-        return used
+        return main_used, ov80_used, ov40_used
+
     for (alloc_json,) in conn.execute(text("SELECT src_alloc_json FROM fg_lots")).all():
         if not alloc_json:
             continue
         try:
             d = json.loads(alloc_json)
-            for lot_no, qty in d.items():
-                used[lot_no] = used.get(lot_no, 0.0) + float(qty or 0.0)
+            for key, qty in d.items():
+                q = float(qty or 0.0)
+                if key.startswith("OV80|"):
+                    lot_no = key.split("|", 1)[1]
+                    ov80_used[lot_no] = ov80_used.get(lot_no, 0.0) + q
+                elif key.startswith("OV40|"):
+                    lot_no = key.split("|", 1)[1]
+                    ov40_used[lot_no] = ov40_used.get(lot_no, 0.0) + q
+                else:
+                    main_used[key] = main_used.get(key, 0.0) + q
         except Exception:
             pass
-    return used
+    return main_used, ov80_used, ov40_used
+
 
 def fetch_grind_balance() -> List[Dict[str, Any]]:
-    """
-    Source inventory for FG = APPROVED grinding lots.
-    available_kg = grinding_lots.weight_kg - qty already used in fg_lots.src_alloc_json
-    base cost = grinding_lots.cost_per_kg (weighted in create)
-    Family = 'KIP' if grade startswith('KIP') else 'KFS'
-    """
+    """Approved grinding stock available for normal FG grades."""
     with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT id, lot_no, date, grade,
@@ -126,16 +135,17 @@ def fetch_grind_balance() -> List[Dict[str, Any]]:
             ORDER BY date DESC, id DESC
         """)).mappings().all()
 
-        used = _load_grinding_allocations_used(conn)
+        main_used, _ov80_used, _ov40_used = _load_fg_allocations_used(conn)
 
     out: List[Dict[str, Any]] = []
     for r in rows:
         ln = r["lot_no"]
-        avail = float(r["weight_kg"] or 0) - float(used.get(ln, 0.0))
+        avail = float(r["weight_kg"] or 0) - float(main_used.get(ln, 0.0))
         if avail > 0.0001:
             g = (r["grade"] or "").strip().upper()
             family = "KIP" if g.startswith("KIP") else ("KFS" if g.startswith("KFS") else "KIP")
             out.append({
+                "source_type": "MAIN",
                 "grind_id": r["id"],
                 "lot_no": ln,
                 "date": r["date"],
@@ -147,6 +157,59 @@ def fetch_grind_balance() -> List[Dict[str, Any]]:
                 "oversize_p40_kg": float(r["p40"] or 0.0),
             })
     return out
+
+
+def fetch_oversize_balance(kind: str) -> List[Dict[str, Any]]:
+    """Oversize balances available for conversion to KIP 40.29 (P80) or KIP 20 (P40)."""
+    kind = (kind or "").upper()
+    col = "p80" if kind == "P80" else "p40"
+    key_prefix = "OV80|" if kind == "P80" else "OV40|"
+    label = "+80 Oversize" if kind == "P80" else "+40 Oversize"
+
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT id, lot_no, date, grade,
+                   COALESCE(cost_per_kg,0)::float         AS grind_cost_per_kg,
+                   COALESCE(oversize_p80_kg,0)::float     AS p80,
+                   COALESCE(oversize_p40_kg,0)::float     AS p40,
+                   COALESCE(qa_status,'')                 AS qa_status
+            FROM grinding_lots
+            WHERE UPPER(COALESCE(qa_status,''))='APPROVED'
+            ORDER BY date DESC, id DESC
+        """)).mappings().all()
+
+        _main_used, ov80_used, ov40_used = _load_fg_allocations_used(conn)
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        ln = r["lot_no"]
+        used_map = ov80_used if kind == "P80" else ov40_used
+        raw_qty = float(r[col] or 0.0)
+        avail = raw_qty - float(used_map.get(ln, 0.0))
+        if avail > 0.0001:
+            out.append({
+                "source_type": key_prefix.rstrip("|"),
+                "grind_id": r["id"],
+                "lot_no": f"{key_prefix}{ln}",
+                "display_lot_no": ln,
+                "date": r["date"],
+                "family": "KIP",
+                "grade": label,
+                "available_kg": avail,
+                "grind_cost_per_kg": float(r["grind_cost_per_kg"] or 0.0),
+                "oversize_p80_kg": float(r["p80"] or 0.0),
+                "oversize_p40_kg": float(r["p40"] or 0.0),
+            })
+    return out
+
+
+def fetch_fg_source_balance(fg_grade: str) -> List[Dict[str, Any]]:
+    grade = (fg_grade or "").strip().upper()
+    if grade == "KIP 40.29":
+        return fetch_oversize_balance("P80")
+    if grade == "KIP 20":
+        return fetch_oversize_balance("P40")
+    return fetch_grind_balance()
 
 def _fg_family_for_grade(fg_grade: str) -> str:
     return FG_FAMILY.get(fg_grade, "KIP")
@@ -192,13 +255,15 @@ async def fg_home(request: Request, dep: None = Depends(require_roles("admin","f
 # --------------- CREATE ---------------
 @router.get("/create", response_class=HTMLResponse)
 async def fg_create_get(request: Request, dep: None = Depends(require_roles("fg","admin"))):
-    rows = fetch_grind_balance()
+    rows = fetch_grind_balance() + fetch_oversize_balance("P80") + fetch_oversize_balance("P40")
     err = request.query_params.get("err", "")
     return templates.TemplateResponse("fg_create.html", {
         "request": request,
-        "grind_rows": rows,
+        "src_rows": rows,
+        "grades": sorted(FG_SURCHARGE.keys()),
         "surcharges": FG_SURCHARGE,
         "err": err,
+        "cap": 10000.0,
         "is_admin": _is_admin(request),
     })
 
@@ -243,17 +308,16 @@ async def fg_create_post(
 
     # 3) validate family lock
     family_needed = _fg_family_for_grade(fg_grade)
-    avail_rows = fetch_grind_balance()
+    avail_rows = fetch_fg_source_balance(fg_grade)
     amap = {r["lot_no"]: r for r in avail_rows}
 
     for lot_no, qty in allocations.items():
         r = amap.get(lot_no)
         if (r is None) or (qty > float(r.get("available_kg") or 0)):
-            return RedirectResponse(f"/fg/create?err=Grinding+lot+{lot_no}+not+found+or+insufficient+balance.",
+            return RedirectResponse(f"/fg/create?err=Source+lot+{lot_no}+not+found+or+insufficient+balance.",
                                     status_code=303)
-        if r.get("family") != family_needed and fg_grade != "KIP 40.29":
-            # 'KIP 40.29' is from oversize, but we still allow from KIP family grinding lots.
-            return RedirectResponse("/fg/create?err=FG+grade+family+does+not+match+source+Grinding+family.",
+        if r.get("family") != family_needed:
+            return RedirectResponse("/fg/create?err=FG+grade+family+does+not+match+selected+source+family.",
                                     status_code=303)
 
     # 4) compute weighted base cost from grinding cost_per_kg
@@ -285,7 +349,7 @@ async def fg_create_post(
         """), {
             "date": date.today(),
             "lot_no": lot_no,
-            "family": family_needed if fg_grade != "KIP 40.29" else "KIP",
+            "family": family_needed,
             "fg_grade": fg_grade,
             "weight_kg": fg_weight,
             "base_cost_per_kg": base_cost,

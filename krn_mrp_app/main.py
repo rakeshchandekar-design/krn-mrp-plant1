@@ -66,8 +66,8 @@ def date_field(model):
 # -------------------------------------------------
 MELT_COST_PER_KG_KRIP = 6.0
 MELT_COST_PER_KG_KRFS = 8.0
-ATOMIZATION_COST_PER_KG = 5.0
-SURCHARGE_PER_KG = 2.0
+ATOMIZATION_COST_PER_KG = 2.0
+SURCHARGE_PER_KG = 0.0
 
 # Melting capacity & power targets
 DAILY_CAPACITY_KG = 7000.0          # melting 24h capacity
@@ -3850,10 +3850,10 @@ async def atom_new(
                 db.add(LotHeat(lot_id=lot.id, heat_id=h.id, qty=q))
                 h.alloc_used = float(h.alloc_used or 0.0) + q
 
-        # ---- Costing: weighted avg heat cost + atom + surcharge ----
+        # ---- Costing: weighted avg heat cost + atomization add cost ----
         weighted_cost = sum((h.unit_cost or 0.0) * allocs.get(h.id, 0.0) for h in heats)
         avg_heat_unit_cost = (weighted_cost / total_alloc) if total_alloc > 1e-9 else 0.0
-        lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG + SURCHARGE_PER_KG
+        lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG
         lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
 
         # ---- Chemistry average (unchanged) ----
