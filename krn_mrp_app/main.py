@@ -1334,7 +1334,7 @@ if not os.path.isdir(STATIC_DIR):
 app = FastAPI()
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 # session middleware (keep the secret; regenerate for production)
-app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", "dev-only-change-me"))
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", "dev-only-change-me"), max_age=INACTIVITY_SECONDS, same_site="lax")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
@@ -1425,11 +1425,17 @@ async def session_heartbeat(request: Request, call_next):
 @app.middleware("http")
 async def attach_role_flags(request: Request, call_next):
     """
-    Attach role + read_only flags to request.state so templates
-    can use:  request.state.role  /  request.state.read_only
+    Attach username / role / read_only flags to request.state so templates
+    can use a consistent top bar across all routers and pages.
     """
-    request.state.role = _role_of(request)
-    request.state.read_only = _is_read_only(request)
+    try:
+        sess = getattr(request, "session", {}) or {}
+    except Exception:
+        sess = {}
+    request.state.username = sess.get("username", "") or request.cookies.get("username", "") or ""
+    request.state.role = sess.get("role", "guest") or request.cookies.get("role", "guest") or "guest"
+    request.state.read_only = (request.state.role == "view")
+    request.state.is_admin = (request.state.role == "admin")
     return await call_next(request)
 
 @app.middleware("http")
@@ -1441,6 +1447,23 @@ async def block_writes_for_view(request: Request, call_next):
     if _is_read_only(request) and request.method in ("POST", "PUT", "PATCH", "DELETE"):
         return PlainTextResponse("Read-only account: action blocked", status_code=403)
     return await call_next(request)
+
+@app.middleware("http")
+async def disable_cache_for_app_pages(request: Request, call_next):
+    """Prevent browser/back-forward cache from showing stale logged-in pages.
+    This makes session timeout and logout behavior feel professional and consistent.
+    """
+    response = await call_next(request)
+    try:
+        path = request.url.path or ""
+        ctype = (response.headers.get("content-type") or "").lower()
+        if not path.startswith("/static") and not path.startswith("/uploads") and request.method == "GET" and "text/html" in ctype:
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+    except Exception:
+        return response
 
 # ---- Users: username = department; default password = same as username ----
 # Change passwords here later.
@@ -1695,8 +1718,8 @@ async def login_post(
 
     # Keep your cookie behavior (role/username cookies)
     resp = RedirectResponse("/", status_code=303)
-    resp.set_cookie("role", role, max_age=60*60*24*7, samesite="lax")       # 7 days (unchanged)
-    resp.set_cookie("username", uname, max_age=60*60*24*7, samesite="lax")  # optional (unchanged)
+    resp.set_cookie("role", role, max_age=INACTIVITY_SECONDS, samesite="lax")       # 7 days (unchanged)
+    resp.set_cookie("username", uname, max_age=INACTIVITY_SECONDS, samesite="lax")  # optional (unchanged)
     return resp
 
 # --- updated logout to release the active session slot ---

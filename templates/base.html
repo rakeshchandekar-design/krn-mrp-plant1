@@ -29,7 +29,13 @@
 </head>
 <body>
 
-{# Resolve role with safe fallbacks: route -> request.state -> session -> 'guest' #}
+{# Resolve username + role with safe fallbacks #}
+{% set _username = (
+  user
+  or (request.state.username if request.state.username is defined else None)
+  or (request.session.get('username') if request.session is defined else None)
+  or ''
+) %}
 {% set _role = (
   role
   or (request.state.role if request.state.role is defined else None)
@@ -57,6 +63,7 @@
       <a href="/qa-dashboard" {{ active('/qa-dashboard') }}>QA</a>
       <a href="/help" {{ active('/help') }}>Help</a>
 
+      {% if _username %}<span class="role-badge">{{ _username }}</span>{% endif %}
       <span class="role-badge">{{ _role|capitalize }}</span>
       {% if _role != 'guest' %}
         <a class="btn-auth" href="/logout">Logout</a>
@@ -197,6 +204,56 @@
   });
 })();
 </script>
+
+<script>
+(function(){
+  if (window.__krnIdleBound) return;
+  window.__krnIdleBound = true;
+  window.addEventListener("pageshow", function(){
+    try {
+      const role = "{{ _role|e }}";
+      if (role && role.toLowerCase() !== "guest") {
+        fetch(window.location.pathname, {method:"HEAD", credentials:"same-origin", cache:"no-store"})
+          .then((res)=>{ if (res.redirected) window.location.href = res.url; })
+          .catch(()=>{});
+      }
+    } catch(e) {}
+  });
+})();
+</script>
+
+<script>
+(function(){
+  let dirty = false;
+  let submitted = false;
+  const forms = Array.from(document.querySelectorAll('form')).filter(f => {
+    const method = (f.getAttribute('method') || 'get').toLowerCase();
+    return method !== 'get' && !f.hasAttribute('data-no-unsaved-warning');
+  });
+  if (!forms.length) return;
+
+  const markDirty = (ev) => {
+    const t = ev.target;
+    if (!t) return;
+    if (t.type === 'hidden' || t.type === 'submit' || t.type === 'button') return;
+    dirty = true;
+  };
+
+  forms.forEach(f => {
+    f.addEventListener('input', markDirty, true);
+    f.addEventListener('change', markDirty, true);
+    f.addEventListener('submit', function(){ submitted = true; dirty = false; }, true);
+  });
+
+  window.addEventListener('beforeunload', function(e){
+    if (!submitted && dirty) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+})();
+</script>
+
 {# Per-page JS hook (used by dashboard charts) #}
 {% block extra_scripts %}{% endblock %}
 </body>

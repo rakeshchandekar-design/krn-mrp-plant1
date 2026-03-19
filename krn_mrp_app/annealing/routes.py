@@ -124,24 +124,7 @@ def plant2_available_rows(conn):
 
 # robust role helpers
 def current_role(request):
-    """
-    Return current user's role with fallbacks:
-    1) request.state.role (preferred)
-    2) cookie 'role'
-    3) request.session['role'] (if SessionMiddleware is used)
-    """
-    # 1) already attached to request
-    role = getattr(request.state, "role", None)
-    if role:
-        return role
-
-    # 2) cookie fallback
-    role = request.cookies.get("role")
-    if role:
-        request.state.role = role
-        return role
-
-    # 3) session fallback (only if you use SessionMiddleware)
+    """Robust role lookup for router templates. Prefer session, then request.state, then cookie."""
     try:
         if hasattr(request, "session"):
             role = request.session.get("role")
@@ -150,6 +133,15 @@ def current_role(request):
                 return role
     except Exception:
         pass
+
+    role = getattr(request.state, "role", None)
+    if role:
+        return role
+
+    role = request.cookies.get("role")
+    if role:
+        request.state.role = role
+        return role
 
     return "guest"
 
