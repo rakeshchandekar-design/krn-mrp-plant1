@@ -1615,10 +1615,25 @@ USER_DB = {
 }
 
 def current_username(request: Request) -> str:
-    return (getattr(request, "session", {}) or {}).get("user", "") or ""
+    sess = (getattr(request, "session", {}) or {})
+    user_obj = sess.get("user")
+    if isinstance(user_obj, dict):
+        uname = user_obj.get("username")
+        if uname:
+            return str(uname)
+    return (
+        sess.get("username")
+        or request.cookies.get("username", "")
+        or ""
+    )
 
 def current_role(request: Request) -> str:
-    return (getattr(request, "session", {}) or {}).get("role", "guest") or "guest"
+    sess = (getattr(request, "session", {}) or {})
+    return (
+        sess.get("role")
+        or request.cookies.get("role", "guest")
+        or "guest"
+    )
 
 def role_allowed(request: Request, allowed: set[str]) -> bool:
     role = current_role(request)

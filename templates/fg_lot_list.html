@@ -1,9 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
+
+<style>
+.fg-toolbar{margin-bottom:12px;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.fg-filter-form{display:grid;grid-template-columns:auto minmax(160px,220px) auto minmax(160px,220px) repeat(4,auto);gap:8px 10px;align-items:center}
+.fg-filter-form label{font-weight:600}
+.fg-filter-form .btn{width:auto;min-height:38px}
+@media (max-width: 980px){
+  .fg-toolbar{flex-direction:column;align-items:stretch}
+  .fg-filter-form{grid-template-columns:1fr 1fr;align-items:end}
+  .fg-filter-form label{grid-column:auto}
+}
+@media (max-width: 640px){
+  .fg-filter-form{grid-template-columns:1fr}
+  .fg-filter-form .btn{width:100%}
+}
+</style>
+
 <h2>FG Lots</h2>
-<div class="toolbar" style="margin-bottom:10px; gap:8px; display:flex; flex-wrap:wrap; align-items:center">
+<div class="fg-toolbar">
   <a class="btn" href="/fg/">← Back to FG</a>
-  <form method="get" action="/fg/lots" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+  <form method="get" action="/fg/lots" class="fg-filter-form">
     <label>From</label><input type="date" name="from_date" value="{{ from_date or '' }}">
     <label>To</label><input type="date" name="to_date" value="{{ to_date or '' }}">
     <button class="btn" type="submit">Fetch</button>

@@ -66,12 +66,14 @@
   user
   or (request.state.username if request.state.username is defined else None)
   or (request.session.get('username') if request.session is defined else None)
+  or (request.cookies.get('username') if request.cookies is defined else None)
   or ''
 ) %}
 {% set _role = (
   role
   or (request.state.role if request.state.role is defined else None)
   or (request.session.get('role') if request.session is defined else None)
+  or (request.cookies.get('role') if request.cookies is defined else None)
   or 'guest'
 ) %}
 
