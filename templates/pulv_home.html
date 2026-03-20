@@ -1,10 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Pulverization</h2>
-<div class="toolbar"><a class="btn" href="/pulv/create">Create Pulverization Lot</a> <a class="btn" href="/pulv/lots">View Lots</a> <a class="btn" href="/pulv/downtime">Downtime Log</a></div>
-<div class="grid-3">
-  <div class="card"><h2>Today</h2><table><tr><th>Lots</th><td class="right">{{ lots_today }}</td></tr><tr><th>Output</th><td class="right">{{ (produced_today|float)|round(0) }} kg</td></tr><tr><th>Avg Cost/kg</th><td class="right">₹ {{ (avg_cost_today|float)|round(2) }}</td></tr></table></div>
-  <div class="card"><h2>Last 5 days</h2><table><tr><th>Date</th><th class="right">Qty</th></tr>{% for r in last5 %}<tr><td>{{ r.date }}</td><td class="right">{{ (r.qty|float)|round(0) }}</td></tr>{% endfor %}</table></div>
-  <div class="card"><h2>Approved Stock</h2><table><tr><th>Grade</th><th class="right">Qty</th></tr>{% for r in live_stock %}<tr><td>{{ r.grade }}</td><td class="right">{{ (r.qty|float)|round(0) }}</td></tr>{% endfor %}</table></div>
-<div class="card"><h2>Downtime</h2><table><tr><th>Today</th><td class="right">{{ dt_today }}</td></tr></table><div class="muted">Capture Production / Maintenance / Power / Other loss minutes.</div></div></div>
+<div class="module-shell">
+  <h1 class="module-title">Pulverization</h1>
+  <div class="actions-top">
+    <a class="btn btn-primary" href="/pulv/create">Create Pulverization Lot</a>
+    <a class="btn" href="/pulv/lots">View Lots</a>
+    <a class="btn" href="/pulv/downtime">Downtime Log</a>
+  </div>
+  <div class="summary-cards">
+    <div class="card table-card"><h3>Today</h3><table class="table small"><tr><th>Lots</th><td class="right">{{ lots_today }}</td></tr><tr><th>Output</th><td class="right">{{ (produced_today|float)|round(0) }} kg</td></tr><tr><th>Avg Cost/kg</th><td class="right">₹ {{ (avg_cost_today|float)|round(2) }}</td></tr></table></div>
+    <div class="card table-card"><h3>Last 5 Days</h3><table class="table small"><tr><th>Date</th><th class="right">Qty</th></tr>{% for r in last5 %}<tr><td>{{ r.date }}</td><td class="right">{{ (r.qty|float)|round(0) }}</td></tr>{% endfor %}</table></div>
+    <div class="card table-card"><h3>Approved Stock</h3><table class="table small"><tr><th>Grade</th><th class="right">Qty</th></tr>{% for r in live_stock %}<tr><td>{{ r.grade }}</td><td class="right">{{ (r.qty|float)|round(0) }}</td></tr>{% endfor %}</table></div>
+  </div>
+  <div class="grid-2">
+    <div class="card table-card"><h3>Downtime</h3><table class="table small"><tr><th>Today (min)</th><td class="right">{{ dt_today }}</td></tr></table><div class="compact-muted">Capture Production / Maintenance / Power / Other loss minutes.</div></div>
+    <div class="card table-card"><h3>Route Controls</h3><div class="compact-muted">Sponge route starts from DRI GRN, then Pulverization, then Annealing. QR and trace_id are maintained for backward trace.</div></div>
+  </div>
+</div>
 {% endblock %}

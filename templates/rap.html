@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 {% set read_only = is_read_only(request) %}
-<div class="page-wrap" style="max-width:1200px;margin:16px auto;padding:0 16px">
+<div class="module-shell">
 
   <h1>RAP – Ready After Atomization</h1>
 
@@ -268,5 +268,6 @@
       <p class="small">No APPROVED lots are available in RAP.</p>
     {% endif %}
   </div>
+</div>
 </div>
 {% endblock %}

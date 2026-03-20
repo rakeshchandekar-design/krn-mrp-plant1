@@ -1,54 +1,63 @@
 {% extends "base.html" %}
 {% block content %}
 {% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
+<div class="module-shell">
+  <h1 class="module-title">Grinding &amp; Screening</h1>
 
-<h1>Grinding &amp; Screening</h1>
-
-<div class="grid-2">
-  <div class="card">
-    <h3>KPIs (Today)</h3>
-    <table class="table small">
-      <tr><th>Lots Today</th><td>{{ lots_today or 0 }}</td></tr>
-      <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
-      <tr><th>Oversize Today (kg)</th><td>{{ '%.0f'|format(oversize_today or 0) }}</td></tr>
-      {% if admin %}
-        <tr><th>Avg Cost Today (₹/kg)</th><td>{{ '%.2f'|format(avg_cost_today or 0) }}</td></tr>
-        <tr><th>Weighted Cost Today (₹/kg)</th><td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td></tr>
-      {% endif %}
-    </table>
+  <div class="actions-top">
+    <a class="btn btn-primary" href="/grind/create">Create Lot</a>
+    <a class="btn" href="/grind/lots">View Lots</a>
+    <a class="btn" href="/grind/downtime">Downtime Log</a>
   </div>
 
-  <div class="card">
-    <h3>Production — Last 5 Days</h3>
-    <table class="table small">
-      <tr><th>Date</th><th>Actual (kg)</th></tr>
-      {% for r in last5 %}
-        <tr><td>{{ r.date }}</td><td>{{ '%.0f'|format(r.qty or 0) }}</td></tr>
-      {% endfor %}
-    </table>
+  <div class="summary-cards">
+    <div class="card table-card">
+      <h3>KPIs (Today)</h3>
+      <table class="table small">
+        <tr><th>Lots Today</th><td>{{ lots_today or 0 }}</td></tr>
+        <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
+        <tr><th>Oversize Today (kg)</th><td>{{ '%.0f'|format(oversize_today or 0) }}</td></tr>
+        {% if admin %}
+          <tr><th>Avg Cost Today (₹/kg)</th><td>{{ '%.2f'|format(avg_cost_today or 0) }}</td></tr>
+          <tr><th>Weighted Cost Today (₹/kg)</th><td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td></tr>
+        {% endif %}
+      </table>
+    </div>
+
+    <div class="card table-card">
+      <h3>Production — Last 5 Days</h3>
+      <table class="table small">
+        <tr><th>Date</th><th>Actual (kg)</th></tr>
+        {% for r in last5 %}
+          <tr><td>{{ r.date }}</td><td>{{ '%.0f'|format(r.qty or 0) }}</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <div class="card table-card">
+      <h3>Stage Controls</h3>
+      <table class="table small">
+        <tr><th>Oversize capture</th><td>Mandatory</td></tr>
+        <tr><th>Source</th><td>Approved Anneal lots</td></tr>
+        <tr><th>Next stage</th><td>FG / Packing</td></tr>
+      </table>
+    </div>
   </div>
-</div>
 
-<div class="grid-2" style="margin-top:12px">
-  <div class="card">
-    <h3>Live Stock — Lots Available</h3>
-    <table class="table small">
-      <tr><th>Grade</th><th>Qty (kg)</th></tr>
-      {% for s in live_stock %}
-        <tr><td>{{ s.grade }}</td><td>{{ '%.0f'|format(s.qty or 0) }}</td></tr>
-      {% endfor %}
-    </table>
+  <div class="grid-2">
+    <div class="card table-card">
+      <h3>Live Stock — Lots Available</h3>
+      <table class="table small">
+        <tr><th>Grade</th><th>Qty (kg)</th></tr>
+        {% for s in live_stock %}
+          <tr><td>{{ s.grade }}</td><td>{{ '%.0f'|format(s.qty or 0) }}</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+    <div class="card table-card">
+      <h3>Operational Notes</h3>
+      <div class="compact-muted">Use this page for stage overview, then create lots or open detailed lot list for lot-wise action and QA.</div>
+    </div>
   </div>
-  <div></div>
-</div>
-
-<div class="toolbar" style="margin-top:10px">
-  <a class="btn btn-primary" href="/grind/create">Create Lot</a>
-  <a class="btn" href="/grind/lots">View Lots</a>
-</div>
-
-<!-- (inside the second card, or below it) -->
-<div class="toolbar">
-  <a class="btn" href="/grind/downtime">Downtime Log</a>
 </div>
 {% endblock %}

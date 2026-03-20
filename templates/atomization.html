@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-wrap" style="max-width:1200px;margin:16px auto;padding:0 16px">
+<div class="module-shell">
 
   {% if error_msg %}
   <div class="alert" style="background:#fee2e2;color:#991b1b;border-color:#fecaca">
@@ -301,4 +301,5 @@
     if(w){ w.addEventListener('input', updateAlloc); }
   });
 </script>
+</div>
 {% endblock %}

@@ -1,62 +1,69 @@
 {% extends "base.html" %}
 {% block content %}
-{# single, consistent admin flag #}
 {% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
+<div class="module-shell">
+  <h1 class="module-title">Annealing</h1>
 
-<h1>Annealing</h1>
-
-<!-- Row 1: KPIs + Production -->
-<div class="grid-2">
-  <div class="card">
-    <h3>KPIs (Today)</h3>
-    <table class="table small">
-      <tr><th>Target (kg / 24h)</th><td>{{ target }}</td></tr>
-      <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
-      <tr><th>Efficiency Today (%)</th><td>{{ '%.1f'|format(eff_today or 0) }}</td></tr>
-      <tr><th>Ammonia Today (kg)</th><td>{{ '%.2f'|format(nh3_today or 0) }}</td></tr>
-      {% if admin %}
-        <tr><th>Avg Cost Today (₹/kg)</th><td>{{ '%.2f'|format(avg_cost_today or 0) }}</td></tr>
-        <tr><th>Weighted Cost Today (₹/kg)</th><td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td></tr>
-      {% endif %}
-    </table>
+  <div class="actions-top">
+    <a class="btn btn-primary" href="/anneal/create">Create Lot</a>
+    <a class="btn" href="/anneal/lots">View Lots</a>
+    <a class="btn" href="/anneal/downtime">Downtime Log</a>
   </div>
 
-  <div class="card">
-    <h3>Production — Last 5 Days</h3>
-    <table class="table small">
-      <tr><th>Date</th><th>Actual (kg)</th></tr>
-      {% for r in last5 %}
-        <tr><td>{{ r.date }}</td><td>{{ '%.0f'|format(r.qty or 0) }}</td></tr>
-      {% endfor %}
-    </table>
-  </div>
-</div>
+  <div class="summary-cards">
+    <div class="card table-card">
+      <h3>KPIs (Today)</h3>
+      <table class="table small">
+        <tr><th>Target (kg / 24h)</th><td>{{ target }}</td></tr>
+        <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
+        <tr><th>Efficiency Today (%)</th><td>{{ '%.1f'|format(eff_today or 0) }}</td></tr>
+        <tr><th>Ammonia Today (kg)</th><td>{{ '%.2f'|format(nh3_today or 0) }}</td></tr>
+        {% if admin %}
+          <tr><th>Avg Cost Today (₹/kg)</th><td>{{ '%.2f'|format(avg_cost_today or 0) }}</td></tr>
+          <tr><th>Weighted Cost Today (₹/kg)</th><td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td></tr>
+        {% endif %}
+      </table>
+    </div>
 
-<!-- Row 2: Live Stock + Ammonia usage -->
-<div class="grid-2" style="margin-top:12px">
-  <div class="card">
-    <h3>Live Stock — Lots Available</h3>
-    <table class="table small">
-      <tr><th>Grade</th><th>Qty (kg)</th></tr>
-      {% for s in live_stock %}
-        <tr><td>{{ s.grade }}</td><td>{{ '%.0f'|format(s.qty or 0) }}</td></tr>
-      {% endfor %}
-    </table>
+    <div class="card table-card">
+      <h3>Production — Last 5 Days</h3>
+      <table class="table small">
+        <tr><th>Date</th><th>Actual (kg)</th></tr>
+        {% for r in last5 %}
+          <tr><td>{{ r.date }}</td><td>{{ '%.0f'|format(r.qty or 0) }}</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <div class="card table-card">
+      <h3>Ammonia Gas Usage</h3>
+      <table class="table small">
+        <tr><th>Yesterday (kg)</th><td>{{ '%.2f'|format(nh3_yday or 0) }}</td></tr>
+        <tr><th>Month to Date (kg)</th><td>{{ '%.2f'|format(nh3_mtd or 0) }}</td></tr>
+      </table>
+      <div class="compact-muted" style="margin-top:10px">Keep downtime and ammonia records updated for target-adjusted reporting.</div>
+    </div>
   </div>
 
-  <div class="card">
-    <h3>Ammonia Gas Usage</h3>
-    <table class="table small">
-      <tr><th>Yesterday (kg)</th><td>{{ '%.2f'|format(nh3_yday or 0) }}</td></tr>
-      <tr><th>Month to Date (kg)</th><td>{{ '%.2f'|format(nh3_mtd or 0) }}</td></tr>
-    </table>
-    <div class="toolbar"><a class="btn" href="/anneal/downtime">Downtime Log</a></div>
-  </div>
-</div>
+  <div class="grid-2">
+    <div class="card table-card">
+      <h3>Live Stock — Lots Available</h3>
+      <table class="table small">
+        <tr><th>Grade</th><th>Qty (kg)</th></tr>
+        {% for s in live_stock %}
+          <tr><td>{{ s.grade }}</td><td>{{ '%.0f'|format(s.qty or 0) }}</td></tr>
+        {% endfor %}
+      </table>
+    </div>
 
-<!-- actions -->
-<div class="toolbar" style="margin-top:10px">
-  <a class="btn btn-primary" href="/anneal/create">Create Lot</a>
-  <a class="btn" href="/anneal/lots">View Lots</a>
+    <div class="card table-card">
+      <h3>Stage Notes</h3>
+      <table class="table small">
+        <tr><th>Source</th><td>RAP / Pulverization approved lots</td></tr>
+        <tr><th>Gate</th><td>QA approval mandatory before Grinding</td></tr>
+        <tr><th>Primary control</th><td>Ammonia, PSD, oxygen, AD</td></tr>
+      </table>
+    </div>
+  </div>
 </div>
 {% endblock %}

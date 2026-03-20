@@ -271,3 +271,25 @@ input, select, textarea, button, .btn, .btn-auth{
     position:sticky; bottom:0; z-index:40; background:#fff; border-top:1px solid var(--line); padding:10px;
   }
 }
+
+
+/* === ERP layout stabilization v3 === */
+.krn-shell{max-width:1460px !important;}
+.page-wrap{max-width:1360px;margin:0 auto;padding:18px 22px 24px;}
+.module-shell{max-width:1360px;margin:0 auto;padding:18px 22px 24px;}
+.module-title{margin:4px 0 14px 0;font-size:1.95rem;font-weight:800;color:var(--krn-blue);}
+.grid-3{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:12px;}
+@media (min-width: 980px){.grid-3{grid-template-columns:repeat(3,minmax(0,1fr));}}
+.summary-cards{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:14px;}
+@media (min-width: 980px){.summary-cards{grid-template-columns:repeat(3,minmax(0,1fr));}}
+.table-card table{width:100%;}
+.table-card .table{width:100%;}
+.card h3,.card h2{margin-top:0}
+.actions-top{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.actions-top .btn{min-width:160px;justify-content:center}
+.auth-box .btn-auth{min-width:120px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
+.btn-auth{min-width:120px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
+input[type="date"], .date-field{max-width:220px}
+.filter-row{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px}
+.filter-row label{display:flex;flex-direction:column;gap:6px;font-weight:600;color:#334155}
+.compact-muted{color:#64748b;font-size:.92rem}
