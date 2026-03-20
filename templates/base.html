@@ -13,22 +13,33 @@
 
   <style>
     .krn-nav{background:#fff;border-bottom:4px solid #f59e0b;position:sticky;top:0;z-index:50;}
-    .krn-bar{max-width:1400px;margin:0 auto;display:flex;align-items:center;padding:10px 18px;gap:12px;flex-wrap:nowrap}
-    .header-brand{display:flex;align-items:center;gap:10px;white-space:nowrap}
+    .krn-shell{max-width:1400px;margin:0 auto;padding:10px 18px 8px;}
+    .krn-toprow{display:flex;align-items:center;justify-content:space-between;gap:16px;}
+    .header-brand{display:flex;align-items:center;gap:10px;white-space:nowrap;min-width:0;}
     .header-brand img{height:48px}
     .header-brand h1{font-size:2.0rem;font-weight:800;line-height:1.1;margin:0;white-space:nowrap}
-    .top-right{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;}
-    .nav-links{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;flex-wrap:wrap;}
-    .auth-box{display:flex;align-items:center;gap:8px;margin-left:auto;white-space:nowrap;flex:0 0 auto;}
-    .top-right a{color:#2563eb;text-decoration:none;padding:6px 10px;border-radius:8px;transition:background .2s ease}
-    .top-right a:hover{background:#f3f4f6}
-    .top-right a.active{font-weight:700;background:#0e2a47;color:#fff}
-    .role-badge{padding:2px 8px;border-radius:999px;background:#ffedd5;color:#7c2d12;border:1px solid #fed7aa;font-size:12px}
-    .btn-auth{background:#0e2a47;color:#fff;border:1px solid #0e2a47;padding:8px 12px;border-radius:8px;text-decoration:none}
+    .krn-navrow{margin-top:10px;display:flex;align-items:center;}
+    .nav-links{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;}
+    .nav-links-row a{color:#2563eb;text-decoration:none;padding:6px 10px;border-radius:8px;transition:background .2s ease}
+    .nav-links-row a:hover{background:#f3f4f6}
+    .nav-links-row a.active{font-weight:700;background:#0e2a47;color:#fff}
+    .auth-box{display:flex;align-items:center;gap:10px;white-space:nowrap;flex:0 0 auto;}
+    .role-badge{padding:2px 10px;border-radius:999px;background:#ffedd5;color:#7c2d12;border:1px solid #fed7aa;font-size:12px}
+    .btn-auth{background:#0e2a47;color:#fff;border:1px solid #0e2a47;padding:8px 14px;border-radius:10px;text-decoration:none}
     .btn-auth:hover{background:#f59e0b;border-color:#f59e0b}
     footer{ text-align:center; font-size:0.75rem; color:#666; margin-top:20px; }
-    @media (max-width: 1100px){.krn-bar{flex-wrap:wrap}.top-right{width:100%}.nav-links{flex-wrap:wrap}.auth-box{margin-left:0}}
+    @media (max-width: 1100px){
+      .krn-toprow{flex-wrap:wrap}
+      .header-brand h1{font-size:1.6rem}
+      .krn-navrow{margin-top:8px}
+      .auth-box-top{margin-left:auto}
+    }
   </style>
+
+  <style>
+    .page-auth, .header-auth-dup, .guest-login-strip, .top-auth-inline {display:none !important;}
+  </style>
+
 </head>
 <body>
 
@@ -47,14 +58,23 @@
 ) %}
 
 <header class="krn-nav">
-  <div class="krn-bar">
-    <div class="header-brand">
-      <img src="{{ url_for('static', path='KRN_Logo.png') }}" alt="KRN" />
-      <h1>KRN Alloys Pvt Ltd</h1>
+  <div class="krn-shell">
+    <div class="krn-toprow">
+      <div class="header-brand">
+        <img src="{{ url_for('static', path='KRN_Logo.png') }}" alt="KRN" />
+        <h1>KRN Alloys Pvt Ltd</h1>
+      </div>
+      <div class="auth-box auth-box-top">
+        {% if _role != 'guest' and _username %}<span class="role-badge">{{ _username }}</span>{% endif %}
+        {% if _role != 'guest' %}
+          <a class="btn-auth" href="/logout">Logout</a>
+        {% else %}
+          <a class="btn-auth" href="/login">Login</a>
+        {% endif %}
+      </div>
     </div>
-
-    <div class="top-right">
-      <div class="nav-links">
+    <div class="krn-navrow">
+      <div class="nav-links nav-links-row">
         <a href="/" {{ active('/') }}>Home</a>
         <a href="/grn" {{ active('/grn') }}>Stores (GRN)</a>
         <a href="/melting" {{ active('/melting') }}>Melting</a>
@@ -67,14 +87,6 @@
         <a href="/dispatch" {{ active('/dispatch') }}>Dispatch</a>
         <a href="/qa-dashboard" {{ active('/qa-dashboard') }}>QA</a>
         <a href="/help" {{ active('/help') }}>Help</a>
-      </div>
-      <div class="auth-box">
-        {% if _role != 'guest' and _username %}<span class="role-badge">{{ _username }}</span>{% endif %}
-        {% if _role != 'guest' %}
-          <a class="btn-auth" href="/logout">Logout</a>
-        {% else %}
-          <a class="btn-auth" href="/login">Login</a>
-        {% endif %}
       </div>
     </div>
   </div>
