@@ -1,4 +1,5 @@
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
+import io, csv
 from fastapi import APIRouter, Depends, Request
 from fastapi import Form
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -11,6 +12,9 @@ router = APIRouter()
 templates = Jinja2Templates(directory="templates")
 PULV_PROCESS_COST_PER_KG = 3.0
 PULV_DUST_LOSS_PCT = 3.0
+
+with engine.begin() as conn:
+    conn.execute(text("CREATE TABLE IF NOT EXISTS pulv_downtime (id SERIAL PRIMARY KEY, date DATE NOT NULL, minutes INTEGER NOT NULL, area TEXT NOT NULL, reason TEXT NOT NULL)"))
 
 def current_role(request):
     try:
@@ -70,10 +74,13 @@ def home(request: Request, dep: None = Depends(require_roles('admin','pulv','vie
         avg_cost_today = conn.execute(text("SELECT COALESCE(SUM(mag_output_qty_kg*cost_per_kg)/NULLIF(SUM(mag_output_qty_kg),0),0) FROM pulv_lots WHERE date=:d"), {'d': today}).scalar() or 0.0
         last5 = conn.execute(text("SELECT date, COALESCE(SUM(mag_output_qty_kg),0) qty FROM pulv_lots WHERE date >= :d GROUP BY date ORDER BY date DESC"), {'d': today - timedelta(days=4)}).mappings().all()
         live_stock = conn.execute(text("SELECT grade, COALESCE(SUM(mag_output_qty_kg),0) qty FROM pulv_lots WHERE COALESCE(qa_status,'')='APPROVED' GROUP BY grade ORDER BY grade")).mappings().all()
+        dt_today = conn.execute(text("SELECT COALESCE(SUM(minutes),0) FROM pulv_downtime WHERE date=:d"), {'d': today}).scalar() or 0
+        dt_top = conn.execute(text("SELECT date, area, reason, minutes FROM pulv_downtime ORDER BY date DESC, id DESC LIMIT 10")).mappings().all()
     return templates.TemplateResponse('pulv_home.html', {
         'request': request, 'role': current_role(request), 'is_admin': _is_admin(request),
         'lots_today': lots_today, 'produced_today': produced_today,
-        'avg_cost_today': avg_cost_today, 'last5': last5, 'live_stock': live_stock
+        'avg_cost_today': avg_cost_today, 'last5': last5, 'live_stock': live_stock,
+        'dt_today': int(dt_today or 0), 'dt_top': dt_top
     })
 
 @router.get('/create', response_class=HTMLResponse)
@@ -197,3 +204,43 @@ async def qa_post(lot_id: int, request: Request, dep: None = Depends(require_rol
             conn.execute(text("INSERT INTO pulv_qa_params (pulv_qa_id, param_name, param_value) VALUES (:qid,:n,:v)"), {'qid': qid, 'n': k, 'v': str(v)})
         conn.execute(text("UPDATE pulv_lots SET qa_status=:d, qa_remarks=:r WHERE id=:id"), {'d': decision, 'r': remarks, 'id': lot_id})
     return RedirectResponse('/pulv/lots', status_code=303)
+
+
+@router.get('/downtime', response_class=HTMLResponse)
+def pulv_downtime_get(request: Request, dep: None = Depends(require_roles('admin','pulv'))):
+    today = date.today().isoformat()
+    min_date = (date.today() - timedelta(days=90)).isoformat()
+    with engine.begin() as conn:
+        logs = conn.execute(text("SELECT date, minutes, area, reason FROM pulv_downtime ORDER BY date DESC, id DESC LIMIT 200")).mappings().all()
+    return templates.TemplateResponse('pulv_downtime.html', {
+        'request': request, 'today': today, 'min_date': min_date, 'logs': logs,
+        'err': request.query_params.get('err',''), 'role': current_role(request), 'is_admin': _is_admin(request)
+    })
+
+@router.post('/downtime')
+async def pulv_downtime_post(request: Request, dep: None = Depends(require_roles('admin','pulv'))):
+    form = await request.form()
+    try:
+        d = datetime.strptime(str(form.get('date') or ''), '%Y-%m-%d').date()
+    except Exception:
+        return RedirectResponse('/pulv/downtime?err=Invalid+date', status_code=303)
+    mins = int(form.get('minutes') or 0)
+    area = str(form.get('area') or '').strip()
+    reason = str(form.get('reason') or '').strip()
+    if mins <= 0:
+        return RedirectResponse('/pulv/downtime?err=Minutes+must+be+%3E+0', status_code=303)
+    if not area or not reason:
+        return RedirectResponse('/pulv/downtime?err=Type+and+Reason+are+required', status_code=303)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO pulv_downtime(date, minutes, area, reason) VALUES (:d,:m,:a,:r)"), {'d': d, 'm': mins, 'a': area, 'r': reason})
+    return RedirectResponse('/pulv/downtime', status_code=303)
+
+@router.get('/downtime.csv')
+def pulv_downtime_csv(dep: None = Depends(require_roles('admin','pulv','view'))):
+    with engine.begin() as conn:
+        rows = conn.execute(text("SELECT date, minutes, area, reason FROM pulv_downtime ORDER BY date DESC, id DESC")).mappings().all()
+    out = io.StringIO(); w = csv.writer(out)
+    w.writerow(['Date','Minutes','Type','Reason'])
+    for r in rows:
+        w.writerow([r['date'], r['minutes'], r['area'], r['reason']])
+    return HTMLResponse(content=out.getvalue(), media_type='text/csv', headers={'Content-Disposition':'attachment; filename=pulv_downtime.csv'})

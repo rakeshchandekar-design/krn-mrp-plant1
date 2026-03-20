@@ -2927,6 +2927,19 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     atom_dt_y,  atom_by_y  = _dt_breakdown(AtomDowntime, yest, _to if yest == _to else yest)
     atom_dt_m,  atom_by_m  = _dt_breakdown(AtomDowntime, _from, _to)
 
+    def _dt_simple_total(tbl: str, start: dt.date, end: dt.date):
+        try:
+            return int(db.execute(text(f"select coalesce(sum(minutes),0) from {tbl} where date between :a and :b"), {"a": start, "b": end}).scalar() or 0)
+        except Exception:
+            return 0
+
+    pulv_dt_y = _dt_simple_total("pulv_downtime", yest, _to if yest == _to else yest)
+    pulv_dt_m = _dt_simple_total("pulv_downtime", _from, _to)
+    anneal_dt_y = _dt_simple_total("anneal_downtime", yest, _to if yest == _to else yest)
+    anneal_dt_m = _dt_simple_total("anneal_downtime", _from, _to)
+    grind_dt_y = _dt_simple_total("grinding_downtime", yest, _to if yest == _to else yest)
+    grind_dt_m = _dt_simple_total("grinding_downtime", _from, _to)
+
     # ---------- Anneal → FG → Dispatch (raw SQL helpers) ----------
     pulv_y_qty = _sum(db, "select sum(mag_output_qty_kg) from pulv_lots where date=:d and (qa_status is null or qa_status!='REJECTED')", d=yest)
     pulv_m_qty = _sum(db, "select sum(mag_output_qty_kg) from pulv_lots where date between :a and :b and (qa_status is null or qa_status!='REJECTED')", a=_from, b=_to)
@@ -3036,6 +3049,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         return items[:3]
 
     dt_top3 = {
+        "PULV":    [],
         "MELTING": _top3_from_kind_dict(melt_by_m),
         "ATOM":    _top3_from_kind_dict(atom_by_m),
         "ANNEAL":  [], "GRIND": [], "FG": [],
@@ -3052,6 +3066,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         ), {"a": start, "b": end}).fetchall()
         return [{"area": r[0], "min": int(r[1] or 0)} for r in rows]
 
+    dt_top3["PULV"]   = _norm(_dt_simple("pulv_downtime", _from, _to))
     dt_top3["ANNEAL"] = _norm(_dt_simple("anneal_downtime", _from, _to))
     dt_top3["GRIND"]  = _norm(_dt_simple("grinding_downtime", _from, _to))
     dt_top3["FG"]     = _norm(_dt_simple("fg_downtime", _from, _to))
@@ -3147,6 +3162,9 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "melt_dt_m": melt_dt_m, "melt_by_m": melt_by_m,
         "atom_dt_y": atom_dt_y, "atom_by_y": atom_by_y,
         "atom_dt_m": atom_dt_m, "atom_by_m": atom_by_m,
+        "pulv_dt_y": pulv_dt_y, "pulv_dt_m": pulv_dt_m,
+        "anneal_dt_y": anneal_dt_y, "anneal_dt_m": anneal_dt_m,
+        "grind_dt_y": grind_dt_y, "grind_dt_m": grind_dt_m,
         "dt_top3": dt_top3,
 
         # Pulv/Anneal/Grind/FG cards

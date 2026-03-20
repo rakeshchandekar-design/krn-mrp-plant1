@@ -8,11 +8,11 @@
   }
   body{background:var(--bg)}
   .exec-wrap{max-width:1400px;margin:0 auto;padding:18px}
-  .exec-hero{background:linear-gradient(135deg,#0e2a47 0%, #173b63 100%);color:#fff;border-radius:18px;padding:20px 22px;box-shadow:0 14px 34px rgba(14,42,71,.16)}
-  .exec-hero-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+  .exec-hero{background:linear-gradient(135deg,#0e2a47 0%, #173b63 100%);color:#fff;border-radius:18px;padding:20px 22px;box-shadow:0 14px 34px rgba(14,42,71,.16);position:relative}
+  .exec-hero-top{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;position:relative}.title-block{flex:1 1 auto;text-align:center}.title-block .exec-title,.title-block .exec-sub{color:#fff}.title-block .exec-title{text-shadow:0 1px 2px rgba(0,0,0,.2)}
   .exec-title{font-size:2rem;font-weight:800;line-height:1.1;margin:0}
   .exec-sub{margin-top:6px;font-size:13px;color:#dbe7f5}
-  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .toolbar{display:flex;flex-direction:column;gap:10px;align-items:flex-start;margin-top:16px}.toolbar-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   .toolbar .btn, .toolbar button, .toolbar a.btn{
     background:#fff;color:var(--navy);border:none;border-radius:10px;padding:9px 14px;
     text-decoration:none;font-weight:700;cursor:pointer;
@@ -77,7 +77,7 @@
 <div class="exec-wrap">
   <div class="exec-hero">
     <div class="exec-hero-top">
-      <div>
+      <div class="title-block">
         <h1 class="exec-title">Executive Dashboard</h1>
         <div class="exec-sub">
           Plant overview for MD review • Range <strong>{{ from_date }}</strong> → <strong>{{ to_date }}</strong> • Yesterday {{ yesterday }} • Today {{ today }}
@@ -89,7 +89,7 @@
       </div>
     </div>
     <div class="toolbar screen-only">
-      <form method="get" action="/dashboard" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <form method="get" action="/dashboard" class="toolbar-row">
         <label>From</label>
         <input type="date" name="from_date" max="{{ today }}" value="{{ from_date }}">
         <label>To</label>
@@ -98,7 +98,7 @@
         <a class="btn" href="/dashboard">This Month</a>
         <a class="btn" href="/dashboard?from_date={{ today }}&to_date={{ today }}">Today</a>
       </form>
-      <button onclick="window.print()">Print / Save PDF</button>
+      <div class="toolbar-row"><button type="button" onclick="window.print()">Print / Save PDF</button></div>
     </div>
   </div>
 
@@ -122,6 +122,43 @@
       <div class="stat-label">MTD Output</div>
       <div class="stat-value">{{ ((fg_mtd_prod | default(0) | float)/1000) | round(1) }} MT</div>
       <div class="stat-sub">Finished goods produced in selected range</div>
+    </div>
+  </div>
+
+
+  <div class="section grid-2">
+    <div class="card">
+      <h2><span>Downtime — Yesterday vs MTD</span><span class="muted">Minutes</span></h2>
+      <div class="grid-2">
+        <div>
+          <table>
+            <tr><th>Stage</th><th class="right">Yesterday</th><th class="right">MTD</th></tr>
+            <tr><td>Pulverization</td><td class="right">{{ pulv_dt_y|default(0) }}</td><td class="right">{{ pulv_dt_m|default(0) }}</td></tr>
+            <tr><td>Melting</td><td class="right">{{ melt_dt_y|default(0) }}</td><td class="right">{{ melt_dt_m|default(0) }}</td></tr>
+            <tr><td>Atomization</td><td class="right">{{ atom_dt_y|default(0) }}</td><td class="right">{{ atom_dt_m|default(0) }}</td></tr>
+            <tr><td>Annealing</td><td class="right">{{ anneal_dt_y|default(0) }}</td><td class="right">{{ anneal_dt_m|default(0) }}</td></tr>
+            <tr><td>Grinding</td><td class="right">{{ grind_dt_y|default(0) }}</td><td class="right">{{ grind_dt_m|default(0) }}</td></tr>
+          </table>
+        </div>
+        <div>
+          <table>
+            <tr><th>Stage</th><th>Top reason</th><th class="right">Min</th></tr>
+            <tr><td>Pulverization</td><td>{{ (dt_top3.PULV[0].reason if dt_top3.PULV and dt_top3.PULV|length > 0 else '—') }}</td><td class="right">{{ (dt_top3.PULV[0].minutes if dt_top3.PULV and dt_top3.PULV|length > 0 else 0) }}</td></tr>
+            <tr><td>Melting</td><td>{{ (dt_top3.MELTING[0].reason if dt_top3.MELTING and dt_top3.MELTING|length > 0 else '—') }}</td><td class="right">{{ (dt_top3.MELTING[0].minutes if dt_top3.MELTING and dt_top3.MELTING|length > 0 else 0) }}</td></tr>
+            <tr><td>Atomization</td><td>{{ (dt_top3.ATOM[0].reason if dt_top3.ATOM and dt_top3.ATOM|length > 0 else '—') }}</td><td class="right">{{ (dt_top3.ATOM[0].minutes if dt_top3.ATOM and dt_top3.ATOM|length > 0 else 0) }}</td></tr>
+            <tr><td>Annealing</td><td>{{ (dt_top3.ANNEAL[0].reason if dt_top3.ANNEAL and dt_top3.ANNEAL|length > 0 else '—') }}</td><td class="right">{{ (dt_top3.ANNEAL[0].minutes if dt_top3.ANNEAL and dt_top3.ANNEAL|length > 0 else 0) }}</td></tr>
+            <tr><td>Grinding</td><td>{{ (dt_top3.GRIND[0].reason if dt_top3.GRIND and dt_top3.GRIND|length > 0 else '—') }}</td><td class="right">{{ (dt_top3.GRIND[0].minutes if dt_top3.GRIND and dt_top3.GRIND|length > 0 else 0) }}</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h2><span>Overview — MD Watchlist</span><span class="muted">Daily control</span></h2>
+      <div class="mini-kpi"><span>RM live stock</span><span class="v">{{ (grn_live_tot_qty/1000)|round(1) }} MT</span></div>
+      <div class="mini-kpi"><span>FG ready stock</span><span class="v">{{ ((fg_stock_value|default(0)|float)/10000000)|round(2) }} Cr</span></div>
+      <div class="mini-kpi"><span>QA pending</span><span class="v">{{ ns.qa_pending }}</span></div>
+      <div class="mini-kpi"><span>Selected range</span><span class="v">{{ from_date }} → {{ to_date }}</span></div>
+      <div class="muted">Recommended next additions: low stock alerts, QA aging, delay alerts and daily reports.</div>
     </div>
   </div>
 
