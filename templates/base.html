@@ -40,6 +40,24 @@
     .page-auth, .header-auth-dup, .guest-login-strip, .top-auth-inline {display:none !important;}
   </style>
 
+
+  <style>
+    .krn-popup-overlay{position:fixed;inset:0;background:rgba(14,42,71,.35);display:none;align-items:center;justify-content:center;z-index:99999;padding:16px;}
+    .krn-popup{width:min(460px,96vw);background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.22);overflow:hidden;border:1px solid #dbe4f0;}
+    .krn-popup-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:#0e2a47;color:#fff;}
+    .krn-popup-head h3{margin:0;font-size:18px;font-weight:800;}
+    .krn-popup-close{background:transparent;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;}
+    .krn-popup-body{padding:18px 16px;color:#1f2937;font-size:15px;line-height:1.5;}
+    .krn-popup-foot{padding:0 16px 16px;display:flex;justify-content:flex-end;gap:10px;}
+    .krn-popup-btn{background:#f59e0b;color:#111827;border:none;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;}
+    .krn-popup-btn.secondary{background:#e5e7eb;}
+    .krn-popup.error .krn-popup-head{background:#991b1b;}
+    .krn-popup.success .krn-popup-head{background:#065f46;}
+    .krn-popup.warning .krn-popup-head{background:#92400e;}
+    .krn-popup.info .krn-popup-head{background:#0e2a47;}
+    .krn-inline-alert,.alert.error,.alert,.signed-in{display:none !important;}
+  </style>
+
 </head>
 <body>
 
@@ -99,6 +117,19 @@
 <footer>
   Copyright © 2025 KRN Alloys Pvt Ltd. All Rights Reserved.
 </footer>
+<div id="krn-popup-overlay" class="krn-popup-overlay" aria-hidden="true">
+  <div id="krn-popup" class="krn-popup info" role="dialog" aria-modal="true" aria-labelledby="krn-popup-title">
+    <div class="krn-popup-head">
+      <h3 id="krn-popup-title">Message</h3>
+      <button type="button" class="krn-popup-close" id="krn-popup-close" aria-label="Close">×</button>
+    </div>
+    <div class="krn-popup-body" id="krn-popup-body"></div>
+    <div class="krn-popup-foot">
+      <button type="button" class="krn-popup-btn" id="krn-popup-ok">OK</button>
+    </div>
+  </div>
+</div>
+
   
 <!-- Idle timeout toast (non-intrusive) -->
 <style>
@@ -274,5 +305,42 @@
 
 {# Per-page JS hook (used by dashboard charts) #}
 {% block extra_scripts %}{% endblock %}
+
+<script>
+(function(){
+  const overlay = document.getElementById('krn-popup-overlay');
+  const popup = document.getElementById('krn-popup');
+  const titleEl = document.getElementById('krn-popup-title');
+  const bodyEl = document.getElementById('krn-popup-body');
+  const okBtn = document.getElementById('krn-popup-ok');
+  const closeBtn = document.getElementById('krn-popup-close');
+  if (!overlay || !popup) return;
+  window.showKrnPopup = function(message, type='info', title='Message'){
+    popup.className = 'krn-popup ' + (type || 'info');
+    titleEl.textContent = title || 'Message';
+    bodyEl.textContent = message || '';
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden','false');
+  };
+  window.closeKrnPopup = function(){
+    overlay.style.display = 'none';
+    overlay.setAttribute('aria-hidden','true');
+  };
+  okBtn.addEventListener('click', window.closeKrnPopup);
+  closeBtn.addEventListener('click', window.closeKrnPopup);
+  overlay.addEventListener('click', function(e){ if(e.target===overlay) window.closeKrnPopup(); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') window.closeKrnPopup(); });
+  const nativeAlert = window.alert.bind(window);
+  window.alert = function(msg){ window.showKrnPopup(String(msg||''), 'warning', 'Attention'); };
+  const params = new URLSearchParams(window.location.search);
+  const err = params.get('err');
+  const ok = params.get('ok');
+  const msg = params.get('msg');
+  if (err) window.showKrnPopup(decodeURIComponent(err.replace(/\+/g,' ')), 'error', 'Unable to Continue');
+  else if (ok) window.showKrnPopup(decodeURIComponent(ok.replace(/\+/g,' ')), 'success', 'Done');
+  else if (msg) window.showKrnPopup(decodeURIComponent(msg.replace(/\+/g,' ')), 'info', 'Message');
+})();
+</script>
+
 </body>
 </html>

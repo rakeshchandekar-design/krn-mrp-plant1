@@ -62,7 +62,7 @@ def _used_by_grn():
     return used
 
 @router.get('/', response_class=HTMLResponse)
-def home(request: Request, dep: None = Depends(require_roles('admin','anneal','view'))):
+def home(request: Request, dep: None = Depends(require_roles('admin','pulv','view'))):
     today = date.today()
     with engine.begin() as conn:
         lots_today = conn.execute(text("SELECT COUNT(*) FROM pulv_lots WHERE date=:d"), {'d': today}).scalar() or 0
@@ -77,7 +77,7 @@ def home(request: Request, dep: None = Depends(require_roles('admin','anneal','v
     })
 
 @router.get('/create', response_class=HTMLResponse)
-def create_get(request: Request, dep: None = Depends(require_roles('admin','anneal'))):
+def create_get(request: Request, dep: None = Depends(require_roles('admin','pulv'))):
     used = _used_by_grn()
     rows = []
     for r in fetch_dri_balance():
@@ -92,7 +92,7 @@ def create_get(request: Request, dep: None = Depends(require_roles('admin','anne
     })
 
 @router.post('/create')
-async def create_post(request: Request, dep: None = Depends(require_roles('admin','anneal'))):
+async def create_post(request: Request, dep: None = Depends(require_roles('admin','pulv'))):
     form = await request.form()
     allocs = {}
     total = 0.0
@@ -169,13 +169,13 @@ async def create_post(request: Request, dep: None = Depends(require_roles('admin
     return RedirectResponse('/pulv/lots', status_code=303)
 
 @router.get('/lots', response_class=HTMLResponse)
-def lots(request: Request, dep: None = Depends(require_roles('admin','anneal','view'))):
+def lots(request: Request, dep: None = Depends(require_roles('admin','pulv','view'))):
     with engine.begin() as conn:
         rows = conn.execute(text('SELECT * FROM pulv_lots ORDER BY date DESC, id DESC')).mappings().all()
     return templates.TemplateResponse('pulv_lot_list.html', {'request': request, 'role': current_role(request), 'rows': rows, 'is_admin': _is_admin(request)})
 
 @router.get('/qa/{lot_id}', response_class=HTMLResponse)
-def qa_get(lot_id: int, request: Request, dep: None = Depends(require_roles('admin','qa','anneal'))):
+def qa_get(lot_id: int, request: Request, dep: None = Depends(require_roles('admin','qa','pulv'))):
     with engine.begin() as conn:
         lot = conn.execute(text('SELECT * FROM pulv_lots WHERE id=:id'), {'id': lot_id}).mappings().first()
         qa = conn.execute(text('SELECT * FROM pulv_qa WHERE pulv_lot_id=:id ORDER BY id DESC LIMIT 1'), {'id': lot_id}).mappings().first()
@@ -184,7 +184,7 @@ def qa_get(lot_id: int, request: Request, dep: None = Depends(require_roles('adm
     return templates.TemplateResponse('pulv_qa_form.html', {'request': request, 'role': current_role(request), 'lot': lot, 'qa': qa, 'pmap': pmap})
 
 @router.post('/qa/{lot_id}')
-async def qa_post(lot_id: int, request: Request, dep: None = Depends(require_roles('admin','qa','anneal'))):
+async def qa_post(lot_id: int, request: Request, dep: None = Depends(require_roles('admin','qa','pulv'))):
     form = await request.form()
     decision = str(form.get('decision') or 'PENDING').upper()
     ad = float(form.get('ad') or 0)

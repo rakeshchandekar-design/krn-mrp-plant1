@@ -1571,6 +1571,7 @@ USER_DB = {
     "atom":    {"password": os.getenv("KRN_ATOM_PASSWORD",    "atom@2025"),    "role": "atom"},
     "rap":     {"password": os.getenv("KRN_RAP_PASSWORD",     "rap@2025"),     "role": "rap"},
     "anneal":  {"password": os.getenv("KRN_ANNEAL_PASSWORD",  "anneal@2025"),  "role": "anneal"},
+    "pulv":    {"password": os.getenv("KRN_PULV_PASSWORD",    "pulv@2025"),    "role": "pulv"},
     "grind":   {"password": os.getenv("KRN_GRIND_PASSWORD",   "grind@2025"),   "role": "grind"},
     "fg":      {"password": os.getenv("KRN_FG_PASSWORD",      "fg@2025"),      "role": "fg"},
     "qa":      {"password": os.getenv("KRN_QA_PASSWORD",      "qa@2025"),      "role": "qa"},

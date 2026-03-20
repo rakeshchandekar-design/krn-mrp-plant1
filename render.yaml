@@ -24,6 +24,8 @@ services:
         sync: false
       - key: KRN_ANNEAL_PASSWORD
         sync: false
+      - key: KRN_PULV_PASSWORD
+        sync: false
       - key: KRN_GRIND_PASSWORD
         sync: false
       - key: KRN_FG_PASSWORD

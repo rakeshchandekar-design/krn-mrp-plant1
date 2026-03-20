@@ -47,11 +47,15 @@
       color: #b91c1c; background: #fee2e2; border: 1px solid #fecaca; border-radius: 6px;
       text-align: left;
     }
-    .signed-in {
-      margin-bottom: 12px; padding: 8px 10px; font-size: 13px;
-      color: #065f46; background: #d1fae5; border: 1px solid #a7f3d0; border-radius: 6px;
-      text-align: left;
-    }
+    .signed-in {display:none;}
+    .krn-popup-overlay{position:fixed;inset:0;background:rgba(14,42,71,.35);display:none;align-items:center;justify-content:center;z-index:99999;padding:16px;}
+    .krn-popup{width:min(460px,96vw);background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.22);overflow:hidden;border:1px solid #dbe4f0;}
+    .krn-popup-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:#0e2a47;color:#fff;}
+    .krn-popup-head h3{margin:0;font-size:18px;font-weight:800;}
+    .krn-popup-close{background:transparent;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;}
+    .krn-popup-body{padding:18px 16px;color:#1f2937;font-size:15px;line-height:1.5;}
+    .krn-popup-foot{padding:0 16px 16px;display:flex;justify-content:flex-end;gap:10px;}
+    .krn-popup-btn{background:#f59e0b;color:#111827;border:none;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;}
     footer { margin-top: 18px; font-size: 12px; color: #9ca3af; text-align: center; }
     footer a { color: #0b5ed7; text-decoration: none; }
     footer a:hover { text-decoration: underline; }
@@ -75,14 +79,14 @@
 
     <!-- error message (if any) -->
     {% if error %}
-      <div class="alert">{{ error }}</div>
+      <div class="alert" style="display:none">{{ error }}</div>
     {% endif %}
 
     <h1>Login</h1>
 
     <form method="post" action="/login">
       <label>Username (department)</label>
-      <input type="text" name="username" placeholder="e.g. admin, store, melting, atom, rap, qa, anneal, krn" required>
+      <input type="text" name="username" placeholder="e.g. admin, store, melting, atom, rap, pulv, qa, anneal, grind, fg, krn" required>
 
       <label>Password</label>
       <input type="password" name="password" required>
@@ -95,5 +99,34 @@
   <footer>
     KRN MRP v1.0 · <a href="/">Back to Home</a> · <a href="/logout">Logout</a>
   </footer>
+
+  <div id="krn-popup-overlay" class="krn-popup-overlay" aria-hidden="true">
+    <div id="krn-popup" class="krn-popup info" role="dialog" aria-modal="true">
+      <div class="krn-popup-head">
+        <h3 id="krn-popup-title">Message</h3>
+        <button type="button" class="krn-popup-close" id="krn-popup-close">×</button>
+      </div>
+      <div class="krn-popup-body" id="krn-popup-body"></div>
+      <div class="krn-popup-foot"><button type="button" class="krn-popup-btn" id="krn-popup-ok">OK</button></div>
+    </div>
+  </div>
+  <script>
+  (function(){
+    const overlay=document.getElementById('krn-popup-overlay');
+    const popup=document.getElementById('krn-popup');
+    const title=document.getElementById('krn-popup-title');
+    const body=document.getElementById('krn-popup-body');
+    function show(msg,type,titleText){popup.className='krn-popup '+(type||'info');title.textContent=titleText||'Message';body.textContent=msg||'';overlay.style.display='flex';}
+    function close(){overlay.style.display='none';}
+    document.getElementById('krn-popup-ok').onclick=close;
+    document.getElementById('krn-popup-close').onclick=close;
+    overlay.onclick=(e)=>{ if(e.target===overlay) close(); };
+    const err={{ error|tojson if error is defined else 'null' }};
+    const ok={{ ok_msg|tojson if ok_msg is defined else 'null' }};
+    if(err) show(err,'error','Login Failed');
+    else if(ok) show(ok,'success','Done');
+  })();
+  </script>
+
 </body>
 </html>
