@@ -2,12 +2,19 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="page-wrap" style="max-width:1200px;margin:16px auto;padding:0 16px">
+<div class="module-shell melt-shell">
+<style>
+  .melt-shell{max-width:1360px;margin:0 auto;padding:18px 22px 24px;}
+  .melt-top-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:16px;margin-bottom:14px;}
+  @media (max-width:980px){.melt-top-grid{grid-template-columns:1fr;}}
+  .melt-shell .card{box-shadow:0 6px 16px rgba(15,23,42,.04);border-radius:16px;}
+  .melt-shell table{width:100%;}
+</style>
 
   <h1>Melting</h1>
 
   {# ----- KPI + 5-day row ----- #}
-  <div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px">
+  <div class="melt-top-grid">
     <div class="card">
       <h2 style="margin:0 0 8px 0;font-size:18px">KPIs (Yesterday)</h2>
 
@@ -103,7 +110,7 @@
   {# ----- Live stock ----- #}
   <div class="card" style="margin-bottom:12px">
     <h3 style="margin:0 0 8px 0;font-size:14px">Live Stock – Heats Available</h3>
-    <table style="width:auto">
+    <table>
       <thead>
         <tr>
           <th>Type</th>
