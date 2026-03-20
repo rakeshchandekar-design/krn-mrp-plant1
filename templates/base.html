@@ -6,10 +6,12 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>KRN Alloys Pvt Ltd</title>
+  <title>{% block title %}KRN Alloys Pvt Ltd{% endblock %}</title>
 
   <link rel="icon" type="image/png" href="{{ url_for('static', path='favicon.png') }}"/>
   <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}"/>
+
+  {% block head_extra %}{% endblock %}
 
   <style>
     .krn-nav{background:#fff;border-bottom:4px solid #f59e0b;position:sticky;top:0;z-index:50;}

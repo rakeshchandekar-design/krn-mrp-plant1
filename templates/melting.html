@@ -2,7 +2,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="module-shell">
+<div class="page-wrap" style="max-width:1200px;margin:16px auto;padding:0 16px">
 
   <h1>Melting</h1>
 
@@ -306,5 +306,5 @@
     const m=document.getElementById('dt_min');
     if(m){ m.addEventListener('input', syncDowntime); syncDowntime(); }
   });
-</div>
-<script>
+</script>
+{% endblock %}
