@@ -5787,4 +5787,4 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
 
 @app.get("/help", response_class=HTMLResponse)
 def help_page(request: Request):
-    return templates.TemplateResponse("help.html", {"request": request})
+    return templates.TemplateResponse("help.html", {"request": request, "user": current_username(request), "role": current_role(request)})

@@ -98,6 +98,10 @@ def _compose_trace_id(parts):
     return vals[0] if len(vals)==1 else ("+".join(vals)[:240] if vals else "")
 
 # ----------------- Helpers -----------------
+def _tpl_auth(request: Request) -> dict:
+    sess = (getattr(request, "session", {}) or {})
+    return {"user": sess.get("username", "") or "", "role": sess.get("role", "guest") or "guest"}
+
 def _is_admin(request: Request) -> bool:
     s = getattr(request, "state", None)
     if not s:

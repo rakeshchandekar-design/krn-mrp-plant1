@@ -29,6 +29,12 @@ OVERSIZE_MIN_SHARE = 0.07  # +80 + +40 must be ≥ 7% of created lot
 TARGET_KG_PER_DAY = 10000.0  # daily target capacity for KPI
 
 # --------- Helpers ---------
+
+
+def _tpl_auth(request: Request) -> dict:
+    sess = (getattr(request, "session", {}) or {})
+    return {"user": sess.get("username", "") or "", "role": sess.get("role", "guest") or "guest"}
+
 def _is_admin(request: Request) -> bool:
     s = getattr(request, "state", None)
     if not s: return False
@@ -128,6 +134,7 @@ async def grind_home(request: Request, dep: None = Depends(require_roles("admin"
         "last5": last5,
         "live_stock": live_stock,
         "is_admin": _is_admin(request),
+        **_tpl_auth(request),
     })
 
 # ---------------- CREATE ----------------
@@ -140,6 +147,7 @@ async def grind_create_get(request: Request, dep: None = Depends(require_roles("
         "anneal_rows": rows,
         "err": err,
         "is_admin": _is_admin(request),
+        **_tpl_auth(request),
     })
 
 @router.post("/create")
@@ -302,6 +310,7 @@ async def grind_lots(request: Request, dep: None = Depends(require_roles("admin"
         "from_date": from_date, "to_date": to_date,
         "today": date.today().isoformat(),
         "is_admin": _is_admin(request),
+        **_tpl_auth(request),
     })
 
 # ---------------- TRACE + PDF ----------------

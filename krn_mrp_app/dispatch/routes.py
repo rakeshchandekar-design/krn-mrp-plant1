@@ -13,6 +13,10 @@ router = APIRouter()
 templates = Jinja2Templates(directory="templates")
 
 # ---------- Helpers: mirror style of other modules ----------
+def _tpl_auth(request: Request) -> dict:
+    sess = (getattr(request, "session", {}) or {})
+    return {"user": sess.get("username", "") or "", "role": sess.get("role", "guest") or "guest"}
+
 def _is_admin(request: Request) -> bool:
     s = getattr(request, "state", None)
     if not s: return False
@@ -143,6 +147,7 @@ async def dispatch_home(request: Request, dep: None = Depends(require_roles("adm
         "total_avail": total_avail,
         "is_admin": _is_admin(request),
         "today": date.today().isoformat(),
+        **_tpl_auth(request),
     })
 
 # ---------------- CREATE ----------------
@@ -156,6 +161,7 @@ async def dispatch_create_get(request: Request, dep: None = Depends(require_role
         "err": err,
         "is_admin": _is_admin(request),
         "today": date.today().isoformat(),
+        **_tpl_auth(request),
     })
 
 @router.post("/create")
