@@ -26,6 +26,17 @@ FG_SURCHARGE: Dict[str, float] = {
     "KIPH 100.29": 20.0,
     "KIP 40.29": 9.0,
     "KIP 20": 6.0,
+    # Motherson job-work family: no surcharge, same cost carries forward
+    "KIP M 100.29": 0.0,
+    "KIP M 80.29": 0.0,
+    "KIP M 40.29": 0.0,
+    "KIP M 20": 0.0,
+    "KSP 100.25": 19.0,
+    "KSP 100.29": 19.0,
+    "KSP 40.29": 9.0,
+    "KSP 20": 6.0,
+    "KSP BW 100.25": 19.0,
+    "KSP TW 100.25": 19.0,
 
     # Premixes (existing surcharges increased by ₹4)
     "Premixes 01.01": 29.0,
@@ -49,6 +60,16 @@ FG_FAMILY: Dict[str, str] = {
     "KIPH 100.29": "KIP",
     "KIP 40.29": "KIP",
     "KIP 20": "KIP",
+    "KIP M 100.29": "KIPM",
+    "KIP M 80.29": "KIPM",
+    "KIP M 40.29": "KIPM",
+    "KIP M 20": "KIPM",
+    "KSP 100.25": "KSP",
+    "KSP 100.29": "KSP",
+    "KSP 40.29": "KSP",
+    "KSP 20": "KSP",
+    "KSP BW 100.25": "KSP",
+    "KSP TW 100.25": "KSP",
 
     # Premixes
     "Premixes 01.01": "KIP",
@@ -151,7 +172,7 @@ def fetch_grind_balance() -> List[Dict[str, Any]]:
         avail = float(r["weight_kg"] or 0) - float(main_used.get(ln, 0.0))
         if avail > 0.0001:
             g = (r["grade"] or "").strip().upper()
-            family = "KIP" if g.startswith("KIP") else ("KFS" if g.startswith("KFS") else "KIP")
+            family = "KIPM" if g.startswith("KIPM") else ("KSP" if g.startswith("KSP") else ("KIP" if g.startswith("KIP") else ("KFS" if g.startswith("KFS") else "KIP")))
             out.append({
                 "source_type": "MAIN",
                 "grind_id": r["id"],
@@ -201,7 +222,7 @@ def fetch_oversize_balance(kind: str) -> List[Dict[str, Any]]:
                 "lot_no": f"{key_prefix}{ln}",
                 "display_lot_no": ln,
                 "date": r["date"],
-                "family": "KIP",
+                "family": "KIPM" if (r["grade"] or "").strip().upper().startswith("KIPM") else ("KSP" if (r["grade"] or "").strip().upper().startswith("KSP") else "KIP"),
                 "grade": label,
                 "available_kg": avail,
                 "grind_cost_per_kg": float(r["grind_cost_per_kg"] or 0.0),
@@ -213,9 +234,9 @@ def fetch_oversize_balance(kind: str) -> List[Dict[str, Any]]:
 
 def fetch_fg_source_balance(fg_grade: str) -> List[Dict[str, Any]]:
     grade = (fg_grade or "").strip().upper()
-    if grade == "KIP 40.29":
+    if grade in ("KIP 40.29", "KIP M 40.29", "KSP 40.29"):
         return fetch_oversize_balance("P80")
-    if grade == "KIP 20":
+    if grade in ("KIP 20", "KIP M 20", "KSP 20"):
         return fetch_oversize_balance("P40")
     return fetch_grind_balance()
 

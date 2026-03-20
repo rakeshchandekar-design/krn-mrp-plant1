@@ -15,6 +15,8 @@ templates = Jinja2Templates(directory="templates")
 
 # --------- CONFIG ---------
 GRIND_ADD_COST = 6.0  # ₹/kg add over weighted Anneal cost
+JOBWORK_ANNEAL_GRADE = "KIPM"
+SPONGE_ANNEAL_GRADE = "KSP"
 
 def _compose_trace_id(parts):
     vals=[]
@@ -193,9 +195,9 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
             )
         grades.add((r.get("grade") or "").strip().upper())
 
-    fam = {"KIP" if g.startswith("KIP") else ("KFS" if g.startswith("KFS") else g) for g in grades}
+    fam = {"KIPM" if g.startswith("KIPM") else ("KSP" if g.startswith("KSP") else ("KIP" if g.startswith("KIP") else ("KFS" if g.startswith("KFS") else g))) for g in grades}
     if len(fam) > 1:
-        return RedirectResponse("/grind/create?err=Only+one+family+(KIP+or+KFS)+per+grind+lot.", status_code=303)
+        return RedirectResponse("/grind/create?err=Only+one+family+(KIP,+KIPM,+KSP+or+KFS)+per+grind+lot.", status_code=303)
     out_grade = list(fam)[0] or ""
 
     wsum = sum(allocations[ln] * float(amap[ln].get("anneal_cost_per_kg") or 0.0) for ln in allocations)

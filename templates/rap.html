@@ -180,7 +180,7 @@
             if (!(p.qty > 0)) { e.preventDefault(); alert('Enter quantity for every selected lot.'); return; }
           }
           const gset = new Set(picks.map(p => p.grade));
-          if (gset.size > 1) { e.preventDefault(); alert('Please select lots of a single grade (KRIP or KRFS) in one dispatch.'); return; }
+          if (gset.size > 1) { e.preventDefault(); alert('Please select lots of a single grade (KRIP, KRFS or KRM) in one dispatch.'); return; }
 
           const want = parseFloat(totalEl.value || '0');
           const have = picks.reduce((s, p) => s + p.qty, 0);

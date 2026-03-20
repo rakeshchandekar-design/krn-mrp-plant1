@@ -10,7 +10,7 @@
   %}
 {% endif %}
 
-<h2>Create Annealing Lot (Allocate from Approved RAP)</h2>
+<h2>Create Annealing Lot (Allocate from Approved RAP / Pulverization)</h2>
 
 <div class="toolbar" style="margin-bottom:10px">
   <a class="btn" href="/anneal/">← Back to Annealing</a>
@@ -32,8 +32,8 @@
 
   <table class="table">
     <tr>
-      <th>RAP Lot</th>
-      <th>RAP Grade</th>
+      <th>Source Lot</th>
+      <th>Source Grade</th>
       <th>Available (kg)</th>
       {% if is_admin %}<th>RAP Cost/kg (₹)</th>{% endif %}
       {% if is_admin %}<th>Total Value (₹)</th>{% endif %}
@@ -43,7 +43,7 @@
     {% set tv = namespace(sum=0.0) %}
     {% for r in rap_rows %}
     <tr class="
-        {% if r.grade.startswith('KRIP') %} bg-info-subtle
+        {% if r.grade.startswith('KRIP') or r.grade.startswith('KRSP') %} bg-info-subtle
         {% elif r.grade.startswith('KRFS') %} bg-warning-subtle
         {% endif %}
     ">
@@ -77,7 +77,7 @@
   <div id="client_err" class="alert alert-danger" style="display:none;margin:10px 0"></div>
 
   <p class="muted" style="margin-top:6px">
-    Cost rule: <strong>Anneal Cost/kg = Weighted RAP Cost/kg + ₹10</strong>. KRIP → KIP, KRFS → KFS.
+    Cost rule: <strong>Anneal Cost/kg = Weighted Source Cost/kg + ₹10</strong>. KRIP → KIP, KRFS → KFS, KRM → KIPM, KRSP → KSP.
   </p>
 
   <button id="submitBtn" class="btn btn-primary" type="submit" disabled>Create Lot</button>

@@ -57,7 +57,7 @@
   <div id="client_err" class="alert alert-danger" style="display:none;margin:10px 0"></div>
 
   <p class="muted" style="margin-top:6px">
-    Cost rule: <strong>Grinding Cost/kg = Weighted Anneal Cost/kg + ₹6</strong>. Family lock: KIP or KFS (single).
+    Cost rule: <strong>Grinding Cost/kg = Weighted Anneal Cost/kg + ₹6</strong>. Family lock: KIP, KIPM, KSP or KFS (single).
   </p>
 
   <button id="submitBtn" class="btn btn-primary" type="submit" disabled>Create Lot</button>
@@ -111,7 +111,7 @@
     let msg = '';
     if (!isFinite(lw) || lw <= 0) msg = 'Enter Lot Weight (> 0).';
     else if (Math.abs(total - lw) > 0.01) msg = `Lot Weight must equal total allocated (diff ${fmt(Math.abs(total-lw),2)} kg).`;
-    else if (gradesSelected().size > 1) msg = 'Only one family (KIP or KFS) may be allocated.';
+    else if (gradesSelected().size > 1) msg = 'Only one family (KIP, KIPM, KSP or KFS) may be allocated.';
     else if (oversize < oversizeMin) msg = `Oversize total must be ≥ ${fmt(oversizeMin,2)} kg.`;
 
     if (msg) { errBox.style.display=''; errBox.textContent=msg; submitBtn.disabled=true; }

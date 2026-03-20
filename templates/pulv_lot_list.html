@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Pulverization Lots</h2>
+<div class="toolbar"><a class="btn" href="/pulv">← Back</a></div>
+<table class="table">
+  <tr><th>Date</th><th>Lot No</th><th>Grade</th><th>Input</th><th>Mag Out</th><th>Dust %</th><th>Non-Mag %</th><th>Cost/kg</th><th>QA</th><th>Action</th></tr>
+  {% for r in rows %}
+    <tr><td>{{ r.date }}</td><td>{{ r.lot_no }}</td><td>{{ r.grade }}</td><td class="right">{{ (r.input_qty_kg|float)|round(1) }}</td><td class="right">{{ (r.mag_output_qty_kg|float)|round(1) }}</td><td class="right">{{ (r.dust_loss_pct|float)|round(2) }}</td><td class="right">{{ (r.non_mag_pct|float)|round(2) }}</td><td class="right">{{ (r.cost_per_kg|float)|round(2) }}</td><td>{{ r.qa_status }}</td><td><a class="btn" href="/pulv/qa/{{ r.id }}">QA</a></td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

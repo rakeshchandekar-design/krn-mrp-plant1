@@ -214,6 +214,19 @@
       <!-- Annealing -->
       {% set allow = role in ['admin','anneal','view'] %}
       <div class="card">
+        <h3><span class="icon">🧲</span>Pulverization</h3>
+        <div class="sub">Admin, Anneal</div>
+        <div class="foot">
+          {% if allow %}
+            <a class="open" href="/pulv">Open</a>
+          {% else %}
+            <button class="open" disabled>Open</button><span class="deny">✗</span>
+          {% endif %}
+        </div>
+      </div>
+
+      {% set allow = role in ['admin','anneal','view'] %}
+      <div class="card">
         <h3><span class="icon">♨️</span>Annealing</h3>
         <div class="sub">Admin, Anneal</div>
         <div class="foot">

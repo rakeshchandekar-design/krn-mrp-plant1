@@ -84,8 +84,11 @@ def _next_job_card(prefix: str, existing_count: int) -> str:
 # -------------------------------------------------
 MELT_COST_PER_KG_KRIP = 6.0
 MELT_COST_PER_KG_KRFS = 8.0
+MELT_COST_PER_KG_KRM  = 6.0  # Motherson job-work family: same processing cost as KRIP
 ATOMIZATION_COST_PER_KG = 2.0
 SURCHARGE_PER_KG = 0.0
+PULV_PROCESS_COST_PER_KG = 3.0
+PULV_DUST_LOSS_PCT = 3.0
 
 # Melting capacity & power targets
 DAILY_CAPACITY_KG = 7000.0          # melting 24h capacity
@@ -273,6 +276,98 @@ def migrate_schema(engine):
                 )
             """))
 
+
+# Pulverization tables (Sponge/DRI route)
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pulv_lots(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL,
+                    lot_no TEXT UNIQUE,
+                    src_grn_json TEXT,
+                    grade TEXT,
+                    input_qty_kg REAL DEFAULT 0,
+                    input_cost_per_kg REAL DEFAULT 0,
+                    process_cost_per_kg REAL DEFAULT 3,
+                    dust_loss_pct REAL DEFAULT 3,
+                    dust_loss_qty REAL DEFAULT 0,
+                    feed_qty_kg REAL DEFAULT 0,
+                    mag_output_qty_kg REAL DEFAULT 0,
+                    non_mag_qty_kg REAL DEFAULT 0,
+                    non_mag_pct REAL DEFAULT 0,
+                    cost_per_kg REAL DEFAULT 0,
+                    qa_status TEXT DEFAULT 'PENDING',
+                    qa_remarks TEXT,
+                    trace_id TEXT,
+                    job_card_no TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pulv_qa(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pulv_lot_id INTEGER NOT NULL,
+                    decision TEXT DEFAULT 'PENDING',
+                    remarks TEXT,
+                    ad REAL,
+                    non_mag_pct REAL,
+                    FOREIGN KEY(pulv_lot_id) REFERENCES pulv_lots(id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pulv_qa_params(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pulv_qa_id INTEGER NOT NULL,
+                    param_name TEXT NOT NULL,
+                    param_value TEXT,
+                    FOREIGN KEY(pulv_qa_id) REFERENCES pulv_qa(id)
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pulv_lots(
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    lot_no TEXT UNIQUE,
+                    src_grn_json TEXT,
+                    grade TEXT,
+                    input_qty_kg DOUBLE PRECISION DEFAULT 0,
+                    input_cost_per_kg DOUBLE PRECISION DEFAULT 0,
+                    process_cost_per_kg DOUBLE PRECISION DEFAULT 3,
+                    dust_loss_pct DOUBLE PRECISION DEFAULT 3,
+                    dust_loss_qty DOUBLE PRECISION DEFAULT 0,
+                    feed_qty_kg DOUBLE PRECISION DEFAULT 0,
+                    mag_output_qty_kg DOUBLE PRECISION DEFAULT 0,
+                    non_mag_qty_kg DOUBLE PRECISION DEFAULT 0,
+                    non_mag_pct DOUBLE PRECISION DEFAULT 0,
+                    cost_per_kg DOUBLE PRECISION DEFAULT 0,
+                    qa_status TEXT DEFAULT 'PENDING',
+                    qa_remarks TEXT,
+                    trace_id TEXT,
+                    job_card_no TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pulv_qa(
+                    id SERIAL PRIMARY KEY,
+                    pulv_lot_id INT NOT NULL,
+                    decision TEXT DEFAULT 'PENDING',
+                    remarks TEXT,
+                    ad DOUBLE PRECISION,
+                    non_mag_pct DOUBLE PRECISION,
+                    FOREIGN KEY(pulv_lot_id) REFERENCES pulv_lots(id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pulv_qa_params(
+                    id SERIAL PRIMARY KEY,
+                    pulv_qa_id INT NOT NULL,
+                    param_name TEXT NOT NULL,
+                    param_value TEXT,
+                    FOREIGN KEY(pulv_qa_id) REFERENCES pulv_qa(id)
+                )
+            """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_pulv_lots_date ON pulv_lots(date)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_pulv_lots_qa ON pulv_lots(qa_status)"))
         # RAP tables
         if str(engine.url).startswith("sqlite"):
             conn.execute(text("""
@@ -1104,7 +1199,7 @@ def _fg_latest_coa_for_lot(fg_lot_id: int) -> dict|None:
 # -------------------------------------------------
 # Constants
 # -------------------------------------------------
-RM_TYPES = ["MS Scrap", "Turnings", "CRC", "TMT end cuts", "FeSi", "Others"]
+RM_TYPES = ["MS Scrap", "Turnings", "CRC", "TMT end cuts", "FeSi", "DRI", "Others"]
 
 def rm_price_defaults():
     return {"MS Scrap": 34.0, "Turnings": 33.0, "CRC": 40.0, "TMT end cuts": 37.0, "FeSi": 104.0, "Others": 0.0}
@@ -1183,7 +1278,7 @@ class Lot(Base):
     id = Column(Integer, primary_key=True)
     lot_no = Column(String, unique=True, index=True)
     weight = Column(Float, default=3000.0)
-    grade = Column(String)  # KRIP / KRFS
+    grade = Column(String)  # KRIP / KRFS / KRM / KRSP / KSP
     qa_status = Column(String, default="PENDING")
     qa_remarks = Column(String)
 
@@ -1340,12 +1435,12 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 from krn_mrp_app.deps import engine  # if main.py needs engine for migrate_schema
 from krn_mrp_app.annealing.routes import router as anneal_router
-# ✅ Register Annealing router here
-from krn_mrp_app.annealing import router as anneal_router
-app.include_router(anneal_router, prefix="/anneal", tags=["Annealing"])
-from krn_mrp_app.grinding import router as grind_router
-app.include_router(grind_router, prefix="/grind", tags=["Grinding & Screening"])
+from krn_mrp_app.pulv.routes import router as pulv_router
+from krn_mrp_app.grinding.routes import router as grind_router
 from krn_mrp_app.fg.routes import router as fg_router
+app.include_router(anneal_router, prefix="/anneal", tags=["Annealing"])
+app.include_router(pulv_router, prefix="/pulv", tags=["Pulverization"])
+app.include_router(grind_router, prefix="/grind", tags=["Grinding & Screening"])
 app.include_router(fg_router, prefix="/fg", tags=["FG"])
 # -------------- include Dispatch router --------------
 from krn_mrp_app.dispatch import routes as dispatch_routes
@@ -1566,10 +1661,21 @@ def _lot_default_chemistry(db: Session, lot: Lot) -> Dict[str, Optional[float]]:
     return {k: (sums[k] / total) for k in sums.keys()}
 
 def heat_grade(heat: Heat) -> str:
+    # Motherson job-work family takes priority and carries same cost forward across stages
+    for cons in heat.rm_consumptions:
+        try:
+            supplier = (getattr(getattr(cons, "grn", None), "supplier", "") or "").strip().lower()
+        except Exception:
+            supplier = ""
+        if "motherson" in supplier:
+            return "KRM"
     for cons in heat.rm_consumptions:
         if cons.rm_type == "FeSi":
             return "KRFS"
     return "KRIP"
+
+def is_jobwork_heat(heat: Heat) -> bool:
+    return heat_grade(heat) == "KRM"
 
 def heat_available_fast(heat: Heat, used_map: Dict[int, float]) -> float:
     used = float(used_map.get(heat.id, 0.0))
@@ -1911,10 +2017,18 @@ def kpi_cost_cascade(db, a: dt.date, b: dt.date):
     else:
         rm_avg = 0.0
 
-    # 2) Melting (heats)
+    # 2) Pulverization (pulv_lots)
+    pulv_avg = _weighted_avg_cost(
+        db, "pulv_lots", a, b,
+        qty_candidates   = ["mag_output_qty_kg", "weight_kg", "qty_kg", "qty"],
+        unit_candidates  = ["cost_per_kg", "unit_cost", "avg_cost_per_kg"],
+        total_candidates = ["total_cost", "cost_total", "value"]
+    )
+
+    # 3) Melting (heats)
     melt_avg = _melt_avg_cost(db, a, b)
 
-    # 3) Atomization (lot / lots)
+    # 4) Atomization (lot / lots)
     atom_table = "lot" if "lot" in {t.lower() for t in db.execute(text(
         "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
     )).scalars()} else "lots"
@@ -1925,7 +2039,7 @@ def kpi_cost_cascade(db, a: dt.date, b: dt.date):
         total_candidates = ["total_cost", "cost_total", "total_value"]
     )
 
-    # 4) Anneal (anneal_lots)
+    # 5) Anneal (anneal_lots)
     anneal_avg = _weighted_avg_cost(
         db, "anneal_lots", a, b,
         qty_candidates   = ["weight_kg", "qty", "qty_kg"],
@@ -1933,7 +2047,7 @@ def kpi_cost_cascade(db, a: dt.date, b: dt.date):
         total_candidates = ["total_cost", "cost_total", "value"]
     )
 
-    # 5) Grind (grinding_lots)
+    # 6) Grind (grinding_lots)
     grind_avg = _weighted_avg_cost(
         db, "grinding_lots", a, b,
         qty_candidates   = ["weight_kg", "qty", "qty_kg"],
@@ -1941,7 +2055,7 @@ def kpi_cost_cascade(db, a: dt.date, b: dt.date):
         total_candidates = ["total_cost", "cost_total", "value"]
     )
 
-    # 6) FG (fg_lots)
+    # 7) FG (fg_lots)
     fg_avg = _weighted_avg_cost(
         db, "fg_lots", a, b,
         qty_candidates   = ["weight_kg", "qty", "qty_kg"],
@@ -1951,7 +2065,8 @@ def kpi_cost_cascade(db, a: dt.date, b: dt.date):
 
     # Return in the desired stage order
     return [
-        {"label": "RM",       "avg_cost": rm_avg},
+{"label": "RM",       "avg_cost": rm_avg},
+        {"label": "Pulv/KRSP",     "avg_cost": pulv_avg},
         {"label": "Melting",  "avg_cost": melt_avg},
         {"label": "Atom",     "avg_cost": atom_avg},
         {"label": "Anneal",   "avg_cost": anneal_avg},
@@ -2543,7 +2658,18 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
     rap_qty = float(rap_row[0] or 0.0)
     rap_val = float(rap_row[1] or 0.0)
 
-    # 5) Anneal WIP (pending/hold only)
+    # 5) Pulverization WIP (pending/hold only)
+    pulv_row = db.execute(text("""
+        select
+          coalesce(sum(coalesce(mag_output_qty_kg,0)), 0) as qty,
+          coalesce(sum(coalesce(mag_output_qty_kg,0) * coalesce(cost_per_kg, :fallback)), 0) as val
+        from pulv_lots
+        where (qa_status is null or qa_status in ('PENDING','HOLD'))
+    """), {"fallback": rm_avg_cost}).first()
+    pulv_wip_qty = float(pulv_row[0] or 0.0)
+    pulv_wip_val = float(pulv_row[1] or 0.0)
+
+    # 6) Anneal WIP (pending/hold only)
     ann_row = db.execute(text("""
         select
           coalesce(sum(coalesce(weight_kg,0)), 0) as qty,
@@ -2554,7 +2680,7 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
     ann_wip_qty = float(ann_row[0] or 0.0)
     ann_wip_val = float(ann_row[1] or 0.0)
 
-    # 6) Grind WIP (pending/hold only)
+    # 7) Grind WIP (pending/hold only)
     grd_row = db.execute(text("""
         select
           coalesce(sum(coalesce(weight_kg,0)), 0) as qty,
@@ -2565,7 +2691,7 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
     grd_wip_qty = float(grd_row[0] or 0.0)
     grd_wip_val = float(grd_row[1] or 0.0)
 
-    # 7) FG Stock (approved on hand minus ALL dispatched)
+    # 8) FG Stock (approved on hand minus ALL dispatched)
     fg_rows = db.execute(text("""
         with disp as (
           select di.fg_lot_id, coalesce(sum(di.qty_kg),0) qty
@@ -2586,6 +2712,7 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
     # Pipeline for the WIP chart
     wip_pipeline = [
         {"label": "RM",           "qty": rm_qty,        "value": rm_val},
+        {"label": "Pulv/KRSP WIP",     "qty": pulv_wip_qty,  "value": pulv_wip_val},
         {"label": "Melting WIP",  "qty": melt_wip_qty,  "value": melt_wip_val},
         {"label": "Atom WIP",     "qty": atom_qty,      "value": atom_val},
         {"label": "RAP",          "qty": rap_qty,       "value": rap_val},
@@ -2596,12 +2723,12 @@ def krn_build_wip_pipeline(db: Session, today: dt.date):
 
     inv_by_stage = [
         {"label": "RM",  "value": rm_val},
-        {"label": "WIP", "value": melt_wip_val + atom_val + ann_wip_val + grd_wip_val},
+        {"label": "WIP", "value": pulv_wip_val + melt_wip_val + atom_val + ann_wip_val + grd_wip_val},
         {"label": "RAP", "value": rap_val},
         {"label": "FG",  "value": fg_val},
     ]
 
-    total_value_in_hand = float(rm_val + melt_wip_val + atom_val + ann_wip_val + grd_wip_val + rap_val + fg_val)
+    total_value_in_hand = float(rm_val + pulv_wip_val + melt_wip_val + atom_val + ann_wip_val + grd_wip_val + rap_val + fg_val)
 
     return {
         "wip_pipeline": wip_pipeline,
@@ -2658,7 +2785,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         for (hid, qty) in db.query(LotHeat.heat_id, func.coalesce(func.sum(LotHeat.qty), 0.0)).group_by(LotHeat.heat_id)
     }
     heats_all = db.query(Heat).options(joinedload(Heat.rm_consumptions)).all()
-    avail_by_grade = {"KRIP": {"qty": 0.0, "count": 0}, "KRFS": {"qty": 0.0, "count": 0}}
+    avail_by_grade = {"KRIP": {"qty": 0.0, "count": 0}, "KRFS": {"qty": 0.0, "count": 0}, "KRM": {"qty": 0.0, "count": 0}, "KRSP": {"qty": 0.0, "count": 0}}
     for h in heats_all:
         used = float(alloc_map.get(h.id, 0.0))
         avail = max(float(h.actual_output or 0.0) - used, 0.0)
@@ -2725,7 +2852,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     # ---------- RAP availability & movements ----------
     lots_approved = db.query(Lot).filter(Lot.qa_status == "APPROVED").all()
-    rap_grade_qty, rap_grade_cost = {"KRIP":0.0, "KRFS":0.0}, {"KRIP":0.0, "KRFS":0.0}
+    rap_grade_qty, rap_grade_cost = {"KRIP":0.0, "KRFS":0.0, "KRM":0.0, "KRSP":0.0}, {"KRIP":0.0, "KRFS":0.0, "KRM":0.0, "KRSP":0.0}
     for lot in lots_approved:
         total_alloc = (
             db.query(func.coalesce(func.sum(RAPAlloc.qty), 0.0))
@@ -2752,7 +2879,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     # ---------- QA breakdown ----------
     heats_all = heats_all  # already fetched
     heats_pending_rows = [h for h in heats_all if (h.qa_status is None) or (h.qa_status == "PENDING")]
-    heat_pending_by_grade = {"KRIP": 0, "KRFS": 0}
+    heat_pending_by_grade = {"KRIP": 0, "KRFS": 0, "KRM": 0, "KRSP": 0}
     for h in heats_pending_rows:
         g = heat_grade(h)
         heat_pending_by_grade[g] = heat_pending_by_grade.get(g, 0) + 1
@@ -2766,7 +2893,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     lots_approved_rng = (l for l in lots_all
                          if (l.qa_status == "APPROVED") and (_from <= (lot_date_from_no(l.lot_no) or today) <= _to))
-    approved_qty_by_grade = {"KRIP": 0.0, "KRFS": 0.0}
+    approved_qty_by_grade = {"KRIP": 0.0, "KRFS": 0.0, "KRM": 0.0, "KRSP": 0.0}
     for l in lots_approved_rng:
         approved_qty_by_grade[(l.grade or "KRIP")] += float(l.weight or 0)
 
@@ -2795,6 +2922,15 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     atom_dt_m,  atom_by_m  = _dt_breakdown(AtomDowntime, _from, _to)
 
     # ---------- Anneal → FG → Dispatch (raw SQL helpers) ----------
+    pulv_y_qty = _sum(db, "select sum(mag_output_qty_kg) from pulv_lots where date=:d and (qa_status is null or qa_status!='REJECTED')", d=yest)
+    pulv_m_qty = _sum(db, "select sum(mag_output_qty_kg) from pulv_lots where date between :a and :b and (qa_status is null or qa_status!='REJECTED')", a=_from, b=_to)
+    pulv_m_val = _sum(db, "select sum(mag_output_qty_kg*cost_per_kg) from pulv_lots where date between :a and :b and (qa_status is null or qa_status!='REJECTED')", a=_from, b=_to)
+    pulv_m_cost_avg = _avg(db,
+        "select sum(mag_output_qty_kg*cost_per_kg) from pulv_lots where date between :a and :b and (qa_status is null or qa_status!='REJECTED')",
+        "select sum(mag_output_qty_kg) from pulv_lots where date between :a and :b and (qa_status is null or qa_status!='REJECTED')",
+        a=_from, b=_to
+    )
+
     anneal_y_qty = _sum(db, "select sum(weight_kg) from anneal_lots where date=:d", d=yest)
     anneal_m_qty = _sum(db, "select sum(weight_kg) from anneal_lots where date between :a and :b", a=_from, b=_to)
     anneal_m_val = _sum(db, "select sum(weight_kg*cost_per_kg) from anneal_lots where date between :a and :b", a=_from, b=_to)
@@ -2866,13 +3002,14 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     inv_by_stage = [
         {"label": "RM",  "value": _v("RM")},
         {"label": "WIP", "value": sum(float(x.get("value", 0.0)) for x in wip_pipeline
-                                    if x.get("label") in ("Melting WIP", "Atom WIP", "Anneal WIP", "Grind WIP"))},
+                                    if x.get("label") in ("Pulv WIP", "Melting WIP", "Atom WIP", "Anneal WIP", "Grind WIP"))},
         {"label": "RAP", "value": _v("RAP")},
         {"label": "FG",  "value": _v("FG Stock")},
     ]
 
     # Production Yesterday vs MTD (kg)
     prod_by_stage = [
+        {"label": "Pulverization (KRSP→KSP)", "yday": float(pulv_y_qty or 0),                "mtd": float(pulv_m_qty or 0)},
         {"label": "Melting",     "yday": float(melt_yday.get("actual_kg", 0)), "mtd": float(melt_mtd.get("actual_kg", 0))},
         {"label": "Atomization", "yday": float(atom_yday_prod or 0),           "mtd": float(atom_mtd_prod or 0)},
         {"label": "Annealing",   "yday": float(anneal_y_qty or 0),             "mtd": float(anneal_m_qty or 0)},
@@ -3006,7 +3143,12 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "atom_dt_m": atom_dt_m, "atom_by_m": atom_by_m,
         "dt_top3": dt_top3,
 
-        # Anneal/Grind/FG cards
+        # Pulv/Anneal/Grind/FG cards
+        "pulv_yday_prod":  pulv_y_qty,
+        "pulv_mtd_prod":   pulv_m_qty,
+        "pulv_avg_cost":   pulv_m_cost_avg,
+        "pulv_value":      pulv_m_val,
+
         "anneal_yday_prod": anneal_y_qty,
         "anneal_mtd_prod":  anneal_m_qty,
         "anneal_avg_cost":  anneal_m_cost_avg,
@@ -3553,7 +3695,8 @@ def melting_new(
     heat.actual_output = total_inputs - (slag_qty or 0.0)
     heat.theoretical = total_inputs * 0.97
 
-    melt_cost_per_kg = MELT_COST_PER_KG_KRFS if used_fesi else MELT_COST_PER_KG_KRIP
+    heat_family = heat_grade(heat)
+    melt_cost_per_kg = MELT_COST_PER_KG_KRM if heat_family == "KRM" else (MELT_COST_PER_KG_KRFS if used_fesi else MELT_COST_PER_KG_KRIP)
     if (heat.actual_output or 0) > 0:
         heat.rm_cost = total_rm_cost
         heat.process_cost = melt_cost_per_kg * heat.actual_output
@@ -3592,7 +3735,7 @@ def melting_export(
         used = db.query(func.coalesce(func.sum(LotHeat.qty), 0.0)).filter(LotHeat.heat_id == h.id).scalar() or 0.0
         avail = max((h.actual_output or 0.0) - used, 0.0)
         out.write(
-            f"{h.heat_no},{d.isoformat()},{('KRFS' if any(c.rm_type=='FeSi' for c in h.rm_consumptions) else 'KRIP')},{h.qa_status or ''},"
+            f"{h.heat_no},{d.isoformat()},{heat_grade(h)},{h.qa_status or ''},"
             f"{h.actual_output or 0:.1f},{avail:.1f},{h.unit_cost or 0:.2f},{h.total_cost or 0:.2f},"
             f"{h.power_kwh or 0:.1f},{h.kwh_per_ton or 0:.1f},{int(h.downtime_min or 0)},{h.downtime_type or ''},{(h.downtime_note or '').replace(',', ' ')}\n"
         )
@@ -3878,9 +4021,9 @@ async def atom_new(
             return _alert_redirect("Selected heats not found.")
 
         # ---- Same-family rule (no KRIP & KRFS mixing) ----
-        grades = {("KRFS" if heat_grade(h) == "KRFS" else "KRIP") for h in heats}
+        grades = {heat_grade(h) for h in heats}
         if len(grades) > 1:
-            return _alert_redirect("Mixing KRIP and KRFS in the same lot is not allowed.")
+            return _alert_redirect("Mixing heat families in the same lot is not allowed.")
 
         # ---- Per-heat available check ----
         for h in heats:
@@ -3897,13 +4040,13 @@ async def atom_new(
                 f"Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg)."
             )
 
-        # ---- Determine lot grade (any KRFS -> KRFS) ----
-        any_fesi = any(heat_grade(h) == "KRFS" for h in heats)
-        grade = "KRFS" if any_fesi else "KRIP"
+        # ---- Determine lot grade (KRM / KRFS / KRIP) ----
+        grade_set = {heat_grade(h) for h in heats}
+        grade = next(iter(grade_set)) if grade_set else "KRIP"
 
         # ---- Create lot number ----
         today = dt.date.today().strftime("%Y%m%d")
-        seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"KR%{today}%")).scalar() or 0) + 1
+        seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"K%{today}%")).scalar() or 0) + 1
         lot_no = f"{grade}-{today}-{seq:03d}"
 
         # ---- Create lot ----
@@ -4585,10 +4728,11 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
     lots = db.query(Lot).filter(Lot.trace_id == trace_id).all()
     heat_ids = sorted({lh.heat_id for lot in lots for lh in db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()})
     heats = [db.get(Heat, hid) for hid in heat_ids if db.get(Heat, hid)]
+    pulvs = db.execute(text("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, job_card_no FROM pulv_lots WHERE trace_id=:t ORDER BY id DESC"), {"t": trace_id}).mappings().all() if _table_exists(engine.connect(), 'pulv_lots') else []
     anneals = db.execute(text("SELECT id, lot_no, date, grade, weight_kg, qa_status FROM anneal_lots WHERE trace_id=:t ORDER BY id DESC"), {"t": trace_id}).mappings().all() if _table_exists(engine.connect(), 'anneal_lots') else []
     grinds = db.execute(text("SELECT id, lot_no, date, grade, weight_kg, qa_status FROM grinding_lots WHERE trace_id=:t ORDER BY id DESC"), {"t": trace_id}).mappings().all() if _table_exists(engine.connect(), 'grinding_lots') else []
     fgs = db.execute(text("SELECT id, lot_no, date, family, fg_grade, weight_kg, qa_status FROM fg_lots WHERE trace_id=:t ORDER BY id DESC"), {"t": trace_id}).mappings().all() if _table_exists(engine.connect(), 'fg_lots') else []
-    return templates.TemplateResponse("trace_thread.html", {"request": request, "trace_id": trace_id, "lots": lots, "heats": heats, "anneals": anneals, "grinds": grinds, "fgs": fgs})
+    return templates.TemplateResponse("trace_thread.html", {"request": request, "trace_id": trace_id, "lots": lots, "heats": heats, "pulvs": pulvs, "anneals": anneals, "grinds": grinds, "fgs": fgs})
 
 @app.get("/traceability/heat/{heat_id}", response_class=HTMLResponse)
 def trace_heat(heat_id: int, request: Request, db: Session = Depends(get_db)):

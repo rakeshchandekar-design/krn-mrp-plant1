@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Create Pulverization Lot</h2>
+<div class="toolbar"><a class="btn" href="/pulv">← Back</a></div>
+{% if err %}<div class="alert alert-danger">{{ err }}</div>{% endif %}
+<form method="post">
+  <label>Measured Magnetic Output Qty (kg)</label>
+  <input type="number" name="mag_output_qty_kg" step="0.01" min="0.01" required>
+  <table class="table">
+    <tr><th>GRN</th><th>Supplier</th><th>Available KG</th><th>Cost/KG</th><th>Allocate KG</th></tr>
+    {% for r in rows %}
+      <tr><td>{{ r.grn_no }}</td><td>{{ r.supplier }}</td><td>{{ '%.1f'|format(r.available_kg) }}</td><td>{{ '%.2f'|format(r.price) }}</td><td><input type="number" name="alloc_{{ r.id }}" max="{{ r.available_kg }}" min="0" step="0.01"></td></tr>
+    {% endfor %}
+  </table>
+  <p class="muted">Standard logic: 3% dust loss, ₹3/kg process cost, non-mag derived from feed after dust loss.</p>
+  <button class="btn btn-primary">Create Pulverization Lot</button>
+</form>
+{% endblock %}

@@ -1,0 +1,1 @@
+Motherson job-work family added. Logic: any heat consuming GRN supplier containing "motherson" becomes KRM; no melting/atomization/anneal/grinding add cost; FG family KIPM with zero surcharge grades KIP M 100.29 / 80.29 / 40.29 / 20. Oversize conversion supports KIP M 40.29 and KIP M 20.

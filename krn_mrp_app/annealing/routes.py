@@ -19,6 +19,10 @@ templates = Jinja2Templates(directory="templates")
 
 TARGET_KG_PER_DAY = 6000.0
 ANNEAL_ADD_COST = 10.0  # ₹/kg add over weighted RAP cost
+JOBWORK_RAP_GRADE = "KRM"
+JOBWORK_ANNEAL_GRADE = "KIPM"
+SPONGE_PULV_GRADE = "KRSP"
+SPONGE_ANNEAL_GRADE = "KSP"
 
 def _compose_trace_id(parts):
     vals=[]
@@ -355,11 +359,11 @@ async def anneal_create_post(
     # ---- single family rule (KRIP or KRFS only) ----
     fam = {avail_map[lot]["grade"] for lot in allocations.keys()}
     if len(fam) > 1:
-        msg = "Only one grade allowed per anneal lot (KRIP or KRFS)."
+        msg = "Only one grade family allowed per anneal lot (KRIP or KRFS or KRM or KRSP)."
         return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
 
     rap_grade = next(iter(fam))
-    out_grade = "KIP" if rap_grade == "KRIP" else "KFS"
+    out_grade = JOBWORK_ANNEAL_GRADE if rap_grade == JOBWORK_RAP_GRADE else (SPONGE_ANNEAL_GRADE if rap_grade == SPONGE_PULV_GRADE else ("KIP" if rap_grade == "KRIP" else "KFS"))
 
     # ---- weighted RAP cost (from unit_cost surfaced by helper as cost_per_kg) ----
     rap_cost_wsum = sum(
@@ -367,7 +371,7 @@ async def anneal_create_post(
         for lot_no in allocations.keys()
     )
     rap_cost_per_kg = rap_cost_wsum / lot_weight if lot_weight else 0.0
-    cost_per_kg = rap_cost_per_kg + ANNEAL_ADD_COST  # rule: RAP + ₹10
+    cost_per_kg = rap_cost_per_kg + ANNEAL_ADD_COST  # job-work uses same processing cost as KRIP
 
     # ---- create ANL lot number and insert ----
     with engine.begin() as conn:
