@@ -1,5 +1,7 @@
 import os, io, datetime as dt
+import qrcode
 import json
+from io import BytesIO
 from typing import Optional, Dict, List, Tuple
 from urllib.parse import quote
 from enum import Enum
@@ -1434,6 +1436,40 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", "dev-only-change-me"), max_age=INACTIVITY_SECONDS, same_site="lax")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+
+@app.get("/qr/trace/{trace_id}")
+def qr_trace(request: Request, trace_id: str):
+    target = str(request.url_for("trace_thread", trace_id=trace_id))
+    img = qrcode.make(target)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="image/png")
+
+@app.get("/qr/text/{payload:path}")
+def qr_text(payload: str):
+    img = qrcode.make(payload)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="image/png")
+
+
+
+@app.get("/scan", response_class=HTMLResponse)
+def scan_page(request: Request):
+    return templates.TemplateResponse("scan.html", {"request": request})
+
+@app.get("/scan/open")
+def scan_open(q: str):
+    q = (q or "").strip()
+    if not q:
+        return RedirectResponse("/scan?err=blank", status_code=303)
+    if "/traceability/thread/" in q:
+        return RedirectResponse(q, status_code=303)
+    return RedirectResponse(f"/traceability/thread/{quote(q)}", status_code=303)
+
 
 from krn_mrp_app.deps import engine  # if main.py needs engine for migrate_schema
 from krn_mrp_app.annealing.routes import router as anneal_router

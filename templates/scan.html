@@ -1,0 +1,10 @@
+{% extends 'base.html' %}{% block content %}
+<div class="container">
+  <h1>Scan / Open Lot Trace</h1>
+  <form method="get" action="/scan/open" class="card" style="max-width:520px;padding:16px">
+    <label>Paste QR value, Trace ID or URL</label>
+    <input name="q" placeholder="Paste scanned code here" style="width:100%;margin:8px 0 12px">
+    <button type="submit" class="btn">Open</button>
+  </form>
+</div>
+{% endblock %}

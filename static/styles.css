@@ -239,3 +239,35 @@ footer{
 
 /* Helpful so controls sit centered vertically in table cells */
 table td, table th{ vertical-align: middle }
+
+
+/* --- Mobile / Tablet Optimization Pack --- */
+input, select, textarea, button, .btn, .btn-auth{
+  min-height: 42px;
+}
+@media (max-width: 1024px){
+  .krn-shell, .krn-bar{padding:10px 14px !important;}
+  .header-brand h1{font-size:1.7rem !important; white-space:normal !important;}
+  .header-brand img{height:42px !important;}
+  .krn-toprow{align-items:flex-start !important;}
+  .auth-box, .auth-box-top, .top-right{margin-left:auto !important;}
+}
+@media (max-width: 768px){
+  .krn-nav{position:static !important;}
+  .krn-toprow{flex-direction:column; align-items:stretch !important; gap:10px !important;}
+  .header-brand{align-items:center !important; white-space:normal !important;}
+  .header-brand h1{font-size:1.35rem !important; line-height:1.15 !important;}
+  .auth-box, .auth-box-top, .top-right{width:100% !important; justify-content:flex-end !important;}
+  .krn-navrow{margin-top:8px !important;}
+  .nav-links, .nav-links-row{gap:8px !important; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:4px;}
+  .nav-links a, .nav-links-row a{white-space:nowrap; font-size:15px; padding:8px 10px !important;}
+  .container, .krn-shell, .krn-bar, main{padding-left:10px !important; padding-right:10px !important;}
+  .grid, .cards, .card-grid, .hero-cards, .overview-grid{grid-template-columns:1fr !important;}
+  table{display:block; width:100%; overflow-x:auto; white-space:nowrap;}
+  form .row, .form-row, .filters, .filter-row{display:block !important;}
+  input, select, textarea, button, .btn, .btn-auth{width:100%; max-width:100%; font-size:16px;}
+  .btn-inline, .inline-actions button{width:auto;}
+  .sticky-save, .mobile-sticky-actions{
+    position:sticky; bottom:0; z-index:40; background:#fff; border-top:1px solid var(--line); padding:10px;
+  }
+}
