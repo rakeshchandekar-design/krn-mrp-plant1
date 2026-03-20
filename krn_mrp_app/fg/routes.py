@@ -283,6 +283,8 @@ async def fg_home(request: Request, dep: None = Depends(require_roles("admin","f
         "last5": last5,
         "live_stock": live_stock,
         "is_admin": _is_admin(request),
+        "user": (request.session.get("username") if getattr(request, "session", None) else request.cookies.get("username", "")),
+        "role": (request.session.get("role") if getattr(request, "session", None) else request.cookies.get("role", "guest")),
     })
 
 # --------------- CREATE ---------------
@@ -298,6 +300,8 @@ async def fg_create_get(request: Request, dep: None = Depends(require_roles("fg"
         "err": err,
         "cap": 10000.0,
         "is_admin": _is_admin(request),
+        "user": (request.session.get("username") if getattr(request, "session", None) else request.cookies.get("username", "")),
+        "role": (request.session.get("role") if getattr(request, "session", None) else request.cookies.get("role", "guest")),
     })
 
 @router.post("/create")
@@ -449,6 +453,8 @@ async def fg_lots(
         "weighted_cost": weighted_cost,
         "today": date.today().isoformat(),
         "is_admin": _is_admin(request),
+        "user": (request.session.get("username") if getattr(request, "session", None) else request.cookies.get("username", "")),
+        "role": (request.session.get("role") if getattr(request, "session", None) else request.cookies.get("role", "guest")),
     })
 
 # --------------- Trace + PDF ---------------

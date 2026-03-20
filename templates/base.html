@@ -28,6 +28,29 @@
     .btn-auth{background:#0e2a47;color:#fff;border:1px solid #0e2a47;padding:8px 14px;border-radius:10px;text-decoration:none}
     .btn-auth:hover{background:#f59e0b;border-color:#f59e0b}
     footer{ text-align:center; font-size:0.75rem; color:#666; margin-top:20px; }
+    body{background:#f4f7fb;color:#0f172a;}
+    .page-wrap{max-width:1400px;margin:0 auto;padding:14px 18px 22px;}
+    .btn, button, input[type="submit"], input[type="button"], a.btn{
+      min-height:40px; padding:8px 14px; border-radius:10px; border:1px solid #2563eb;
+      background:#2563eb; color:#fff; font-weight:700; text-decoration:none; display:inline-flex;
+      align-items:center; justify-content:center; box-sizing:border-box; white-space:nowrap;
+    }
+    button.secondary, .btn.secondary, a.btn.secondary{background:#fff;color:#0e2a47;border-color:#cbd5e1;}
+    input[type="date"], input[type="text"], input[type="number"], input[type="password"], select, textarea{
+      min-height:40px; padding:8px 12px; border:1px solid #cbd5e1; border-radius:10px; box-sizing:border-box;
+      font:inherit; background:#fff; color:#0f172a; max-width:100%;
+    }
+    table .btn, table button, td .btn, td button{min-height:36px; padding:6px 12px; border-radius:10px;}
+    @media (max-width: 860px){
+      .page-wrap{padding:12px;}
+      .header-brand h1{font-size:1.4rem} .header-brand img{height:42px}
+      .nav-links{overflow:auto; flex-wrap:nowrap; padding-bottom:4px; scrollbar-width:thin;}
+      .nav-links a{flex:0 0 auto;}
+      .auth-box{gap:8px}
+      .btn, button, input[type="submit"], input[type="button"], a.btn{width:100%;}
+      .auth-box .btn-auth{width:auto;}
+    }
+
     @media (max-width: 1100px){
       .krn-toprow{flex-wrap:wrap}
       .header-brand h1{font-size:1.6rem}
@@ -85,11 +108,11 @@
         <h1>KRN Alloys Pvt Ltd</h1>
       </div>
       <div class="auth-box auth-box-top">
-        {% if _role != 'guest' and _username %}<span class="role-badge">{{ _username }}</span>{% endif %}
+        {% if _role != 'guest' and _username %}<span id="krn-auth-user" class="role-badge">{{ _username }}</span>{% endif %}
         {% if _role != 'guest' %}
-          <a class="btn-auth" href="/logout">Logout</a>
+          <a id="krn-auth-btn" class="btn-auth" href="/logout">Logout</a>
         {% else %}
-          <a class="btn-auth" href="/login">Login</a>
+          <a id="krn-auth-btn" class="btn-auth" href="/login">Login</a>
         {% endif %}
       </div>
     </div>
@@ -344,5 +367,20 @@
 })();
 </script>
 
+
+<script>
+(function(){
+  function getCookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name.replace(/([.$?*|{}()\[\]\\/+^])/g,'\$1')+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
+  const role = getCookie('role'); const user = getCookie('username');
+  const userEl = document.getElementById('krn-auth-user'); const btn = document.getElementById('krn-auth-btn');
+  if(role && role !== 'guest' && user){
+    if(!userEl){
+      const box=document.querySelector('.auth-box');
+      if(box){ const span=document.createElement('span'); span.id='krn-auth-user'; span.className='role-badge'; span.textContent=user; box.insertBefore(span, box.firstChild); }
+    } else { userEl.textContent = user; }
+    if(btn){ btn.textContent='Logout'; btn.setAttribute('href','/logout'); }
+  }
+})();
+</script>
 </body>
 </html>
