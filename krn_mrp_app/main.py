@@ -34,6 +34,7 @@ def _alert_redirect(msg: str, url: str = "/atomization") -> HTMLResponse:
     return HTMLResponse(html)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from openpyxl import load_workbook
 
 # ---- File uploads config ----
 BASE_DIR = os.path.dirname(__file__)
@@ -5789,3 +5790,178 @@ def pdf_lot(lot_id: int, db: Session = Depends(get_db)):
 @app.get("/help", response_class=HTMLResponse)
 def help_page(request: Request):
     return templates.TemplateResponse("help.html", {"request": request, "user": current_username(request), "role": current_role(request)})
+
+
+# -------------------------------------------------
+# Opening stock upload
+# -------------------------------------------------
+def _safe_float(v):
+    try:
+        if v is None or str(v).strip() == '':
+            return None
+        return float(v)
+    except Exception:
+        return None
+
+def _next_seq_by_prefix(conn, table: str, col: str, prefix: str) -> int:
+    last = conn.execute(text(f"SELECT {col} FROM {table} WHERE {col} LIKE :p ORDER BY {col} DESC LIMIT 1"), {"p": f"{prefix}%"}).scalar()
+    return (int(str(last).split('-')[-1]) + 1) if last else 1
+
+def _make_code(conn, table: str, col: str, prefix: str) -> str:
+    return f"{prefix}{_next_seq_by_prefix(conn, table, col, prefix):03d}"
+
+@app.get('/opening-stock/upload', response_class=HTMLResponse)
+async def opening_stock_upload_form(request: Request):
+    if current_role(request) == 'guest':
+        return RedirectResponse('/login', status_code=303)
+    return templates.TemplateResponse('opening_stock_upload.html', {'request': request, 'user': current_username(request), 'role': current_role(request)})
+
+@app.post('/opening-stock/upload', response_class=HTMLResponse)
+async def opening_stock_upload(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    if current_role(request) == 'guest':
+        return RedirectResponse('/login', status_code=303)
+    filename = (file.filename or '').lower()
+    if not filename.endswith('.xlsx'):
+        return HTMLResponse('Please upload .xlsx file only', status_code=400)
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    today = dt.date.today()
+    created = {'rm':0,'pulv':0,'anneal':0,'grind':0,'fg':0}
+
+    def rows_from_sheet(name):
+        if name not in wb.sheetnames:
+            return []
+        ws = wb[name]
+        vals = list(ws.iter_rows(values_only=True))
+        if not vals:
+            return []
+        headers = [str(h).strip().lower() if h is not None else '' for h in vals[0]]
+        out=[]
+        for row in vals[1:]:
+            rec={headers[i]: row[i] for i in range(min(len(headers), len(row)))}
+            if any(v not in (None,'') for v in rec.values()):
+                out.append(rec)
+        return out
+
+    with engine.begin() as conn:
+        # RM_OPENING
+        for r in rows_from_sheet('RM_OPENING'):
+            rm_type = str(r.get('rm_type') or '').strip()
+            qty = _safe_float(r.get('qty_kg'))
+            cost = _safe_float(r.get('unit_cost') or r.get('rate_per_kg') or r.get('price'))
+            qa = (str(r.get('qa_status') or 'APPROVED').strip().upper() or 'APPROVED')
+            if not rm_type or not qty or qty <= 0 or cost is None:
+                continue
+            grn_no = _make_code(conn, 'grn', 'grn_no', f'GRN-{today.strftime("%Y%m%d")}-')
+            supplier = 'Opening Stock'
+            if rm_type.lower() == 'others' and abs(cost) < 1e-9:
+                supplier = 'Motherson Opening'
+            conn.execute(text("""
+                INSERT INTO grn (grn_no, date, supplier, rm_type, qty, remaining_qty, price)
+                VALUES (:grn_no, :date, :supplier, :rm_type, :qty, :qty, :price)
+            """), {'grn_no': grn_no, 'date': today, 'supplier': supplier, 'rm_type': rm_type, 'qty': qty, 'price': cost})
+            created['rm'] += 1
+
+        # PULV_OPENING
+        for r in rows_from_sheet('PULV_OPENING'):
+            grade = str(r.get('grade') or 'KRSP').strip() or 'KRSP'
+            input_qty = _safe_float(r.get('input_qty_kg'))
+            mag_qty = _safe_float(r.get('mag_output_qty_kg')) or _safe_float(r.get('weight_kg'))
+            non_mag_raw = _safe_float(r.get('non_mag_pct')) or _safe_float(r.get('non_mag_qty_kg')) or 0.0
+            cost_per_kg = _safe_float(r.get('cost_per_kg'))
+            qa = (str(r.get('qa_status') or 'APPROVED').strip().upper() or 'APPROVED')
+            if not mag_qty or mag_qty <= 0:
+                continue
+            # treat non_mag_pct column as quantity in kg if value > 100
+            non_mag_qty = non_mag_raw if non_mag_raw > 100 else 0.0
+            if input_qty is None:
+                feed_qty = mag_qty + non_mag_qty
+                input_qty = round(feed_qty / (1 - (PULV_DUST_LOSS_PCT/100.0)), 3)
+            dust_qty = round(input_qty * (PULV_DUST_LOSS_PCT/100.0), 3)
+            feed_qty = round(input_qty - dust_qty, 3)
+            if non_mag_qty <= 0 and non_mag_raw <= 100 and non_mag_raw > 0:
+                non_mag_qty = round(feed_qty * (non_mag_raw/100.0), 3)
+            non_mag_pct = round((non_mag_qty / feed_qty) * 100.0, 3) if feed_qty > 0 else 0.0
+            if cost_per_kg is None:
+                cost_per_kg = 0.0
+            lot_no = _make_code(conn, 'pulv_lots', 'lot_no', f'PULV-OPEN-{today.strftime("%Y%m%d")}-')
+            trace_id = lot_no
+            job_card_no = f'JC-PULV-{lot_no}'
+            conn.execute(text("""
+                INSERT INTO pulv_lots
+                    (date, lot_no, src_grn_json, grade, input_qty_kg, input_cost_per_kg, process_cost_per_kg,
+                     dust_loss_pct, dust_loss_qty, feed_qty_kg, mag_output_qty_kg, non_mag_qty_kg, non_mag_pct,
+                     cost_per_kg, qa_status, qa_remarks, trace_id, job_card_no)
+                VALUES
+                    (:date,:lot_no,:src,:grade,:input_qty,:input_cost,:proc,:dust_pct,:dust_qty,:feed,:mag,:non_mag,:non_mag_pct,
+                     :cost,:qa,:remarks,:trace_id,:job_card_no)
+            """), {'date': today, 'lot_no': lot_no, 'src': json.dumps({'OPENING': mag_qty}), 'grade': grade,
+                    'input_qty': input_qty, 'input_cost': cost_per_kg, 'proc': PULV_PROCESS_COST_PER_KG,
+                    'dust_pct': PULV_DUST_LOSS_PCT, 'dust_qty': dust_qty, 'feed': feed_qty, 'mag': mag_qty,
+                    'non_mag': non_mag_qty, 'non_mag_pct': non_mag_pct, 'cost': cost_per_kg,
+                    'qa': qa, 'remarks': 'Opening stock', 'trace_id': trace_id, 'job_card_no': job_card_no})
+            created['pulv'] += 1
+
+        # ANNEAL_OPENING
+        for r in rows_from_sheet('ANNEAL_OPENING'):
+            grade = str(r.get('grade') or '').strip()
+            weight = _safe_float(r.get('weight_kg'))
+            cost = _safe_float(r.get('cost_per_kg'))
+            qa = (str(r.get('qa_status') or 'APPROVED').strip().upper() or 'APPROVED')
+            if not grade or not weight or weight <= 0 or cost is None:
+                continue
+            lot_no = _make_code(conn, 'anneal_lots', 'lot_no', f'ANL-OPEN-{today.strftime("%Y%m%d")}-')
+            conn.execute(text("""
+                INSERT INTO anneal_lots
+                    (date, lot_no, src_alloc_json, grade, weight_kg, rap_cost_per_kg, cost_per_kg, ammonia_kg, qa_status, trace_id, job_card_no)
+                VALUES
+                    (:date,:lot_no,:src,:grade,:weight,:base,:cost,0,:qa,:trace,:jc)
+            """), {'date': today, 'lot_no': lot_no, 'src': json.dumps({'OPENING': weight}), 'grade': grade,
+                    'weight': weight, 'base': cost, 'cost': cost, 'qa': qa, 'trace': lot_no, 'jc': f'JC-ANL-{lot_no}'})
+            created['anneal'] += 1
+
+        # GRINDING_OPENING
+        for r in rows_from_sheet('GRINDING_OPENING'):
+            grade = str(r.get('grade') or '').strip()
+            weight = _safe_float(r.get('weight_kg'))
+            cost = _safe_float(r.get('cost_per_kg'))
+            p80 = _safe_float(r.get('oversize_p80_kg')) or 0.0
+            p40 = _safe_float(r.get('oversize_p40_kg')) or 0.0
+            qa = (str(r.get('qa_status') or 'APPROVED').strip().upper() or 'APPROVED')
+            if not grade or not weight or weight <= 0 or cost is None:
+                continue
+            lot_no = _make_code(conn, 'grinding_lots', 'lot_no', f'GRD-OPEN-{today.strftime("%Y%m%d")}-')
+            conn.execute(text("""
+                INSERT INTO grinding_lots
+                    (date, lot_no, src_alloc_json, grade, weight_kg, input_cost_per_kg, process_cost_per_kg, cost_per_kg,
+                     oversize_p80_kg, oversize_p40_kg, qa_status, trace_id, job_card_no)
+                VALUES
+                    (:date,:lot_no,:src,:grade,:weight,:input_cost,0,:cost,:p80,:p40,:qa,:trace,:jc)
+            """), {'date': today, 'lot_no': lot_no, 'src': json.dumps({'OPENING': weight}), 'grade': grade,
+                    'weight': weight, 'input_cost': cost, 'cost': cost, 'p80': p80, 'p40': p40,
+                    'qa': qa, 'trace': lot_no, 'jc': f'JC-GRD-{lot_no}'})
+            created['grind'] += 1
+
+        # FG_OPENING
+        for r in rows_from_sheet('FG_OPENING'):
+            family = str(r.get('family') or '').strip()
+            fg_grade = str(r.get('fg_grade') or '').strip()
+            weight = _safe_float(r.get('weight_kg'))
+            cost = _safe_float(r.get('cost_per_kg'))
+            qa = (str(r.get('qa_status') or 'APPROVED').strip().upper() or 'APPROVED')
+            if not family or not fg_grade or not weight or weight <= 0 or cost is None:
+                continue
+            lot_no = _make_code(conn, 'fg_lots', 'lot_no', f'FG-OPEN-{today.strftime("%Y%m%d")}-')
+            conn.execute(text("""
+                INSERT INTO fg_lots
+                    (date, lot_no, family, fg_grade, weight_kg, base_cost_per_kg, surcharge_per_kg, cost_per_kg,
+                     src_alloc_json, qa_status, remarks, trace_id, job_card_no)
+                VALUES
+                    (:date,:lot_no,:family,:fg_grade,:weight,:base,0,:cost,:src,:qa,'Opening stock',:trace,:jc)
+            """), {'date': today, 'lot_no': lot_no, 'family': family, 'fg_grade': fg_grade, 'weight': weight,
+                    'base': cost, 'cost': cost, 'src': json.dumps({'OPENING': weight}), 'qa': qa,
+                    'trace': lot_no, 'jc': f'JC-FG-{lot_no}'})
+            created['fg'] += 1
+
+    msg = f"Upload completed. RM={created['rm']}, PULV={created['pulv']}, ANNEAL={created['anneal']}, GRIND={created['grind']}, FG={created['fg']}"
+    return HTMLResponse(f"<script>alert({json.dumps(msg)});window.location='/opening-stock/upload';</script>")
