@@ -8,6 +8,7 @@
   }
   body{background:var(--bg)}
   .exec-wrap{max-width:1400px;margin:0 auto;padding:18px}
+  .exec-hero{max-width:1120px;margin:0 auto}
   .exec-hero{background:linear-gradient(135deg,#0e2a47 0%, #173b63 100%);color:#fff;border-radius:18px;padding:20px 22px;box-shadow:0 14px 34px rgba(14,42,71,.16);position:relative}
   .exec-hero-top{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;position:relative}.title-block{flex:1 1 auto;text-align:center}.title-block .exec-title,.title-block .exec-sub{color:#fff}.title-block .exec-title{text-shadow:0 1px 2px rgba(0,0,0,.2)}
   .exec-title{font-size:2rem;font-weight:800;line-height:1.1;margin:0}
@@ -17,7 +18,7 @@
     background:#fff;color:var(--navy);border:none;border-radius:10px;padding:9px 14px;
     text-decoration:none;font-weight:700;cursor:pointer;
   }
-  .toolbar input[type="date"]{padding:9px 12px;border-radius:10px;border:1px solid #c7d2e1}
+  .toolbar input[type="date"]{padding:9px 12px;border-radius:10px;border:1px solid #c7d2e1;min-width:170px;max-width:190px}
   .toolbar label{font-size:13px;color:#eff6ff}
   .hero-pill{display:inline-flex;gap:8px;align-items:center;padding:9px 14px;border-radius:999px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);font-size:14px}
   .hero-money{font-size:1.35rem;font-weight:800}
@@ -26,7 +27,8 @@
   .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
   .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
   @media (max-width:1200px){.grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}}
-  @media (max-width:760px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr}}
+  
+  @media (max-width:760px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr}.exec-hero{max-width:none}.toolbar .toolbar-row{width:100%}.toolbar .toolbar-row form,.toolbar .toolbar-row{display:flex;flex-wrap:wrap}.toolbar input[type="date"]{min-width:unset;max-width:none;width:100%}.toolbar .btn, .toolbar button, .toolbar a.btn{min-height:40px;padding:8px 12px}}
   .section{margin-top:16px}
   .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 6px 16px rgba(15,23,42,.04)}
   .card h2{margin:0 0 8px;font-size:1.05rem;color:var(--navy);display:flex;justify-content:space-between;align-items:flex-start;gap:8px}

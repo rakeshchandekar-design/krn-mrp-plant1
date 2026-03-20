@@ -2,6 +2,22 @@
 {% block content %}
 
 <style>
+.fg-filter-bar{display:block;margin:10px 0 14px}
+.fg-filter-form{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.fg-filter-form label{margin:0 2px 0 0;font-weight:700}
+.fg-filter-form input[type="date"]{width:170px;max-width:170px}
+.fg-filter-form .btn{min-height:40px;padding:8px 14px;border-radius:10px}
+@media (max-width:760px){
+  .fg-filter-form{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .fg-filter-form label{align-self:center}
+  .fg-filter-form input[type="date"]{width:100%;max-width:none}
+  .fg-filter-form .btn{width:100%}
+  .fg-filter-form .full{grid-column:1 / -1}
+}
+</style>
+
+
+<style>
 .fg-toolbar{margin-bottom:12px;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap}
 .fg-filter-form{display:grid;grid-template-columns:auto minmax(160px,220px) auto minmax(160px,220px) repeat(4,auto);gap:8px 10px;align-items:center}
 .fg-filter-form label{font-weight:600}
