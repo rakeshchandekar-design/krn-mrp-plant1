@@ -2,27 +2,30 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="module-shell melt-shell">
 <style>
-  .melt-shell{max-width:none;width:100%;margin:0;padding:4px 0 24px;}
-  .melt-top-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px;margin-bottom:14px;align-items:start;}
-  @media (max-width:1100px){.melt-top-grid{grid-template-columns:1fr;}}
-
-  .melt-shell .card{box-shadow:0 6px 16px rgba(15,23,42,.04);border-radius:16px;}
-  .melt-shell table{width:100%;}
-  .melt-shell .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}
-  .melt-shell .btn.ghost{background:#fff;color:#0e2a47;border:1px solid #cbd5e1}
-  .melt-wide-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;}
-  @media (max-width:1100px){.melt-wide-grid{grid-template-columns:1fr;}}
-
+  .melting-shell{max-width:none;width:100%;margin:12px auto 0;padding:0 4px 24px;}
+  .melting-shell h1{margin:6px 0 12px;font-size:2rem;}
+  .melting-top-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:start;margin-bottom:14px;}
+  .melting-kpi-stack{display:grid;gap:10px;}
+  .melting-card-tight{padding:16px 18px;}
+  .melting-live table{width:100%;}
+  .melting-form-grid{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px;}
+  .melting-rm-row{display:grid;grid-template-columns:minmax(220px,280px) minmax(140px,180px) 24px;gap:8px;align-items:end;}
+  .melting-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0 14px;}
+  .melting-toolbar input[type="date"]{min-width:170px;max-width:190px;}
+  .melting-action-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
+  @media (max-width:1100px){.melting-top-grid{grid-template-columns:1fr;}.melting-form-grid{grid-template-columns:1fr 1fr;}}
+  @media (max-width:760px){.melting-shell{padding:0 0 20px;}.melting-form-grid,.melting-rm-row{grid-template-columns:1fr;}.melting-toolbar{align-items:stretch}.melting-toolbar input[type="date"], .melting-toolbar .btn{width:100%;max-width:none;}}
 </style>
+<div class="melting-shell">
 
   <h1>Melting</h1>
 
   {# ----- KPI + 5-day row ----- #}
-  <div class="melt-top-grid">
-    <div class="card">
-      <h2 style="margin:0 0 8px 0;font-size:18px">KPIs (Yesterday)</h2>
+  <div class="melting-top-grid">
+    <div class="card melting-card-tight">
+      <h2 style="margin:0 0 10px 0;font-size:18px">KPIs (Yesterday)</h2>
+      <div class="melting-kpi-stack">
 
       <div class="card" style="margin-bottom:8px">
         <h3 style="margin:0 0 8px 0;font-size:14px">Power KPI (Yesterday)</h3>
@@ -83,8 +86,8 @@
       </div>
     </div>
 
-    <div class="card">
-      <h3 style="margin:0 0 8px 0;font-size:14px">Production – Last 5 Days</h3>
+    <div class="card melting-card-tight">
+      <h3 style="margin:0 0 8px 0;font-size:16px">Production – Last 5 Days</h3>
       <table>
         <thead>
           <tr>
@@ -114,8 +117,8 @@
   </div>
 
   {# ----- Live stock ----- #}
-  <div class="card" style="margin-bottom:12px">
-    <h3 style="margin:0 0 8px 0;font-size:14px">Live Stock – Heats Available</h3>
+  <div class="card melting-live" style="margin-bottom:12px">
+    <h3 style="margin:0 0 8px 0;font-size:16px">Live Stock – Heats Available</h3>
     <table>
       <thead>
         <tr>
@@ -140,7 +143,7 @@
 
   {# ----- New Heat (blue-ui form) ----- #}
   <div class="card" style="margin-bottom:12px">
-    <h2 style="margin:0 0 8px 0;">New Heat</h2>
+    <h2 style="margin:0 0 10px 0;">New Heat</h2>
     <form class="blue-ui" method="post" action="/melting/new">
       <fieldset {% if read_only %}disabled{% endif %}>
 
@@ -156,7 +159,7 @@
           <div class="muted">You can backdate up to 4 days. Future dates are blocked.</div>
         </div>
 
-        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <div class="melting-form-grid">
           <div class="form-row">
             <label>Notes</label>
             <input type="text" name="notes" placeholder="optional">
@@ -175,7 +178,7 @@
         <div class="muted">RM Line 1 <span style="color:#ef4444">*</span> and RM Line 2 <span style="color:#ef4444">*</span> are mandatory. Others are optional.</div>
 
         {% for i in [1,2,3,4] %}
-        <div style="display:flex;gap:6px;margin:6px 0;flex-wrap:wrap;">
+        <div class="melting-rm-row" style="margin:6px 0;">
           <select name="rm_type_{{ i }}">
             <option value="">-- RM Type --</option>
             {% for t in rm_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
@@ -186,7 +189,7 @@
         {% endfor %}
 
         <h3 style="margin:12px 0 6px 0;font-size:14px">Downtime (this heat)</h3>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div class="melting-form-grid" style="grid-template-columns:180px 220px minmax(240px,1fr);">
           <div class="form-row">
             <label>Minutes <span style="color:#ef4444">*</span></label>
             <input id="dt_min" type="number" min="0" step="1" name="downtime_min" required>
@@ -216,7 +219,7 @@
   </div>
 
   {# ----- Date range toolbar (blue-ui) ----- #}
-  <div class="toolbar blue-ui" style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px">
+  <div class="toolbar blue-ui melting-toolbar">
     <span>From</span>
     <input id="start" type="date" value="{{ start or today_iso }}" max="{{ today_iso }}">
     <span>To</span>

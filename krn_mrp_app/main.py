@@ -2805,12 +2805,6 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     # Date range
     rng = krn_parse_range(request)
     today, _from, _to, yest, ymd_y, ymd_m = rng["today"], rng["_from"], rng["_to"], rng["yest"], rng["ymd_y"], rng["ymd_m"]
-    cache_key = (str(_from), str(_to))
-    now_ts = time.time()
-    if _DASHBOARD_CACHE.get("key") == cache_key and (now_ts - float(_DASHBOARD_CACHE.get("ts") or 0)) < _DASHBOARD_CACHE_TTL and _DASHBOARD_CACHE.get("ctx"):
-        cached = dict(_DASHBOARD_CACHE["ctx"])
-        cached.update({"request": request, "user": current_username(request), "role": current_role(request)})
-        return templates.TemplateResponse("dashboard.html", cached)
 
     # ---------- RM / GRN ----------
     grn_live_rows = (
@@ -3295,7 +3289,6 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     ctx.update(defaults)
     ctx.update(metrics)
 
-    _DASHBOARD_CACHE.update({"key": cache_key, "ts": time.time(), "ctx": dict(ctx)})
     ctx.update({"user": current_username(request), "role": current_role(request)})
     return templates.TemplateResponse("dashboard.html", ctx)
 
