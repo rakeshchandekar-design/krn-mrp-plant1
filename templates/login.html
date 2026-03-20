@@ -121,10 +121,12 @@
     document.getElementById('krn-popup-ok').onclick=close;
     document.getElementById('krn-popup-close').onclick=close;
     overlay.onclick=(e)=>{ if(e.target===overlay) close(); };
-    const err={{ error|tojson if error is defined else 'null' }};
+    const err={{ (error or err)|tojson if (error is defined or err is defined) else 'null' }};
+    const msg={{ msg|tojson if msg is defined else 'null' }};
     const ok={{ ok_msg|tojson if ok_msg is defined else 'null' }};
     if(err) show(err,'error','Login Failed');
     else if(ok) show(ok,'success','Done');
+    else if(msg) show(msg,'info','Message');
   })();
   </script>
 

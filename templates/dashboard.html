@@ -2,292 +2,246 @@
 {% block content %}
 
 <style>
-  :root{--border:#e5e7eb;--muted:#6b7280;--bg:#f9fafb}
-  .brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-  .brand .name{font-weight:700;font-size:22px;margin:0}
-
-  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0 14px}
-  .pill{display:inline-block;border:1px solid var(--border);background:#f9fafb;padding:4px 10px;border-radius:999px}
-
-  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-  .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
-  .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
-  @media (max-width:1200px){.grid-3{grid-template-columns:1fr 1fr}.grid-4{grid-template-columns:1fr 1fr}}
-  @media (max-width:800px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
-
-  .card{border:1px solid var(--border);border-radius:10px;padding:12px;background:#fff}
-  .card h2{margin:0 0 6px 0;font-size:16px;display:flex;justify-content:space-between;align-items:flex-end;gap:8px}
-  .muted{color:#6b7280;font-size:12px}
-
+  :root{
+    --navy:#0e2a47; --orange:#f59e0b; --border:#e5e7eb; --muted:#6b7280;
+    --bg:#f4f7fb; --card:#ffffff; --soft:#f8fafc; --success:#065f46; --warning:#92400e;
+  }
+  body{background:var(--bg)}
+  .exec-wrap{max-width:1400px;margin:0 auto;padding:18px}
+  .exec-hero{background:linear-gradient(135deg,#0e2a47 0%, #173b63 100%);color:#fff;border-radius:18px;padding:20px 22px;box-shadow:0 14px 34px rgba(14,42,71,.16)}
+  .exec-hero-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+  .exec-title{font-size:2rem;font-weight:800;line-height:1.1;margin:0}
+  .exec-sub{margin-top:6px;font-size:13px;color:#dbe7f5}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .toolbar .btn, .toolbar button, .toolbar a.btn{
+    background:#fff;color:var(--navy);border:none;border-radius:10px;padding:9px 14px;
+    text-decoration:none;font-weight:700;cursor:pointer;
+  }
+  .toolbar input[type="date"]{padding:9px 12px;border-radius:10px;border:1px solid #c7d2e1}
+  .toolbar label{font-size:13px;color:#eff6ff}
+  .hero-pill{display:inline-flex;gap:8px;align-items:center;padding:9px 14px;border-radius:999px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);font-size:14px}
+  .hero-money{font-size:1.35rem;font-weight:800}
+  .grid-4,.grid-3,.grid-2{display:grid;gap:14px}
+  .grid-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  @media (max-width:1200px){.grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media (max-width:760px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr}}
+  .section{margin-top:16px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 6px 16px rgba(15,23,42,.04)}
+  .card h2{margin:0 0 8px;font-size:1.05rem;color:var(--navy);display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+  .muted{color:var(--muted);font-size:12px}
+  .stat-card{position:relative;overflow:hidden}
+  .stat-card::after{content:"";position:absolute;right:-18px;top:-18px;width:72px;height:72px;border-radius:50%;background:rgba(245,158,11,.10)}
+  .stat-label{font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
+  .stat-value{font-size:1.75rem;font-weight:800;color:var(--navy);margin-top:6px}
+  .stat-sub{font-size:12px;color:#64748b;margin-top:6px}
+  .stage-chip{display:inline-block;padding:4px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px;font-weight:700}
   table{border-collapse:collapse;width:100%}
-  th,td{border:1px solid var(--border);padding:6px;text-align:left}
-  th{background:#f3f4f6}
+  th,td{border:1px solid var(--border);padding:8px;text-align:left}
+  th{background:#f8fafc}
   .right{text-align:right}
-
-  .kpi{display:flex;justify-content:space-between;align-items:center;margin:6px 0}
-  .kpi .label{color:#374151}
-  .kpi .val{font-weight:700}
-  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
-  .fig{font-size:12px;color:#374151}
-  .fig b{font-weight:700}
-
-  .chart-container{height:160px}
-  .chart-container.tall{height:180px}
-
+  .chart-container{height:240px}
+  .chart-container.small{height:220px}
+  .snapshot-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+  @media (max-width:1100px){.snapshot-grid{grid-template-columns:1fr 1fr}}
+  @media (max-width:760px){.snapshot-grid{grid-template-columns:1fr}}
+  .mini-kpi{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px dashed #e5e7eb}
+  .mini-kpi:last-child{border-bottom:none}
+  .mini-kpi .v{font-weight:800;color:var(--navy)}
+  .fg-table-wrap{max-height:340px;overflow:auto}
   .screen-only{display:block}
   .print-only{display:none}
-
   @media print{
-    @page{size:A4 portrait;margin:12mm}
-    html,body{background:#fff}
-    header.krn-nav, footer, .toolbar{display:none!important}
-    .screen-only{display:none!important}
+    @page{size:A4 portrait;margin:10mm}
+    header.krn-nav, footer, .screen-only{display:none!important}
     .print-only{display:block!important}
-    .card{page-break-inside:avoid;break-inside:avoid}
-    .grid-2,.grid-3,.grid-4{gap:10px}
-    .chart-container,.chart-container.tall,canvas{width:100%!important;height:150px!important}
-    *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    body{background:#fff}
+    .exec-wrap{padding:0}
+    .card,.exec-hero{box-shadow:none}
+    .grid-4,.grid-3,.grid-2,.snapshot-grid{grid-template-columns:1fr 1fr}
   }
 </style>
 
-<div class="brand">
-  <div class="name">Executive Dashboard</div>
-  <img src="/static/KRN_Logo.png" alt="KRN" style="height:42px">
-</div>
+{% set ns = namespace(total_qty=0, qa_pending=0, qa_hold=0, qa_rejected=0) %}
+{% for r in wip_pipeline | default([]) %}
+  {% set ns.total_qty = ns.total_qty + (r.qty | default(0) | float) %}
+{% endfor %}
+{% if qa_eagle %}
+  {% set q = qa_eagle %}
+  {% set ns.qa_pending = (q.get('heats_pending',0)|int) + (q.get('lots_pending',0)|int) %}
+  {% set ns.qa_hold = (q.get('heats_hold',0)|int) + (q.get('lots_hold',0)|int) %}
+  {% set ns.qa_rejected = (q.get('heats_rejected',0)|int) + (q.get('lots_rejected',0)|int) %}
+{% endif %}
 
-<!-- PRINT HEADER -->
-<div class="print-only" style="border:1px solid var(--border);border-radius:10px;padding:8px;margin:6px 0 10px;background:#fff">
-  <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
-    <div style="font-weight:700">Executive Dashboard</div>
-    <div style="font-size:12px;color:#374151">
-      Range: <strong>{{ from_date }}</strong> → <strong>{{ to_date }}</strong> |
-      Yesterday: {{ yesterday }} | Today: {{ today }}
+<div class="exec-wrap">
+  <div class="exec-hero">
+    <div class="exec-hero-top">
+      <div>
+        <h1 class="exec-title">Executive Dashboard</h1>
+        <div class="exec-sub">
+          Plant overview for MD review • Range <strong>{{ from_date }}</strong> → <strong>{{ to_date }}</strong> • Yesterday {{ yesterday }} • Today {{ today }}
+        </div>
+      </div>
+      <div class="hero-pill">
+        <span>Total value in hand</span>
+        <span class="hero-money"><span class="money" data-rupees="{{ (total_value_in_hand | default(0) | float) }}"></span></span>
+      </div>
+    </div>
+    <div class="toolbar screen-only">
+      <form method="get" action="/dashboard" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label>From</label>
+        <input type="date" name="from_date" max="{{ today }}" value="{{ from_date }}">
+        <label>To</label>
+        <input type="date" name="to_date" max="{{ today }}" value="{{ to_date }}">
+        <button type="submit">Apply</button>
+        <a class="btn" href="/dashboard">This Month</a>
+        <a class="btn" href="/dashboard?from_date={{ today }}&to_date={{ today }}">Today</a>
+      </form>
+      <button onclick="window.print()">Print / Save PDF</button>
     </div>
   </div>
-  <div style="margin-top:6px">
-    <span style="padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:#f9fafb">
-      Total value in hand: <strong><span class="money" data-rupees="{{ (total_value_in_hand | default(0) | float) }}"></span></strong>
-    </span>
-  </div>
-</div>
 
-<!-- SCREEN TOOLBAR -->
-<div class="toolbar screen-only">
-  <form method="get" action="/dashboard" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <label>From</label>
-    <input type="date" name="from_date" max="{{ today }}" value="{{ from_date }}">
-    <label>To</label>
-    <input type="date" name="to_date" max="{{ today }}" value="{{ to_date }}">
-    <button class="btn">Apply</button>
-    <a class="btn" href="/dashboard">This Month</a>
-    <span class="pill">Yesterday: {{ yesterday }}</span>
-    <span class="pill">Today: {{ today }}</span>
-    <span class="pill" title="RM + WIP (Melting/Atom/Anneal/Grind) + RAP + FG. No duplication.">
-      Total value in hand: <strong><span class="money" data-rupees="{{ (total_value_in_hand | default(0) | float) }}"></span></strong>
-    </span>
-  </form>
-  <button class="btn" onclick="window.print()">Print / Save PDF</button>
-</div>
-
-<!-- Row A: High-level charts -->
-<div class="grid-3">
-  <div class="card">
-    <h2><span>Inventory — Value by Stage</span><span class="fig" id="invFig"></span></h2>
-    <div class="chart-container"><canvas id="invChart"></canvas></div>
-    <div class="muted" id="invNote" style="margin-top:6px">Snapshot as of today.</div>
+  <div class="section grid-4">
+    <div class="card stat-card">
+      <div class="stat-label">Total Plant Qty</div>
+      <div class="stat-value">{{ (ns.total_qty/1000) | round(1) }} MT</div>
+      <div class="stat-sub">RM + Pulverization + WIP + RAP + FG</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">FG Stock Value</div>
+      <div class="stat-value"><span class="money" data-rupees="{{ (fg_stock_value | default(0) | float) }}"></span></div>
+      <div class="stat-sub">Dispatch-ready finished goods snapshot</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">QA Pending</div>
+      <div class="stat-value">{{ ns.qa_pending }}</div>
+      <div class="stat-sub">Hold: {{ ns.qa_hold }} • Rejected: {{ ns.qa_rejected }}</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">MTD Output</div>
+      <div class="stat-value">{{ ((fg_mtd_prod | default(0) | float)/1000) | round(1) }} MT</div>
+      <div class="stat-sub">Finished goods produced in selected range</div>
+    </div>
   </div>
 
-  <div class="card">
-    <h2><span>Output — Yesterday vs MTD</span><span class="fig" id="prodFig"></span></h2>
-    <div class="chart-container"><canvas id="prodChart"></canvas></div>
-    <div class="muted" id="prodNote" style="margin-top:6px">All production nodes.</div>
+  <div class="section grid-3">
+    <div class="card">
+      <h2><span>Inventory — Value by Stage</span><span class="muted" id="invFig"></span></h2>
+      <div class="chart-container small"><canvas id="invChart"></canvas></div>
+      <div class="muted" id="invNote">Snapshot as of today — values shown in ₹ Cr.</div>
+    </div>
+    <div class="card">
+      <h2><span>Output — Yesterday vs MTD</span><span class="muted" id="prodFig"></span></h2>
+      <div class="chart-container small"><canvas id="prodChart"></canvas></div>
+      <div class="muted" id="prodNote">All production nodes — weights shown in MT.</div>
+    </div>
+    <div class="card">
+      <h2><span>Avg Cost/kg — RM → Melting → Atom → Anneal → Grind → FG</span><span class="muted" id="costFig"></span></h2>
+      <div class="chart-container small"><canvas id="costChart"></canvas></div>
+      <div class="muted">Range: {{ from_date }} → {{ to_date }}</div>
+    </div>
   </div>
 
-  <div class="card">
-    <h2><span>Avg Cost/kg — RM → Melting → Atom → Anneal → Grind → FG</span><span class="fig" id="costFig"></span></h2>
-    <div class="chart-container"><canvas id="costChart"></canvas></div>
-    <div class="muted" style="margin-top:6px">Range: {{ from_date }} → {{ to_date }}</div>
-  </div>
-</div>
-
-<!-- WIP pipeline (two clean charts) -->
-<div class="card" style="margin-top:14px">
-  <h2><span>WIP Pipeline — RM → FG</span><span class="fig" id="wipFig"></span></h2>
-  <div class="grid-2">
-    <div class="chart-container tall"><canvas id="wipQtyChart"></canvas></div>
-    <div class="chart-container tall"><canvas id="wipValChart"></canvas></div>
-  </div>
-  <div class="muted" id="wipNote" style="margin-top:6px">Snapshot as of {{ today }}.</div>
-</div>
-
-<!-- Row B: Department snapshots -->
-<div class="grid-3" style="margin-top:14px">
-  <div class="card">
-    <h2>Melting</h2>
-    <table>
-      <tr><th>Yesterday</th><td class="right">{{ (melt_yday.actual_kg | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>kWh/ton (Y)</th><td class="right">{{ (melt_yday.kwhpt | default(0) | float) | round(1) }}</td></tr>
-      <tr><th>Yield % (Y)</th><td class="right">{{ (melt_yday.yield_pct | default(0) | float) | round(1) }}</td></tr>
-      <tr><th>Eff. % (Y vs tgt)</th><td class="right">{{ (melt_yday.eff_pct | default(0) | float) | round(1) }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ (melt_mtd.actual_kg | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>Avg kWh/ton</th><td class="right">{{ (melt_mtd.kwhpt | default(0) | float) | round(1) }}</td></tr>
-    </table>
-    <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
-    <table>
-      <tr><th>Reason</th><th class="right">Min</th></tr>
-      {% for r in dt_top3.MELTING | default([]) %}
-        <tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>
-      {% endfor %}
-    </table>
+  <div class="section card">
+    <h2><span>WIP Pipeline — RM → FG</span><span class="muted" id="wipFig"></span></h2>
+    <div class="grid-2">
+      <div class="chart-container"><canvas id="wipQtyChart"></canvas></div>
+      <div class="chart-container"><canvas id="wipValChart"></canvas></div>
+    </div>
+    <div class="muted" id="wipNote">Snapshot as of {{ today }} — qty in MT, value in ₹ Cr.</div>
   </div>
 
-  <div class="card">
-    <h2>Atomization</h2>
-    <table>
-      <tr><th>Yesterday</th><td class="right">{{ (atom_yday_prod | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>Eff. % (Y)</th><td class="right">{{ (atom_yday_eff  | default(0) | float) | round(1) }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ (atom_mtd_prod  | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>Avg Eff. %</th><td class="right">{{ (atom_mtd_eff   | default(0) | float) | round(1) }}</td></tr>
-    </table>
-    <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
-    <table>
-      <tr><th>Reason</th><th class="right">Min</th></tr>
-      {% for r in dt_top3.ATOM | default([]) %}
-        <tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>
-      {% endfor %}
-    </table>
+  <div class="section">
+    <div class="snapshot-grid">
+      <div class="card">
+        <h2><span>Pulverization</span><span class="stage-chip">KRSP → KSP</span></h2>
+        <div class="mini-kpi"><span>Yesterday Output</span><span class="v">{{ (pulv_yday_prod | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>MTD Output</span><span class="v">{{ (pulv_mtd_prod | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>Avg Cost/kg</span><span class="v">₹ {{ (pulv_avg_cost | default(0) | float) | round(2) }}</span></div>
+        <div class="mini-kpi"><span>Value (MTD)</span><span class="v"><span class="money" data-rupees="{{ (pulv_value | default(0) | float) }}"></span></span></div>
+        <div class="muted">Sponge route from DRI through magnetic separation.</div>
+      </div>
+
+      <div class="card">
+        <h2><span>Melting</span><span class="stage-chip">KRIP / KRFS / KRM</span></h2>
+        <div class="mini-kpi"><span>Yesterday</span><span class="v">{{ (melt_yday.actual_kg | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>MTD Output</span><span class="v">{{ (melt_mtd.actual_kg | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>Yield % (Y)</span><span class="v">{{ (melt_yday.yield_pct | default(0) | float) | round(1) }}%</span></div>
+        <div class="mini-kpi"><span>kWh / ton</span><span class="v">{{ (melt_mtd.kwhpt | default(0) | float) | round(1) }}</span></div>
+        <div class="muted">Current downtime driver: {{ (dt_top3.MELTING[0].reason if dt_top3.MELTING and dt_top3.MELTING|length > 0 else '—') }}</div>
+      </div>
+
+      <div class="card">
+        <h2><span>Atomization</span><span class="stage-chip">Lot creation</span></h2>
+        <div class="mini-kpi"><span>Yesterday</span><span class="v">{{ (atom_yday_prod | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>MTD Output</span><span class="v">{{ (atom_mtd_prod | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>Eff. % (Y)</span><span class="v">{{ (atom_yday_eff | default(0) | float) | round(1) }}%</span></div>
+        <div class="mini-kpi"><span>Oversize (MTD)</span><span class="v">{{ (atom_oversize_m | default(0) | float) | round(0) }} kg</span></div>
+        <div class="muted">Approved lots feed RAP / downstream route.</div>
+      </div>
+
+      <div class="card">
+        <h2><span>Annealing</span><span class="stage-chip">QA gate</span></h2>
+        <div class="mini-kpi"><span>Yesterday</span><span class="v">{{ (anneal_yday_prod | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>MTD Output</span><span class="v">{{ (anneal_mtd_prod | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>Avg Cost/kg</span><span class="v">₹ {{ (anneal_avg_cost | default(0) | float) | round(2) }}</span></div>
+        <div class="mini-kpi"><span>NH₃ Used (MTD)</span><span class="v">{{ (ann_nh3_m | default(0) | float) | round(1) }} kg</span></div>
+        <div class="muted">Approved anneal lots move to grinding only.</div>
+      </div>
+
+      <div class="card">
+        <h2><span>Grinding & Screening</span><span class="stage-chip">Oversize control</span></h2>
+        <div class="mini-kpi"><span>Yesterday</span><span class="v">{{ (grind_yday_prod | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>MTD Output</span><span class="v">{{ (grind_mtd_prod | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>Avg Cost/kg</span><span class="v">₹ {{ (grind_avg_cost | default(0) | float) | round(2) }}</span></div>
+        <div class="mini-kpi"><span>Oversize 80# (MTD)</span><span class="v">{{ (gr_os_m | default(0) | float) | round(0) }} kg</span></div>
+        <div class="muted">Grinding efficiency (MTD): {{ (gr_eff_m | default(0) | float) | round(1) }}%</div>
+      </div>
+
+      <div class="card">
+        <h2><span>Packing & FG / Dispatch</span><span class="stage-chip">Final output</span></h2>
+        <div class="mini-kpi"><span>FG — Yesterday</span><span class="v">{{ (fg_yday_prod | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>FG — MTD</span><span class="v">{{ (fg_mtd_prod | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>FG Avg Cost/kg</span><span class="v">₹ {{ (fg_avg_cost | default(0) | float) | round(2) }}</span></div>
+        <div class="mini-kpi"><span>Dispatch (MTD)</span><span class="v">{{ (dispatch_mtd_qty | default(0) | float) | round(0) }} kg</span></div>
+        <div class="muted">Current FG stock value: <span class="money" data-rupees="{{ (fg_stock_value | default(0) | float) }}"></span></div>
+      </div>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>Annealing</h2>
-    <table>
-      <tr><th>Yesterday</th><td class="right">{{ (anneal_yday_prod | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ (anneal_avg_cost | default(0) | float) | round(2) }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ (anneal_mtd_prod | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>Value (MTD)</th>
-        <td class="right"><span class="money" data-rupees="{{ (anneal_value | default(0) | float) }}"></span></td></tr>
-    </table>
-    <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
-    <table>
-      <tr><th>Reason</th><th class="right">Min</th></tr>
-      {% for r in dt_top3.ANNEAL | default([]) %}
-        <tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>
-      {% endfor %}
-    </table>
-  </div>
-</div>
+  <div class="section grid-2">
+    <div class="card">
+      <h2><span>FG Stock — Grade-wise (On-hand)</span><span class="muted">Ready stock</span></h2>
+      <div class="fg-table-wrap">
+        <table>
+          <tr><th>Grade</th><th class="right">Qty (kg)</th><th class="right">Value</th></tr>
+          {% for r in fg_stock_by_grade | default([]) %}
+            <tr>
+              <td>{{ r.grade }}</td>
+              <td class="right">{{ (r.qty | default(0) | float) | round(0) }}</td>
+              <td class="right"><span class="money" data-rupees="{{ (r.value | default(0) | float) }}"></span></td>
+            </tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
 
-<div class="grid-2" style="margin-top:14px">
-  <div class="card">
-    <h2>Grinding & Screening</h2>
-    <table>
-      <tr><th>Yesterday</th><td class="right">{{ (grind_yday_prod | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>Avg Cost/kg</th><td class="right">₹ {{ (grind_avg_cost | default(0) | float) | round(2) }}</td></tr>
-      <tr><th>MTD Output</th><td class="right">{{ (grind_mtd_prod | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>Value (MTD)</th>
-        <td class="right"><span class="money" data-rupees="{{ (grind_value | default(0) | float) }}"></span></td></tr>
-    </table>
-    <h3 style="margin:8px 0 4px">Downtime (Top-3)</h3>
-    <table>
-      <tr><th>Reason</th><th class="right">Min</th></tr>
-      {% for r in dt_top3.GRIND | default([]) %}
-        <tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>
-      {% endfor %}
-    </table>
-  </div>
-
-  <div class="card">
-    <h2>Packing & FG / Dispatch</h2>
-    <table>
-      <tr><th>FG — Yesterday</th><td class="right">{{ (fg_yday_prod | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>FG — Avg Cost/kg</th><td class="right">₹ {{ (fg_avg_cost | default(0) | float) | round(2) }}</td></tr>
-      <tr><th>FG — MTD Output</th><td class="right">{{ (fg_mtd_prod | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>FG Stock Value (now)</th>
-        <td class="right"><span class="money" data-rupees="{{ (fg_stock_value | default(0) | float) }}"></span></td></tr>
-      <tr>
-        <th>Dispatch (MTD)</th>
-        <td class="right">
-          {{ (dispatch_mtd_qty | default(0) | float) | round(0) }} kg |
-          <span class="money" data-rupees="{{ (dispatch_mtd_value | default(0) | float) }}"></span>
-        </td>
-      </tr>
-     </table>
-    <h3 style="margin:8px 0 4px">Downtime (Top-3 — FG)</h3>
-    <table>
-      <tr><th>Reason</th><th class="right">Min</th></tr>
-      {% for r in dt_top3.FG | default([]) %}
-        <tr><td>{{ r.reason }}</td><td class="right">{{ r.minutes }}</td></tr>
-      {% endfor %}
-    </table>
-  </div>
-</div>
-
-<!-- Row C: New KPIs -->
-<div class="grid-3" style="margin-top:14px">
-  <div class="card">
-    <h2>Atomization — Oversize</h2>
-    <div class="kpi"><div class="label">Oversize (Yesterday)</div><div class="val mono">{{ (atom_oversize_y | default(0) | float) | round(0) }} kg</div></div>
-    <div class="kpi"><div class="label">Oversize (MTD)</div><div class="val mono">{{ (atom_oversize_m | default(0) | float) | round(0) }} kg</div></div>
-    <div class="muted">PSD-derived (&gt;180/212 µm) + Screening 80#.</div>
-  </div>
-
-  <div class="card">
-    <h2>Anneal — Ammonia & Efficiency</h2>
-    <table>
-      <tr><th>NH₃ Used (Y)</th><td class="right">{{ (ann_nh3_y | default(0) | float) | round(1) }} kg</td></tr>
-      <tr><th>NH₃ Used (MTD)</th><td class="right">{{ (ann_nh3_m | default(0) | float) | round(1) }} kg</td></tr>
-      <tr><th>Eff. (Y)</th><td class="right">{{ (ann_eff_y | default(0) | float) | round(1) }} kg/ton</td></tr>
-      <tr><th>Eff. (MTD)</th><td class="right">{{ (ann_eff_m | default(0) | float) | round(1) }} kg/ton</td></tr>
-    </table>
-    <div class="muted">Efficiency = FG out / Grinding input.</div>
-  </div>
-
-  <div class="card">
-    <h2>Grinding — Oversize & Efficiency</h2>
-    <table>
-      <tr><th>Oversize 80# (Y)</th><td class="right">{{ (gr_os_y | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>Oversize 80# (MTD)</th><td class="right">{{ (gr_os_m | default(0) | float) | round(0) }} kg</td></tr>
-      <tr><th>Grinding Eff. (Y)</th><td class="right">{{ (gr_eff_y | default(0) | float) | round(1) }} %</td></tr>
-      <tr><th>Grinding Eff. (MTD)</th><td class="right">{{ (gr_eff_m | default(0) | float) | round(1) }} %</td></tr>
-    </table>
-    <div class="muted">Efficiency = FG out / Grinding input.</div>
-  </div>
-</div>
-
-<!-- Row D: FG stock by grade + QA -->
-<div class="grid-2" style="margin-top:14px">
-  <div class="card">
-    <h2>FG Stock — Grade-wise (On-hand)</h2>
-    <table>
-      <tr><th>Grade</th><th class="right">Qty (kg)</th><th class="right">Value</th></tr>
-      {% for g in fg_stock_by_grade | default([]) %}
-        <tr>
-          <td>{{ g.grade }}</td>
-          <td class="right">{{ (g.qty | default(0) | float) | round(0) }}</td>
-          <td class="right"><span class="money" data-rupees="{{ (g.value | default(0) | float) }}"></span></td>
-        </tr>
-      {% endfor %}
-      {% if (fg_stock_by_grade | default([]) | length) == 0 %}
-        <tr><td colspan="3" class="muted">No approved FG on hand.</td></tr>
-      {% endif %}
-    </table>
-  </div>
-
-  <div class="card">
-    <h2>QA — Eagle View ({{ from_date }} → {{ to_date }})</h2>
-    <table>
-      <tr><th>Status</th><th class="right">Heats</th><th class="right">Lots</th></tr>
+    <div class="card">
+      <h2><span>QA — Eagle View</span><span class="muted">{{ from_date }} → {{ to_date }}</span></h2>
       {% set q = qa_eagle | default({}) %}
-      {% for s in ["PENDING","APPROVED","HOLD","REJECTED"] %}
-        {% set hs = "heats_" + s.lower() %}
-        {% set ls = "lots_"  + s.lower() %}
-        <tr><td>{{ s }}</td><td class="right">{{ q[hs] | default(0) }}</td><td class="right">{{ q[ls] | default(0) }}</td></tr>
-      {% endfor %}
-    </table>
-    <div class="muted">Counts are limited to items created/dated within the selected range.</div>
+      <table>
+        <tr><th>Status</th><th class="right">Heats</th><th class="right">Lots</th></tr>
+        {% for s in ["PENDING","APPROVED","HOLD","REJECTED"] %}
+          {% set hs = "heats_" + s.lower() %}
+          {% set ls = "lots_"  + s.lower() %}
+          <tr><td>{{ s }}</td><td class="right">{{ q[hs] | default(0) }}</td><td class="right">{{ q[ls] | default(0) }}</td></tr>
+        {% endfor %}
+      </table>
+      <div class="muted" style="margin-top:8px">Counts are limited to items created or dated within the selected range.</div>
+    </div>
   </div>
 </div>
-
 {% endblock %}
 
 {% block extra_scripts %}

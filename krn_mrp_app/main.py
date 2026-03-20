@@ -1782,9 +1782,12 @@ def ensure_rap_lot(db: Session, lot: Lot) -> RAPLot:
 # --- unchanged ---
 @app.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
+    _err = request.query_params.get("err", "")
+    _ok = request.query_params.get("ok", "")
+    _msg = request.query_params.get("msg", "")
     return templates.TemplateResponse(
         "login.html",
-        {"request": request, "err": request.query_params.get("err", "")}
+        {"request": request, "err": _err, "error": _err, "ok_msg": _ok, "msg": _msg}
     )
 
 # --- updated with single-session guard + session id/heartbeat ---
