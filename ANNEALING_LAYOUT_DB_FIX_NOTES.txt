@@ -1,0 +1,1 @@
+Follow-up annealing fix bundle:\n- Create Lot fields arranged as 2 + 2 layout\n- Anneal lots page no longer fails when downtime columns are missing\n- Safe dynamic column selection used for remarks/downtime\n- Heat lookup helper hardened for heat/heats table naming\n

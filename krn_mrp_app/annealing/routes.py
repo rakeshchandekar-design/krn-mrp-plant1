@@ -505,6 +505,18 @@ async def anneal_lots(
     query += " ORDER BY date DESC, id DESC"
 
     with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS remarks TEXT"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS downtime_min INTEGER DEFAULT 0"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS downtime_type TEXT"))
+        except Exception:
+            pass
         rows = conn.execute(text(query), params).mappings().all()
 
     # augment rows with anneal_cost_per_kg + total_value (no SQL changes)
@@ -682,6 +694,23 @@ def _table_exists(conn, table_name: str) -> bool:
     except Exception:
         return False
 
+
+
+def _column_exists(conn, table_name: str, column_name: str) -> bool:
+    try:
+        if str(engine.url).startswith("sqlite"):
+            rows = conn.execute(text(f"PRAGMA table_info({table_name})")).mappings().all()
+            cols = {str(r.get("name") or "").lower() for r in rows}
+            return column_name.lower() in cols
+        rows = conn.execute(text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = :t
+        """), {"t": table_name}).mappings().all()
+        cols = {str(r.get("column_name") or "").lower() for r in rows}
+        return column_name.lower() in cols
+    except Exception:
+        return False
 # ========== Data fetchers ==========
 
 def _fetch_anneal_header(conn, lot_id: int) -> Dict[str, Any] | None:
@@ -755,12 +784,8 @@ def _pick_qty_col(conn, table_name: str, candidates: list[str]) -> str | None:
     return None
 
 
+
 def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
-    """
-    Return [{heat_id, heat_no, used_qty}] for a base RAP lot (lot.id).
-    Safely probes singular/plural table names before querying.
-    """
-    # quantity rows from lot_heat
     if _table_exists(conn, "lot_heat"):
         if _table_exists(conn, "heat"):
             rows = _safe_query(conn, """
@@ -789,7 +814,6 @@ def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
             if rows:
                 return rows
 
-    # fallback mapping rows from lot_heats
     if _table_exists(conn, "lot_heats"):
         if _table_exists(conn, "heat"):
             rows = _safe_query(conn, """
@@ -813,49 +837,6 @@ def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
                 return rows
 
     return []
-
-    # 1b) If your DB uses 'heat' (singular) instead of 'heats'
-    rows = conn.execute(text("""
-        SELECT
-          h.id                                    AS heat_id,
-          h.heat_no                               AS heat_no,
-          COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
-        FROM lot_heat lh
-        JOIN heat h ON h.id = lh.heat_id
-        WHERE lh.lot_id = :lid
-        ORDER BY h.id
-    """), {"lid": base_lot_id}).mappings().all()
-    if rows:
-        return [dict(r) for r in rows]
-
-    # 2) Fallback: mapping only (no qty in lot_heats → show 0.00)
-    rows = conn.execute(text("""
-        SELECT
-          h.id       AS heat_id,
-          h.heat_no  AS heat_no,
-          0.0::float AS used_qty
-        FROM lot_heats m
-        JOIN heats h ON h.id = m.heat_id
-        WHERE m.lot_id = :lid
-        ORDER BY h.id
-    """), {"lid": base_lot_id}).mappings().all()
-    if rows:
-        return [dict(r) for r in rows]
-
-    # 2b) Fallback with 'heat' (singular)
-    rows = conn.execute(text("""
-        SELECT
-          h.id       AS heat_id,
-          h.heat_no  AS heat_no,
-          0.0::float AS used_qty
-        FROM lot_heats m
-        JOIN heat h ON h.id = m.heat_id
-        WHERE m.lot_id = :lid
-        ORDER BY h.id
-    """), {"lid": base_lot_id}).mappings().all()
-
-    return [dict(r) for r in rows]
-
 
 def _fetch_grns_for_heat(conn, heat_id: int) -> List[Dict[str, Any]]:
     """
