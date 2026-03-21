@@ -53,6 +53,7 @@ def fetch_plant2_balance():
                 END                     AS lot_no,
                 COALESCE(l.grade,'')    AS grade,
                 COALESCE(l.unit_cost,0) AS cost_per_kg,
+                COALESCE(l.trace_id,'') AS trace_id,
                 SUM(a.qty)::float       AS plant2_qty
             FROM public.rap_alloc  AS a
             JOIN public.rap_lot    AS rl ON rl.id = a.rap_lot_id
@@ -88,6 +89,7 @@ def fetch_plant2_balance():
                 "grade":        p["grade"],
                 "available_kg": avail,
                 "cost_per_kg":  float(p["cost_per_kg"] or 0.0),
+                "trace_id":     (p["trace_id"] or ""),
             })
     return out
 
@@ -372,6 +374,12 @@ async def anneal_create_post(
     )
     rap_cost_per_kg = rap_cost_wsum / lot_weight if lot_weight else 0.0
     cost_per_kg = rap_cost_per_kg + ANNEAL_ADD_COST  # job-work uses same processing cost as KRIP
+
+    # ---- derive trace_id from selected upstream lots ----
+    parent_trace_ids = []
+    for lot_no in allocations.keys():
+        parent_tid = str(avail_map[lot_no].get("trace_id") or "").strip()
+        parent_trace_ids.append(parent_tid if parent_tid else lot_no)
 
     # ---- create ANL lot number and insert ----
     with engine.begin() as conn:

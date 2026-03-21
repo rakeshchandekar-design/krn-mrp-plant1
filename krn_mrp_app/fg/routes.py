@@ -363,6 +363,11 @@ async def fg_create_post(
     surcharge = _surcharge_for_grade(fg_grade)
     cost_per_kg = base_cost + surcharge
 
+    parent_trace_ids = []
+    for ln in allocations.keys():
+        parent_tid = str(amap[ln].get("trace_id") or "").strip()
+        parent_trace_ids.append(parent_tid if parent_tid else ln)
+
     # 5) create FG lot_no (FG-YYYYMMDD-###)
     with engine.begin() as conn:
         prefix = "FG-" + date.today().strftime("%Y%m%d") + "-"
@@ -394,7 +399,7 @@ async def fg_create_post(
             "cost_per_kg": cost_per_kg,
             "src_alloc_json": json.dumps(allocations),
             "remarks": remarks or "",
-            "trace_id": _compose_trace_id(list(allocations.keys())),
+            "trace_id": _compose_trace_id(parent_trace_ids),
             "job_card_no": f"JC-FG-{lot_no}",
         })
 

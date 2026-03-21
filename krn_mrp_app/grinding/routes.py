@@ -63,6 +63,7 @@ def fetch_anneal_balance():
     with engine.begin() as conn:
         anneal = conn.execute(text("""
             SELECT id, lot_no, grade,
+                   COALESCE(trace_id,'') AS trace_id,
                    COALESCE(weight_kg,0)::float AS weight_kg,
                    COALESCE(cost_per_kg, COALESCE(rap_cost_per_kg,0)+10)::float AS anneal_cost_per_kg
             FROM anneal_lots
@@ -92,6 +93,7 @@ def fetch_anneal_balance():
                 "grade": a["grade"],
                 "available_kg": avail,
                 "anneal_cost_per_kg": float(a["anneal_cost_per_kg"] or 0.0),
+                "trace_id": str(a.get("trace_id") or ""),
             })
     return out
 
@@ -212,6 +214,11 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
     input_cost = wsum / lot_weight if lot_weight else 0.0
     cost_per_kg = input_cost + GRIND_ADD_COST
 
+    parent_trace_ids = []
+    for ln in allocations.keys():
+        parent_tid = str(amap[ln].get("trace_id") or "").strip()
+        parent_trace_ids.append(parent_tid if parent_tid else ln)
+
     with engine.begin() as conn:
         prefix = "GRD-" + date.today().strftime("%Y%m%d") + "-"
         last = conn.execute(text("""
@@ -240,7 +247,7 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
             "cost": cost_per_kg,
             "p80": p80,
             "p40": p40,
-            "trace_id": _compose_trace_id(list(allocations.keys())),
+            "trace_id": _compose_trace_id(parent_trace_ids),
             "job_card_no": f"JC-GRD-{lot_no}",
         })
 
