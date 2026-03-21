@@ -4801,6 +4801,7 @@ def lot_jobcard(request: Request, lot_id: int, db: Session = Depends(get_db)):
 
 
 
+
 @app.get("/traceability/thread/{trace_id}", response_class=HTMLResponse)
 def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db)):
     def _j(raw):
@@ -4829,6 +4830,20 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
                 return c.execute(text(sql), kw).mappings().all()
         except Exception:
             return []
+
+    def _format_alloc(raw):
+        amap = _j(raw)
+        out = []
+        for k, v in amap.items():
+            label = str(k)
+            if label == "OPENING":
+                label = "Opening stock"
+            try:
+                qty = float(v or 0.0)
+                out.append({"source": label, "qty": qty, "text": f"{label}: {qty:.1f} kg"})
+            except Exception:
+                out.append({"source": label, "qty": v, "text": f"{label}: {v}"})
+        return out
 
     trace_db = SessionLocal()
 
@@ -4863,41 +4878,45 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
         has_do = _table_ok('dispatch_orders')
 
         if has_fg:
-            fgs = _safe_all("SELECT id, lot_no, date, family, fg_grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, remarks FROM fg_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id)
+            fgs = [dict(x) for x in _safe_all("SELECT id, lot_no, date, family, fg_grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, remarks FROM fg_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id)]
         if has_gr:
-            grinds = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, oversize_p80_kg, oversize_p40_kg, remarks FROM grinding_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id)
+            grinds = [dict(x) for x in _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, oversize_p80_kg, oversize_p40_kg, remarks FROM grinding_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id)]
         if has_an:
-            anneals = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, ammonia_kg, o_pct, compressibility, remarks FROM anneal_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id)
+            anneals = [dict(x) for x in _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, ammonia_kg, o_pct, compressibility, remarks FROM anneal_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id)]
         if has_pv:
-            pulvs = _safe_all("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no, cost_per_kg, non_mag_pct, non_mag_qty_kg, ad, remarks FROM pulv_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id)
+            pulvs = [dict(x) for x in _safe_all("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no, cost_per_kg, non_mag_pct, non_mag_qty_kg, ad, remarks FROM pulv_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id)]
 
-        # atomization current and upstream
         atom_lots = trace_db.query(Lot).filter((Lot.trace_id == trace_id) | (Lot.lot_no == trace_id)).all()
 
+        # Expand upstream chain: FG -> Grinding -> Anneal -> Atom/Pulv -> Heat -> RM
         grind_lot_nos = set()
         for r in fgs:
             grind_lot_nos.update(_j(r.get('src_alloc_json')).keys())
+            r["source_lines"] = _format_alloc(r.get("src_alloc_json"))
         if grind_lot_nos and has_gr:
-            extra = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, oversize_p80_kg, oversize_p40_kg, remarks FROM grinding_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC", arr=list(grind_lot_nos))
+            extra = [dict(x) for x in _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, oversize_p80_kg, oversize_p40_kg, remarks FROM grinding_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC", arr=list(grind_lot_nos))]
             existing = {x['lot_no'] for x in grinds}
             grinds.extend([x for x in extra if x['lot_no'] not in existing])
 
         anneal_lot_nos = set()
         for r in grinds:
             anneal_lot_nos.update(_j(r.get('src_alloc_json')).keys())
+            r["source_lines"] = _format_alloc(r.get("src_alloc_json"))
         if anneal_lot_nos and has_an:
-            extra = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, ammonia_kg, o_pct, compressibility, remarks FROM anneal_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC", arr=list(anneal_lot_nos))
+            extra = [dict(x) for x in _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, ammonia_kg, o_pct, compressibility, remarks FROM anneal_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC", arr=list(anneal_lot_nos))]
             existing = {x['lot_no'] for x in anneals}
             anneals.extend([x for x in extra if x['lot_no'] not in existing])
 
         atom_lot_nos = set()
         pulv_lot_nos = set()
         for r in anneals:
-            for ln in _j(r.get('src_alloc_json')).keys():
+            sources = _j(r.get('src_alloc_json'))
+            r["source_lines"] = _format_alloc(r.get("src_alloc_json"))
+            for ln in sources.keys():
                 ln_s = str(ln)
                 if ln_s.upper().startswith('PULV'):
                     pulv_lot_nos.add(ln_s)
-                else:
+                elif ln_s != "OPENING":
                     atom_lot_nos.add(ln_s)
 
         if atom_lot_nos:
@@ -4906,12 +4925,14 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             atom_lots.extend([x for x in extra if x.lot_no not in existing])
 
         if pulv_lot_nos and has_pv:
-            extra = _safe_all("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no, cost_per_kg, non_mag_pct, non_mag_qty_kg, ad, remarks FROM pulv_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC", arr=list(pulv_lot_nos))
+            extra = [dict(x) for x in _safe_all("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no, cost_per_kg, non_mag_pct, non_mag_qty_kg, ad, remarks FROM pulv_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC", arr=list(pulv_lot_nos))]
             existing = {x['lot_no'] for x in pulvs}
             pulvs.extend([x for x in extra if x['lot_no'] not in existing])
 
+        for p in pulvs:
+            p["source_lines"] = _format_alloc(p.get("src_grn_json"))
+
         heat_ids = sorted({lh.heat_id for lot in atom_lots for lh in trace_db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()})
-        heats = []
         if heat_ids:
             heats = [h for h in (trace_db.get(Heat, hid) for hid in heat_ids) if h]
 
@@ -5008,11 +5029,11 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
 
         if fgs and has_di and has_do:
             fg_nos = [x['lot_no'] for x in fgs]
-            dispatches = _safe_all("""
+            dispatches = [dict(x) for x in _safe_all("""
                 SELECT o.id as order_id, o.order_no, o.date, o.customer_name, di.fg_lot_no, di.qty_kg
                 FROM dispatch_items di JOIN dispatch_orders o ON o.id=di.dispatch_id
                 WHERE di.fg_lot_no = ANY(:arr) ORDER BY o.date DESC, o.id DESC
-            """, arr=fg_nos)
+            """, arr=fg_nos)]
 
     except Exception as e:
         try:
