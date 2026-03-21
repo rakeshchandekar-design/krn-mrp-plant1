@@ -287,10 +287,11 @@ async def anneal_create_get(
         "annealing_create.html",
         {
             "request": request,
-            "role": current_role(request),          # <<< add this
-            "read_only": is_read_only(request),     # (optional but recommended)"rap_rows": rap_rows,
+            "role": current_role(request),
+            "read_only": is_read_only(request),
+            "rap_rows": rap_rows,
             "err": err,
-            "is_admin": _is_admin(request),   # <-- KEY: pass reliable flag
+            "is_admin": _is_admin(request),
         },
     )
 
