@@ -1,6 +1,3 @@
-import time
-_DASHBOARD_CACHE = {}
-_DASHBOARD_CACHE_TTL = 60
 import os, io, datetime as dt
 import qrcode
 import json
@@ -4813,37 +4810,23 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
 
     def _safe_first(sql, **kw):
         try:
-            with engine.connect() as conn:
-                return conn.execute(text(sql), kw).mappings().first()
+            return conn.execute(text(sql), kw).mappings().first()
         except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
             return None
 
     def _safe_all(sql, **kw):
         try:
-            with engine.connect() as conn:
-                return conn.execute(text(sql), kw).mappings().all()
+            return conn.execute(text(sql), kw).mappings().all()
         except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
             return []
 
-    trace_db = SessionLocal()
-    try:
-        fgs = _safe_all("SELECT id, lot_no, date, family, fg_grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, remarks FROM fg_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'fg_lots') else []
-        grinds = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, oversize_p80_kg, oversize_p40_kg, remarks FROM grinding_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'grinding_lots') else []
-        anneals = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, ammonia_kg, o_pct, compressibility, remarks FROM anneal_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'anneal_lots') else []
-        pulvs = _safe_all("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no, cost_per_kg, non_mag_pct, non_mag_qty_kg, ad, remarks FROM pulv_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'pulv_lots') else []
-        try:
-            trace_db.rollback()
-        except Exception:
-            pass
-        atom_lots = trace_db.query(Lot).filter((Lot.trace_id == trace_id) | (Lot.lot_no == trace_id)).all()
+    conn = db.connection()
+
+    fgs = _safe_all("SELECT id, lot_no, date, family, fg_grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, remarks FROM fg_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'fg_lots') else []
+    grinds = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, oversize_p80_kg, oversize_p40_kg, remarks FROM grinding_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'grinding_lots') else []
+    anneals = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, ammonia_kg, o_pct, compressibility, remarks FROM anneal_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'anneal_lots') else []
+    pulvs = _safe_all("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no, cost_per_kg, non_mag_pct, non_mag_qty_kg, ad, remarks FROM pulv_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'pulv_lots') else []
+    atom_lots = db.query(Lot).filter((Lot.trace_id == trace_id) | (Lot.lot_no == trace_id)).all()
 
     # Walk upstream if current trace is a downstream stage
     grind_lot_nos = set()
@@ -4871,7 +4854,7 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             else:
                 atom_lot_nos.add(ln_s)
     if atom_lot_nos:
-        extra = trace_db.query(Lot).filter(Lot.lot_no.in_(list(atom_lot_nos))).all()
+        extra = db.query(Lot).filter(Lot.lot_no.in_(list(atom_lot_nos))).all()
         existing={x.lot_no for x in atom_lots}
         atom_lots.extend([x for x in extra if x.lot_no not in existing])
     if pulv_lot_nos:
@@ -4879,8 +4862,8 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
         existing={x['lot_no'] for x in pulvs}
         pulvs.extend([x for x in extra if x['lot_no'] not in existing])
 
-    heat_ids = sorted({lh.heat_id for lot in atom_lots for lh in trace_db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()})
-    heats = [trace_db.get(Heat, hid) for hid in heat_ids if trace_db.get(Heat, hid)]
+    heat_ids = sorted({lh.heat_id for lot in atom_lots for lh in db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()})
+    heats = [db.get(Heat, hid) for hid in heat_ids if db.get(Heat, hid)]
 
     # Stage QA snapshots
     heat_qa = {}
@@ -4902,7 +4885,7 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
     anneal_qa = {}
     if anneals:
         ids=[int(x['id']) for x in anneals]
-        params_map = _anneal_latest_params_map(trace_db, ids)
+        params_map = _anneal_latest_params_map(db, ids)
         for row in anneals:
             rid=int(row['id'])
             qa={'oxygen': row.get('o_pct'), 'compressibility': row.get('compressibility')}
@@ -4914,7 +4897,7 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
         ids=[int(x['id']) for x in grinds]
         hdr = _grind_latest_qa_header_map(ids)
         try:
-            prm = _grinding_latest_params_map(trace_db, ids)
+            prm = _grinding_latest_params_map(db, ids)
         except Exception:
             prm = {}
         for row in grinds:
@@ -4927,7 +4910,7 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
     fg_qa = {}
     if fgs:
         ids=[int(x['id']) for x in fgs]
-        prm = _fg_latest_params_map(trace_db, ids)
+        prm = _fg_latest_params_map(db, ids)
         for row in fgs:
             fg_qa[int(row['id'])]=prm.get(int(row['id']), {})
 
@@ -4983,14 +4966,7 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             WHERE di.fg_lot_no = ANY(:arr) ORDER BY o.date DESC, o.id DESC
         """, arr=fg_nos)
 
-    
-except Exception as e:
-    trace_db.rollback()
-    print("TRACE ERROR:", e)
-
-finally:
-    trace_db.close()
-return templates.TemplateResponse("trace_thread.html", {
+    return templates.TemplateResponse("trace_thread.html", {
         "request": request,
         "trace_id": trace_id,
         "current": current,
@@ -5012,11 +4988,6 @@ return templates.TemplateResponse("trace_thread.html", {
         "user": current_username(request),
         "role": current_role(request),
     })
-    finally:
-        try:
-            trace_db.close()
-        except Exception:
-            pass
 
 
 @app.get("/traceability/heat/{heat_id}", response_class=HTMLResponse)
