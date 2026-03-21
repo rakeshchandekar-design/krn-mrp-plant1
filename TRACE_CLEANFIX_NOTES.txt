@@ -1,0 +1,5 @@
+Clean fix applied:
+- Rebuilt malformed atomization/pulverization block in trace_thread.html
+- Removed duplicated inline fragment causing Jinja endif syntax errors
+- Converted heat ORM objects to plain dicts before template render
+- Keeps atomization lots on plain dict access in trace template
