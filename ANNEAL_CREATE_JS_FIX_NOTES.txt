@@ -1,0 +1,5 @@
+Fixed annealing_create.html JavaScript template-string syntax.
+This was breaking recompute(), so:
+- total allocation stayed 0.00
+- minimum ammonia stayed 0.000
+- Create Lot button stayed disabled
