@@ -67,11 +67,12 @@
       <option value="{{ x }}" {% if request.query_params.get('downtime_type','') == x %}selected{% endif %}>{{ x|title }}</option>
       {% endfor %}
     </select>
+    <div style="font-size:12px;color:#64748b;margin-top:6px">Required only when downtime is more than 0.</div>
   </div>
 </div>
 
 <label>Remarks <span style="color:#ef4444">*</span></label>
-<input id="remarks" type="text" name="remarks" maxlength="250" required placeholder="Mandatory remarks for this annealing lot" value="{{ request.query_params.get('remarks','') }}">
+<input id="remarks" type="text" name="remarks" maxlength="250" placeholder="Mandatory remarks for this annealing lot" value="{{ request.query_params.get('remarks','') }}">
 
 
   <table class="table">
@@ -124,7 +125,7 @@
     Cost rule: <strong>Anneal Cost/kg = Weighted Source Cost/kg + ₹10</strong>. KRIP → KIP, KRFS → KFS, KRM → KIPM, KRSP → KSP.
   </p>{% endif %}
 
-  <button id="submitBtn" class="btn btn-primary" type="submit" disabled>Create Lot</button>
+  <button id="submitBtn" class="btn btn-primary" type="submit" >Create Lot</button>
 </form>
 
 <style>
@@ -189,10 +190,10 @@
     if (msg) {
       errBox.style.display = '';
       errBox.textContent = msg;
-      submitBtn.disabled = true;
+      submitBtn. = true;
     } else {
       errBox.style.display = 'none';
-      submitBtn.disabled = false;
+      submitBtn. = false;
     }
   }
 
@@ -202,10 +203,37 @@
 
   form.addEventListener('submit', function (e) {
     recompute();
-    if (submitBtn.disabled) e.preventDefault();
+    if (submitBtn.) e.preventDefault();
   });
 
   recompute();
+})();
+</script>
+
+<script>
+(function(){
+  function toggleAnnealDowntimeRules(){
+    const minEl = document.getElementById('downtime_min');
+    const typeEl = document.getElementById('downtime_type');
+    const remarksEl = document.getElementById('remarks');
+    if(!minEl || !typeEl || !remarksEl) return;
+    const mins = parseFloat(minEl.value || '0') || 0;
+    const active = mins > 0;
+    typeEl.required = active;
+    remarksEl.required = active;
+    if(!active){
+      typeEl.value = '';
+    }
+  }
+  window.toggleAnnealDowntimeRules = toggleAnnealDowntimeRules;
+  document.addEventListener('DOMContentLoaded', function(){
+    const minEl = document.getElementById('downtime_min');
+    if(minEl){
+      minEl.addEventListener('input', toggleAnnealDowntimeRules);
+      minEl.addEventListener('change', toggleAnnealDowntimeRules);
+    }
+    toggleAnnealDowntimeRules();
+  });
 })();
 </script>
 {% endblock %}

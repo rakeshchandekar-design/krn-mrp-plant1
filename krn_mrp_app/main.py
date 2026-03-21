@@ -5021,6 +5021,8 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             for row in fgs:
                 fg_qa[int(row['id'])] = prm.get(int(row['id']), {})
 
+        # Build RM rows while heat ORM objects are still attached
+        heat_plain = []
         for h in heats:
             for cons in getattr(h, 'rm_consumptions', []) or []:
                 rm_rows.append({
@@ -5034,6 +5036,15 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
                     'price': float(getattr(cons.grn, 'price', 0.0) or 0.0) if cons.grn else 0.0,
                     'date': getattr(cons.grn, 'date', None) if cons.grn else None,
                 })
+            heat_plain.append({
+                'id': h.id,
+                'heat_no': h.heat_no,
+                'grade': heat_grade(h),
+                'output_qty': float(h.actual_output or 0.0),
+                'unit_cost': float(h.unit_cost or 0.0),
+                'qa_status': h.qa_status,
+            })
+        heats = heat_plain
 
         for p in pulvs:
             for gid, qty in _j(p.get('src_grn_json')).items():
@@ -5057,7 +5068,14 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             current = dict(pulvs[0]); stage_label = 'PULVERIZATION'
         elif heats:
             h = heats[0]
-            current = {'lot_no': h.get('heat_no'), 'grade': h.get('grade'), 'weight_kg': h.get('output_qty'), 'cost_per_kg': h.get('unit_cost'), 'qa_status': h.get('qa_status'), 'date': heat_date_from_no(h.get('heat_no')) if h.get('heat_no') else None}
+            current = {
+                'lot_no': h.get('heat_no'),
+                'grade': h.get('grade'),
+                'weight_kg': h.get('output_qty'),
+                'cost_per_kg': h.get('unit_cost'),
+                'qa_status': h.get('qa_status'),
+                'date': heat_date_from_no(h.get('heat_no')) if h.get('heat_no') else None
+            }
             stage_label = 'MELTING'
 
         if fgs and has_di and has_do:

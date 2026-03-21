@@ -1,0 +1,5 @@
+Final go-live fix bundle:
+- Annealing create: remarks and downtime type required only when downtime > 0
+- Added front-end toggle for downtime validation
+- Removed unnecessary disabled state on Create button in annealing create template
+- QA dashboard now shows Annealing Pending queue with QA links

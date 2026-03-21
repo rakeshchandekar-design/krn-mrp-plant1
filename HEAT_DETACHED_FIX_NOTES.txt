@@ -1,0 +1,4 @@
+Fix applied:
+- trace_thread now converts Heat ORM objects into plain dicts before trace_db closes
+- RM rows are built first while Heat is still attached
+- prevents DetachedInstanceError for QR scan / annealing pending lot trace
