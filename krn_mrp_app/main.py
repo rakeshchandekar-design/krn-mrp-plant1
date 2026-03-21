@@ -5018,13 +5018,13 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             current = dict(anneals[0]); stage_label = 'ANNEALING'
         elif atom_lots:
             lot = atom_lots[0]
-            current = {'lot_no': lot.lot_no, 'grade': lot.grade, 'weight_kg': lot.weight, 'cost_per_kg': lot.unit_cost, 'qa_status': lot.qa_status, 'date': None}
+            current = {'lot_no': lot['lot_no'], 'grade': lot['grade'], 'weight_kg': lot['weight'], 'cost_per_kg': lot['unit_cost'], 'qa_status': lot['qa_status'], 'date': None}
             stage_label = 'ATOMIZATION'
         elif pulvs:
             current = dict(pulvs[0]); stage_label = 'PULVERIZATION'
         elif heats:
             h = heats[0]
-            current = {'lot_no': h.heat_no, 'grade': heat_grade(h), 'weight_kg': h.actual_output, 'cost_per_kg': h.unit_cost, 'qa_status': h.qa_status, 'date': heat_date_from_no(h.heat_no)}
+            current = {'lot_no': h['heat_no'], 'grade': h['grade'], 'weight_kg': h['output_qty'], 'cost_per_kg': h['unit_cost'], 'qa_status': h['qa_status'], 'date': heat_date_from_no(h['heat_no'])}
             stage_label = 'MELTING'
 
         if fgs and has_di and has_do:
@@ -5034,6 +5034,15 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
                 FROM dispatch_items di JOIN dispatch_orders o ON o.id=di.dispatch_id
                 WHERE di.fg_lot_no = ANY(:arr) ORDER BY o.date DESC, o.id DESC
             """, arr=fg_nos)]
+
+        atom_lots = [{
+            "id": x.id, "lot_no": x.lot_no, "grade": x.grade, "weight": x.weight,
+            "unit_cost": x.unit_cost, "qa_status": x.qa_status, "trace_id": x.trace_id,
+        } for x in atom_lots]
+        heats = [{
+            "id": h.id, "heat_no": h.heat_no, "grade": heat_grade(h), "output_qty": h.actual_output,
+            "unit_cost": h.unit_cost, "qa_status": h.qa_status,
+        } for h in heats]
 
     except Exception as e:
         try:

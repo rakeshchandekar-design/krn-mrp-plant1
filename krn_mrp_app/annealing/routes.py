@@ -251,6 +251,19 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
             {"d": first_of_month}
         ).scalar() or 0.0
 
+        produced_yday = conn.execute(
+            text("SELECT COALESCE(SUM(weight_kg),0) FROM anneal_lots WHERE date=:d"),
+            {"d": yday}
+        ).scalar() or 0.0
+        produced_mtd = conn.execute(
+            text("SELECT COALESCE(SUM(weight_kg),0) FROM anneal_lots WHERE date >= :d"),
+            {"d": first_of_month}
+        ).scalar() or 0.0
+        nh3_target_yday = float(produced_yday or 0.0) * 0.025
+        nh3_target_mtd = float(produced_mtd or 0.0) * 0.025
+        nh3_dev_yday = float(nh3_yday or 0.0) - nh3_target_yday
+        nh3_dev_mtd = float(nh3_mtd or 0.0) - nh3_target_mtd
+
     is_admin = (
         getattr(request.state, "is_admin", False)
         or getattr(request.state, "role", "").lower() == "admin"
@@ -272,6 +285,10 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
         "live_stock": live_stock,
         "nh3_yday": nh3_yday,
         "nh3_mtd": nh3_mtd,
+        "nh3_target_yday": nh3_target_yday,
+        "nh3_target_mtd": nh3_target_mtd,
+        "nh3_dev_yday": nh3_dev_yday,
+        "nh3_dev_mtd": nh3_dev_mtd,
         "is_admin": is_admin,
     })
 
@@ -292,6 +309,7 @@ async def anneal_create_get(
             "rap_rows": rap_rows,
             "err": err,
             "is_admin": _is_admin(request),
+            "downtime_types": ["production","maintenance","power","other"],
         },
     )
 
@@ -341,8 +359,20 @@ async def anneal_create_post(
         ammonia_kg = float(form.get("ammonia_kg") or 0)
     except Exception:
         ammonia_kg = 0.0
+    try:
+        downtime_min = int(float(form.get("downtime_min") or 0))
+    except Exception:
+        downtime_min = 0
+    downtime_type = str(form.get("downtime_type") or "").strip()
+    remarks = str(form.get("remarks") or "").strip()
 
     nh3_min = 0.025 * lot_weight
+    if not remarks:
+        msg = "Remarks are required for every annealing lot."
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+    if downtime_min > 0 and downtime_type == "":
+        msg = "Downtime type is required when downtime minutes are entered."
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
     if ammonia_kg < nh3_min:
         msg = f"Ammonia must be at least {nh3_min:.3f} kg for lot weight {lot_weight:.2f} kg."
         return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
@@ -384,6 +414,18 @@ async def anneal_create_post(
 
     # ---- create ANL lot number and insert ----
     with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS remarks TEXT"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS downtime_min INTEGER DEFAULT 0"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS downtime_type TEXT"))
+        except Exception:
+            pass
         prefix = "ANL-" + date.today().strftime("%Y%m%d") + "-"
         last = conn.execute(
             text("""
@@ -402,10 +444,10 @@ async def anneal_create_post(
             text("""
                 INSERT INTO anneal_lots
                     (date, lot_no, src_alloc_json, grade, weight_kg,
-                     rap_cost_per_kg, cost_per_kg, ammonia_kg, qa_status, trace_id, job_card_no)
+                     rap_cost_per_kg, cost_per_kg, ammonia_kg, qa_status, trace_id, job_card_no, remarks, downtime_min, downtime_type)
                 VALUES
                     (:date, :lot_no, :src_alloc_json, :grade, :weight_kg,
-                     :rap_cost_per_kg, :cost_per_kg, :ammonia_kg, 'PENDING', :trace_id, :job_card_no)
+                     :rap_cost_per_kg, :cost_per_kg, :ammonia_kg, 'PENDING', :trace_id, :job_card_no, :remarks, :downtime_min, :downtime_type)
             """),
             {
                 "date": date.today(),
@@ -418,8 +460,17 @@ async def anneal_create_post(
                 "ammonia_kg": ammonia_kg,
                 "trace_id": _compose_trace_id([lot_no] + list(allocations.keys())),
                 "job_card_no": f"JC-ANL-{lot_no}",
+                "remarks": remarks,
+                "downtime_min": downtime_min,
+                "downtime_type": downtime_type,
             },
         )
+
+        if downtime_min > 0:
+            conn.execute(text("""
+                INSERT INTO anneal_downtime (date, minutes, area, reason)
+                VALUES (:d, :m, :a, :r)
+            """), {"d": date.today(), "m": downtime_min, "a": downtime_type or "production", "r": remarks})
 
         # NOTE: no UPDATE to rap tables — Plant-2 availability is derived (PLANT2 allocations minus anneal usage)
 
@@ -437,7 +488,10 @@ async def anneal_lots(
     # make sure this variable name is exactly 'query'
     query = """
         SELECT id, date, lot_no, grade, weight_kg, ammonia_kg,
-               rap_cost_per_kg, cost_per_kg, qa_status
+               rap_cost_per_kg, cost_per_kg, qa_status,
+               COALESCE(remarks, '') AS remarks,
+               COALESCE(downtime_min,0) AS downtime_min,
+               COALESCE(downtime_type, '') AS downtime_type
         FROM anneal_lots
         WHERE 1=1
     """
@@ -704,24 +758,61 @@ def _pick_qty_col(conn, table_name: str, candidates: list[str]) -> str | None:
 def _fetch_heats_for_base_lot(conn, base_lot_id: int) -> List[Dict[str, Any]]:
     """
     Return [{heat_id, heat_no, used_qty}] for a base RAP lot (lot.id).
-
-    We prefer quantities from lot_heat (alloc_kg/qty). If nothing exists for
-    this lot in lot_heat, we fall back to lot_heats (mapping only; qty = 0).
-    Supports both 'heats' (plural) and 'heat' (singular).
+    Safely probes singular/plural table names before querying.
     """
-    # 1) Prefer quantity rows from lot_heat → join to heats (plural)
-    rows = conn.execute(text("""
-        SELECT
-          h.id                                    AS heat_id,
-          h.heat_no                               AS heat_no,
-          COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
-        FROM lot_heat lh
-        JOIN heats h ON h.id = lh.heat_id
-        WHERE lh.lot_id = :lid
-        ORDER BY h.id
-    """), {"lid": base_lot_id}).mappings().all()
-    if rows:
-        return [dict(r) for r in rows]
+    # quantity rows from lot_heat
+    if _table_exists(conn, "lot_heat"):
+        if _table_exists(conn, "heat"):
+            rows = _safe_query(conn, """
+                SELECT
+                  h.id                                    AS heat_id,
+                  h.heat_no                               AS heat_no,
+                  COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
+                FROM lot_heat lh
+                JOIN heat h ON h.id = lh.heat_id
+                WHERE lh.lot_id = :lid
+                ORDER BY h.id
+            """, {"lid": base_lot_id})
+            if rows:
+                return rows
+        if _table_exists(conn, "heats"):
+            rows = _safe_query(conn, """
+                SELECT
+                  h.id                                    AS heat_id,
+                  h.heat_no                               AS heat_no,
+                  COALESCE(lh.alloc_kg, lh.qty, 0)::float AS used_qty
+                FROM lot_heat lh
+                JOIN heats h ON h.id = lh.heat_id
+                WHERE lh.lot_id = :lid
+                ORDER BY h.id
+            """, {"lid": base_lot_id})
+            if rows:
+                return rows
+
+    # fallback mapping rows from lot_heats
+    if _table_exists(conn, "lot_heats"):
+        if _table_exists(conn, "heat"):
+            rows = _safe_query(conn, """
+                SELECT h.id AS heat_id, h.heat_no AS heat_no, 0.0::float AS used_qty
+                FROM lot_heats m
+                JOIN heat h ON h.id = m.heat_id
+                WHERE m.lot_id = :lid
+                ORDER BY h.id
+            """, {"lid": base_lot_id})
+            if rows:
+                return rows
+        if _table_exists(conn, "heats"):
+            rows = _safe_query(conn, """
+                SELECT h.id AS heat_id, h.heat_no AS heat_no, 0.0::float AS used_qty
+                FROM lot_heats m
+                JOIN heats h ON h.id = m.heat_id
+                WHERE m.lot_id = :lid
+                ORDER BY h.id
+            """, {"lid": base_lot_id})
+            if rows:
+                return rows
+
+    return []
 
     # 1b) If your DB uses 'heat' (singular) instead of 'heats'
     rows = conn.execute(text("""

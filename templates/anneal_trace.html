@@ -30,8 +30,8 @@
     <td>{{ r.rap_lot_no }}</td>
     <td>{{ r.rap_grade }}</td>
     <td class="right">{{ '%.2f'|format(r.allocated_kg or 0) }}</td>
-    <td class="right">{{ '%.2f'|format(r.rap_cost_per_kg or 0) }}</td>
-    <td class="right">{{ '%.2f'|format(val) }}</td>
+    {% if request.state.role|string == "admin" %}<td class="right">{{ '%.2f'|format(r.rap_cost_per_kg or 0) }}</td>
+    <td class="right">{{ '%.2f'|format(val) }}</td>{% endif %}
     <td>
       {% if r.base_lot_id %}
         <a href="/traceability/lot/{{ r.base_lot_id }}" target="_blank">Trace</a>
@@ -43,9 +43,9 @@
 
 <h3>Anneal Cost Summary</h3>
 <ul>
-  <li>Weighted RAP Cost/kg: ₹{{ '%.2f'|format(header.rap_cost_per_kg or 0) }}</li>
+  {% if request.state.role|string == "admin" %}<li>Weighted RAP Cost/kg: ₹{{ '%.2f'|format(header.rap_cost_per_kg or 0) }}</li>
   <li>Anneal Cost/kg: ₹{{ '%.2f'|format(header.cost_per_kg or 0) }}</li>
-  <li>Total Cost Value: ₹{{ '%.2f'|format((header.cost_per_kg or 0) * (header.weight_kg or 0)) }}</li>
+  <li>Total Cost Value: ₹{{ '%.2f'|format((header.cost_per_kg or 0) * (header.weight_kg or 0)) }}</li>{% endif %}
 </ul>
 
 <hr style="margin:16px 0;">
@@ -118,11 +118,11 @@
 
 {# Always show a QA table, even if empty #}
 <table class="table" style="width:auto">
-  <tr><th>Status</th>     <td>{{ qa and qa.header.decision or '' }}</td></tr>
-  <tr><th>Oxygen</th>     <td>{{ (qa and qa.header and qa.header.oxygen is not none) and ('%.2f'|format(qa.header.oxygen)) or '' }}</td></tr>
-  <tr><th>Lot ID</th><td>{{ qa and qa.header.lot_id or '' }}</td></tr>
-  <tr><th>Remarks</th><td>{{ qa and qa.header.remarks or '' }}</td></tr>
-  <tr><th>Recorded At</th><td>{{ qa and qa.header.created_at or '' }}</td></tr>
+  <tr><th>Status</th>     <td>{{ qa and qa.header.status or "" }}</td></tr>
+  <tr><th>Oxygen</th>     <td>{{ '%.2f'|format(qa.header.oxygen) if qa and qa.header and qa.header.oxygen is not none else '' }}</td></tr>
+  <tr><th>Lot ID</th><td>{{ qa.header.lot_id if qa and qa.header else "" }}</td></tr>
+  <tr><th>Remarks</th><td>{{ qa.header.remarks if qa and qa.header else "" }}</td></tr>
+  <tr><th>Recorded At</th><td>{{ qa.header.created_at if qa and qa.header else "" }}</td></tr>
 </table>
 
 <h4 style="margin-top:10px;">QA Parameters</h4>

@@ -36,12 +36,13 @@
     </div>
 
     <div class="card table-card">
-      <h3>Ammonia Gas Usage</h3>
+      <h3>Ammonia Gas Usage — Target vs Actual</h3>
       <table class="table small">
-        <tr><th>Yesterday (kg)</th><td>{{ '%.2f'|format(nh3_yday or 0) }}</td></tr>
-        <tr><th>Month to Date (kg)</th><td>{{ '%.2f'|format(nh3_mtd or 0) }}</td></tr>
+        <tr><th></th><th>Target (kg)</th><th>Actual (kg)</th><th>Deviation (kg)</th></tr>
+        <tr><th>Yesterday</th><td>{{ '%.2f'|format(nh3_target_yday or 0) }}</td><td>{{ '%.2f'|format(nh3_yday or 0) }}</td><td>{{ '%.2f'|format(nh3_dev_yday or 0) }}</td></tr>
+        <tr><th>Month to Date</th><td>{{ '%.2f'|format(nh3_target_mtd or 0) }}</td><td>{{ '%.2f'|format(nh3_mtd or 0) }}</td><td>{{ '%.2f'|format(nh3_dev_mtd or 0) }}</td></tr>
       </table>
-      <div class="compact-muted" style="margin-top:10px">Keep downtime and ammonia records updated for target-adjusted reporting.</div>
+      <div class="compact-muted" style="margin-top:10px">Target is auto-derived at 0.025 kg NH₃ per kg of annealed lot output.</div>
     </div>
   </div>
 

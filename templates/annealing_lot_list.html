@@ -29,10 +29,10 @@
     <th>Grade</th>
     <th>Weight (kg)</th>
     <th>Ammonia (kg)</th>
-    <th>Anneal Cost/kg (₹)</th>
-    <th>Total Value (₹)</th>
+    {% if admin %}<th>Anneal Cost/kg (₹)</th>
+    <th>Total Value (₹)</th>{% endif %}
     <th>QA</th>
-    <th>Docs</th>   {# NEW COLUMN #}
+    <th>Remarks</th><th>Docs</th>
     {% if qa_access %}<th>Action</th>{% endif %}
   </tr>
 
