@@ -1,326 +1,183 @@
-{# templates/melting.html #}
 {% extends "base.html" %}
 
 {% block content %}
 <style>
-  .melting-shell{max-width:none;width:100%;margin:12px auto 0;padding:0 4px 24px;}
-  .melting-shell h1{margin:6px 0 12px;font-size:2rem;}
-  .melting-top-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:start;margin-bottom:14px;}
-  .melting-kpi-stack{display:grid;gap:10px;}
-  .melting-card-tight{padding:16px 18px;}
-  .melting-live table{width:100%;}
-  .melting-form-grid{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px;}
-  .melting-rm-row{display:grid;grid-template-columns:minmax(220px,280px) minmax(140px,180px) 24px;gap:8px;align-items:end;}
-  .melting-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0 14px;}
-  .melting-toolbar input[type="date"]{min-width:170px;max-width:190px;}
-  .melting-action-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
-  @media (max-width:1100px){.melting-top-grid{grid-template-columns:1fr;}.melting-form-grid{grid-template-columns:1fr 1fr;}}
-  @media (max-width:760px){.melting-shell{padding:0 0 20px;}.melting-form-grid,.melting-rm-row{grid-template-columns:1fr;}.melting-toolbar{align-items:stretch}.melting-toolbar input[type="date"], .melting-toolbar .btn{width:100%;max-width:none;}}
+  .melting-shell{max-width:1480px;margin:0 auto;padding:6px 6px 24px;}
+  .melting-title{font-size:2.3rem;font-weight:800;color:#0e2a47;margin:8px 0 16px;}
+  .melting-grid{display:grid;grid-template-columns:1.2fr 0.95fr;gap:18px;margin-bottom:18px;}
+  .melting-grid-secondary{display:grid;grid-template-columns:0.78fr 1.22fr;gap:18px;margin-bottom:18px;align-items:start;}
+  .melting-card{background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:16px 18px;box-shadow:0 8px 18px rgba(15,23,42,.04);}
+  .melting-card h2{margin:0 0 10px 0;font-size:1.05rem;color:#0e2a47;}
+  .kpi-stack{display:grid;gap:12px;}
+  .kpi-box{border:1px solid #e5e7eb;border-radius:16px;padding:12px;}
+  .kpi-box h3{margin:0 0 8px 0;font-size:1rem;color:#0e2a47;}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin:8px 0 14px;}
+  .toolbar .field{display:flex;flex-direction:column;gap:4px;}
+  .toolbar input[type="date"]{min-width:170px;}
+  .live-stock table, .prod-table table, .heats-table table{width:100%;}
+  .heats-table{overflow:auto;}
+  @media (max-width:1100px){.melting-grid,.melting-grid-secondary{grid-template-columns:1fr;}}
 </style>
 <div class="melting-shell">
+  <h1 class="melting-title">Melting</h1>
 
-  <h1>Melting</h1>
-
-  {# ----- KPI + 5-day row ----- #}
-  <div class="melting-top-grid">
-    <div class="card melting-card-tight">
-      <h2 style="margin:0 0 10px 0;font-size:18px">KPIs (Yesterday)</h2>
-      <div class="melting-kpi-stack">
-
-      <div class="card" style="margin-bottom:8px">
-        <h3 style="margin:0 0 8px 0;font-size:14px">Power KPI (Yesterday)</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Average kWh/ton</th>
-              <th class="right">Gap vs Target ({{ '%.0f' % power_target }} kWh/ton)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="right">{{ '%.1f' % (today_kwhpt or 0) }}</td>
-              <td class="right">{{ '%.1f' % ((today_kwhpt or 0) - power_target) }}</td>
-            </tr>
-          </tbody>
-        </table>
+  <div class="melting-grid">
+    <section class="melting-card">
+      <h2>KPIs (Yesterday)</h2>
+      <div class="kpi-stack">
+        <div class="kpi-box">
+          <h3>Power KPI (Yesterday)</h3>
+          <table>
+            <thead><tr><th>Average kWh/ton</th><th class="right">Gap vs Target ({{ '%.0f' % power_target }} kWh/ton)</th></tr></thead>
+            <tbody><tr><td class="right">{{ '%.1f' % (today_kwhpt or 0) }}</td><td class="right">{{ '%.1f' % ((today_kwhpt or 0) - power_target) }}</td></tr></tbody>
+          </table>
+        </div>
+        <div class="kpi-box">
+          <h3>Yield (Yesterday)</h3>
+          <table>
+            <thead><tr><th>Actual %</th><th class="right">Target %</th><th class="right">Gap %</th></tr></thead>
+            <tbody><tr><td class="right">{{ '%.1f' % (yield_today or 0) }}</td><td class="right">97.0</td><td class="right">{{ '%.1f' % ((yield_today or 0) - 97.0) }}</td></tr></tbody>
+          </table>
+        </div>
+        <div class="kpi-box">
+          <h3>Output Efficiency (Yesterday)</h3>
+          <table>
+            <thead><tr><th>Actual %</th><th class="right">Target %</th><th class="right">Gap %</th></tr></thead>
+            <tbody><tr><td class="right">{{ '%.1f' % (eff_today or 0) }}</td><td class="right">100.0</td><td class="right">{{ '%.1f' % ((eff_today or 0) - 100.0) }}</td></tr></tbody>
+          </table>
+        </div>
       </div>
+    </section>
 
-      <div class="card" style="margin-bottom:8px">
-        <h3 style="margin:0 0 8px 0;font-size:14px">Yield (Yesterday)</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Actual %</th>
-              <th class="right">Target %</th>
-              <th class="right">Gap %</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="right">{{ '%.1f' % (yield_today or 0) }}</td>
-              <td class="right">97.0</td>
-              <td class="right">{{ '%.1f' % ((yield_today or 0) - 97.0) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="card">
-        <h3 style="margin:0 0 8px 0;font-size:14px">Output Efficiency (Yesterday)</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Actual %</th>
-              <th class="right">Target %</th>
-              <th class="right">Gap %</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="right">{{ '%.1f' % (eff_today or 0) }}</td>
-              <td class="right">100.0</td>
-              <td class="right">{{ '%.1f' % ((eff_today or 0) - 100.0) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="card melting-card-tight">
-      <h3 style="margin:0 0 8px 0;font-size:16px">Production – Last 5 Days</h3>
+    <section class="melting-card prod-table">
+      <h2>Production – Last 5 Days</h2>
       <table>
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th class="right">Actual (kg)</th>
-            <th class="right">Target (kg)</th>
-            <th class="right">Eff.%</th>
-          </tr>
-        </thead>
+        <thead><tr><th>Date</th><th class="right">Actual (kg)</th><th class="right">Target (kg)</th><th class="right">Eff.%</th></tr></thead>
         <tbody>
           {% for d in last5 %}
-          <tr>
-            <td>{{ d.date }}</td>
-            <td class="right">{{ '%.0f' % (d.actual or 0) }}</td>
-            <td class="right">{{ '%.0f' % (d.target or 0) }}</td>
-            <td class="right">{{ '%.1f' % (100.0 * (d.actual or 0) / (d.target or 1)) }}</td>
-          </tr>
+          <tr><td>{{ d.date }}</td><td class="right">{{ '%.0f' % (d.actual or 0) }}</td><td class="right">{{ '%.0f' % (d.target or 0) }}</td><td class="right">{{ '%.1f' % (100.0 * (d.actual or 0) / (d.target or 1)) }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
         <button class="btn secondary" onclick="exportDowntimeCSV()">Downtime CSV</button>
         <a class="btn ghost" href="/melting/downtime">Open downtime page</a>
       </div>
+    </section>
+  </div>
+
+  <div class="melting-grid-secondary">
+    <section class="melting-card live-stock">
+      <h2>Live Stock – Heats Available</h2>
+      <table>
+        <thead><tr><th>Type</th><th class="right">Available (kg)</th><th class="right">Value (₹)</th></tr></thead>
+        <tbody>
+          <tr><td>KRIP</td><td class="right">{{ '%.1f' % (stock.krip_qty or 0) }}</td><td class="right">{{ '%.2f' % (stock.krip_val or 0) }}</td></tr>
+          <tr><td>KRFS</td><td class="right">{{ '%.1f' % (stock.krfs_qty or 0) }}</td><td class="right">{{ '%.2f' % (stock.krfs_val or 0) }}</td></tr>
+        </tbody>
+        <tfoot><tr><th>Total</th><th class="right">{{ '%.1f' % ((stock.krip_qty or 0)+(stock.krfs_qty or 0)) }}</th><th class="right">{{ '%.2f' % ((stock.krip_val or 0)+(stock.krfs_val or 0)) }}</th></tr></tfoot>
+      </table>
+    </section>
+
+    <section class="melting-card">
+      <h2>New Heat</h2>
+      <form class="blue-ui" method="post" action="/melting/new">
+        <fieldset {% if read_only %}disabled{% endif %}>
+          <div class="field" style="margin-bottom:10px;">
+            <label>Heat Date <span style="color:#ef4444">*</span></label>
+            <input type="date" name="heat_date" required max="{{ heat_date_max }}" min="{{ heat_date_min }}" value="{{ today_iso }}">
+            <div class="small">You can backdate up to 4 days. Future dates are blocked.</div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;">
+            <div class="field"><label>Notes</label><input type="text" name="notes" placeholder="optional"></div>
+            <div class="field"><label>Slag Qty (kg) <span style="color:#ef4444">*</span></label><input type="number" step="0.1" min="0" name="slag_qty" required></div>
+            <div class="field"><label>Power Units Consumed (kWh) <span style="color:#ef4444">*</span></label><input type="number" step="0.1" min="0.1" name="power_kwh" required></div>
+          </div>
+
+          <h3 style="margin:14px 0 6px 0;font-size:15px">Raw Materials (up to 4 lines)</h3>
+          <div class="small" style="margin-bottom:6px;">RM Line 1 and RM Line 2 are mandatory. Others are optional.</div>
+          {% for i in [1,2,3,4] %}
+          <div style="display:grid;grid-template-columns:1.2fr .8fr auto;gap:8px;align-items:center;margin:8px 0;">
+            <select name="rm_type_{{ i }}"><option value="">-- RM Type --</option>{% for t in rm_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>
+            <input type="number" step="0.1" min="0" name="rm_qty_{{ i }}" placeholder="Qty (kg)">
+            {% if i<=2 %}<div class="small"><span style="color:#ef4444">*</span></div>{% else %}<div></div>{% endif %}
+          </div>
+          {% endfor %}
+
+          <h3 style="margin:14px 0 6px 0;font-size:15px">Downtime (this heat)</h3>
+          <div style="display:grid;grid-template-columns:.6fr .7fr 1.2fr;gap:10px;">
+            <div class="field"><label>Minutes <span style="color:#ef4444">*</span></label><input id="dt_min" type="number" min="0" step="1" name="downtime_min" required></div>
+            <div class="field"><label>Type</label><select id="dt_type" name="downtime_type" disabled><option value="production">Production</option><option value="maintenance">Maintenance</option><option value="power">Power</option><option value="other">Other</option></select></div>
+            <div class="field"><label>Remarks</label><input id="dt_note" type="text" name="downtime_note" placeholder="optional" disabled></div>
+          </div>
+
+          {% if not read_only %}<p style="margin-top:14px"><button class="btn" type="submit">Create Heat</button></p>{% else %}<p class="small" style="margin-top:10px">Read-only: New Heat entry disabled.</p>{% endif %}
+        </fieldset>
+      </form>
+    </section>
+  </div>
+
+  <div class="melting-card heats-table">
+    <div style="display:flex;justify-content:space-between;align-items:end;gap:12px;flex-wrap:wrap;">
+      <h2 style="margin-bottom:0">Heats</h2>
+      <div class="toolbar">
+        <div class="field"><label>From</label><input id="start" type="date" value="{{ start or today_iso }}" max="{{ today_iso }}"></div>
+        <div class="field"><label>To</label><input id="end" type="date" value="{{ end or today_iso }}" max="{{ today_iso }}"></div>
+        <button class="btn" onclick="fetchRange()">Fetch</button>
+        <button class="btn secondary" onclick="onlyToday()">Today</button>
+        <button class="btn ghost" onclick="resetRange()">Reset</button>
+        <button class="btn" onclick="exportCSV()">Download CSV</button>
+        <input type="hidden" id="todayIso" value="{{ today_iso }}">
+      </div>
     </div>
-  </div>
-
-  {# ----- Live stock ----- #}
-  <div class="card melting-live" style="margin-bottom:12px">
-    <h3 style="margin:0 0 8px 0;font-size:16px">Live Stock – Heats Available</h3>
     <table>
-      <thead>
-        <tr>
-          <th>Type</th>
-          <th class="right">Available (kg)</th>
-          <th class="right">Value (₹)</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Heat</th><th>Type</th><th class="right">Output (kg)</th><th class="right">kWh/ton</th>{% if role == 'admin' %}<th class="right">Cost/kg (₹)</th>{% endif %}<th class="right">Yield %</th><th>QA</th><th>Trace</th><th>Actions</th></tr></thead>
       <tbody>
-        <tr><td>KRIP</td><td class="right">{{ '%.1f' % (stock.krip_qty or 0) }}</td><td class="right">{{ '%.2f' % (stock.krip_val or 0) }}</td></tr>
-        <tr><td>KRFS</td><td class="right">{{ '%.1f' % (stock.krfs_qty or 0) }}</td><td class="right">{{ '%.2f' % (stock.krfs_val or 0) }}</td></tr>
-      </tbody>
-      <tfoot>
-        <tr>
-          <th>Total</th>
-          <th class="right">{{ '%.1f' % ((stock.krip_qty or 0)+(stock.krfs_qty or 0)) }}</th>
-          <th class="right">{{ '%.2f' % ((stock.krip_val or 0)+(stock.krfs_val or 0)) }}</th>
-        </tr>
-      </tfoot>
-    </table>
-  </div>
-
-  {# ----- New Heat (blue-ui form) ----- #}
-  <div class="card" style="margin-bottom:12px">
-    <h2 style="margin:0 0 10px 0;">New Heat</h2>
-    <form class="blue-ui" method="post" action="/melting/new">
-      <fieldset {% if read_only %}disabled{% endif %}>
-
-        {# ✅ NEW: Heat Date (today to 4 days back) #}
-        <div class="form-row" style="margin-bottom:8px;">
-          <label>Heat Date <span style="color:#ef4444">*</span></label>
-          <input type="date"
-                 name="heat_date"
-                 required
-                 max="{{ heat_date_max }}"
-                 min="{{ heat_date_min }}"
-                 value="{{ today_iso }}">
-          <div class="muted">You can backdate up to 4 days. Future dates are blocked.</div>
-        </div>
-
-        <div class="melting-form-grid">
-          <div class="form-row">
-            <label>Notes</label>
-            <input type="text" name="notes" placeholder="optional">
-          </div>
-          <div class="form-row">
-            <label>Slag Qty (kg) <span style="color:#ef4444">*</span></label>
-            <input type="number" step="0.1" min="0" name="slag_qty" required>
-          </div>
-          <div class="form-row">
-            <label>Power Units Consumed (kWh) <span style="color:#ef4444">*</span></label>
-            <input type="number" step="0.1" min="0.1" name="power_kwh" required>
-          </div>
-        </div>
-
-        <h3 style="margin:12px 0 6px 0;font-size:14px">Raw Materials (up to 4 lines)</h3>
-        <div class="muted">RM Line 1 <span style="color:#ef4444">*</span> and RM Line 2 <span style="color:#ef4444">*</span> are mandatory. Others are optional.</div>
-
-        {% for i in [1,2,3,4] %}
-        <div class="melting-rm-row" style="margin:6px 0;">
-          <select name="rm_type_{{ i }}">
-            <option value="">-- RM Type --</option>
-            {% for t in rm_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
-          </select>
-          <input type="number" step="0.1" min="0" name="rm_qty_{{ i }}" placeholder="Qty (kg)">
-          {% if i<=2 %}<div class="muted"><span style="color:#ef4444">*</span></div>{% endif %}
-        </div>
-        {% endfor %}
-
-        <h3 style="margin:12px 0 6px 0;font-size:14px">Downtime (this heat)</h3>
-        <div class="melting-form-grid" style="grid-template-columns:180px 220px minmax(240px,1fr);">
-          <div class="form-row">
-            <label>Minutes <span style="color:#ef4444">*</span></label>
-            <input id="dt_min" type="number" min="0" step="1" name="downtime_min" required>
-          </div>
-          <div class="form-row">
-            <label>Type</label>
-            <select id="dt_type" name="downtime_type" disabled>
-              <option value="production">Production</option>
-              <option value="maintenance">Maintenance</option>
-              <option value="power">Power</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-          <div class="form-row" style="flex:1;min-width:240px;">
-            <label>Remarks</label>
-            <input id="dt_note" type="text" name="downtime_note" placeholder="optional" disabled>
-          </div>
-        </div>
-
-        {% if not read_only %}
-          <p style="margin-top:10px"><button class="btn" type="submit">Create Heat</button></p>
-        {% else %}
-          <p class="muted" style="margin-top:10px">Read-only: New Heat entry disabled.</p>
-        {% endif %}
-      </fieldset>
-    </form>
-  </div>
-
-  {# ----- Date range toolbar (blue-ui) ----- #}
-  <div class="toolbar blue-ui melting-toolbar">
-    <span>From</span>
-    <input id="start" type="date" value="{{ start or today_iso }}" max="{{ today_iso }}">
-    <span>To</span>
-    <input id="end" type="date" value="{{ end or today_iso }}" max="{{ today_iso }}">
-    <button class="btn" onclick="fetchRange()">Fetch</button>
-    <button class="btn secondary" onclick="onlyToday()">Today</button>
-    <button class="btn ghost" onclick="resetRange()">Reset</button>
-    <button class="btn" onclick="exportCSV()">Download CSV</button>
-    <input type="hidden" id="todayIso" value="{{ today_iso }}">
-  </div>
-
-  {# ----- Heats table ----- #}
-  <div class="card">
-    <h2 style="margin:0 0 8px 0;">Heats</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Heat</th>
-          <th>Type</th>
-          <th class="right">Output (kg)</th>
-          <th class="right">kWh/ton</th>
-          {% if role == 'admin' %}<th>Cost/kg (₹)</th>{% endif %}
-          <th class="right">Yield %</th>
-          <th>QA</th>
-          <th>Trace</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for h in pending %}
+      {% for h in pending %}
         {% set g = heat_grades.get(h.id) %}
         {% set kwhpt = ( (h.power_kwh or 0) > 0 and (h.actual_output or 0) > 0 ) and ( (h.power_kwh / h.actual_output) * 1000 ) or 0 %}
         <tr>
           <td>{{ h.heat_no }}</td>
-          <td>
-            {% if g == 'KRFS' %}
-              <span class="badge badge-info">KRFS (FeSi)</span>
-            {% else %}
-              <span class="badge badge-success">KRIP</span>
-            {% endif %}
-          </td>
+          <td>{% if g == 'KRFS' %}<span class="badge badge-info">KRFS (FeSi)</span>{% else %}<span class="badge badge-success">KRIP</span>{% endif %}</td>
           <td class="right">{{ '%.1f' % (h.actual_output or 0) }}</td>
           <td class="right">{{ '%.1f' % kwhpt }}</td>
           {% if role == 'admin' %}<td class="right">{{ '%.2f' % (h.unit_cost or 0) }}</td>{% endif %}
           <td class="right">{{ '%.1f' % ( ((h.actual_output or 0.0) / max((h.total_inputs or 0.0), 1e-9)) * 100.0 ) }}</td>
           <td>{{ h.qa_status }}</td>
           <td><a class="btn ghost" href="/traceability/heat/{{ h.id }}">View</a></td>
-          <td>
-          {% if role in ['admin', 'qa'] %}
-            <a href="/qa/heat/{{ h.id }}">QA</a>
-          {% else %}
-            <a href="#" onclick="alert('User Not Authorized'); return false;" class="btn ghost">QA</a>
-          {% endif %}
-          </td>
+          <td>{% if role in ['admin', 'qa'] %}<a href="/qa/heat/{{ h.id }}">QA</a>{% else %}<a href="#" onclick="alert('User Not Authorized'); return false;" class="btn ghost">QA</a>{% endif %}</td>
         </tr>
-        {% endfor %}
+      {% endfor %}
       </tbody>
     </table>
   </div>
-
 </div>
 
 <script>
-  function exportCSV(){
-    const s=document.getElementById('start').value;
-    const e=document.getElementById('end').value;
-    const u=new URL('/melting/export', window.location.origin);
-    u.searchParams.set('start', s); u.searchParams.set('end', e);
-    window.location.href=u.toString();
-  }
-  function exportDowntimeCSV(){
-    const u=new URL('/melting/downtime/export', window.location.origin);
-    window.location.href=u.toString();
-  }
-  function fetchRange(){
-    const s=document.getElementById('start').value;
-    const e=document.getElementById('end').value;
-    location.href = `/melting?start=${s}&end=${e}`;
-  }
-  function onlyToday(){
-    const t=document.getElementById('todayIso').value;
-    document.getElementById('start').value=t;
-    document.getElementById('end').value=t;
-    fetchRange();
-  }
-  function resetRange(){
-    location.href = '/melting?all=1';
-  }
-  function syncDowntime(){
-    const m=document.getElementById('dt_min');
-    const t=document.getElementById('dt_type');
-    const n=document.getElementById('dt_note');
-    const v=parseInt(m.value||'0',10);
-    const on=v>0;
-    t.disabled=!on; n.disabled=!on;
-    t.required=on; n.required=on;
-    if(!on){ t.value='production'; n.value=''; }
-  }
-  document.addEventListener('DOMContentLoaded',function(){
-    const m=document.getElementById('dt_min');
-    if(m){ m.addEventListener('input', syncDowntime); syncDowntime(); }
-  });
+function q(sel){return document.querySelector(sel);}
+function onlyToday(){ const t=q('#todayIso').value; q('#start').value=t; q('#end').value=t; fetchRange(); }
+function resetRange(){ window.location='/melting'; }
+function fetchRange(){
+  const s=q('#start').value, e=q('#end').value;
+  let url='/melting';
+  const p=[]; if(s) p.push('start='+encodeURIComponent(s)); if(e) p.push('end='+encodeURIComponent(e));
+  if(p.length) url += '?' + p.join('&'); window.location = url;
+}
+function exportCSV(){
+  const s=q('#start').value, e=q('#end').value;
+  let url='/melting.csv'; const p=[]; if(s) p.push('start='+encodeURIComponent(s)); if(e) p.push('end='+encodeURIComponent(e));
+  if(p.length) url += '?' + p.join('&'); window.location = url;
+}
+function exportDowntimeCSV(){
+  const s=q('#start').value, e=q('#end').value;
+  let url='/melting/downtime.csv'; const p=[]; if(s) p.push('start='+encodeURIComponent(s)); if(e) p.push('end='+encodeURIComponent(e));
+  if(p.length) url += '?' + p.join('&'); window.location = url;
+}
+(function(){
+  const m=q('#dt_min'), t=q('#dt_type'), n=q('#dt_note');
+  function sync(){ const on = Number(m?.value || 0) > 0; if(t){t.disabled=!on; if(!on) t.value='production';} if(n){n.disabled=!on; if(!on) n.value='';} }
+  if(m){ m.addEventListener('input', sync); sync(); }
+})();
 </script>
 {% endblock %}
