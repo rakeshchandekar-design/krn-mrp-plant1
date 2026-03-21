@@ -1,0 +1,1 @@
+Fix applied:\n- RAP -> Plant 2 allocation now also inserts into RAPTransfer\n- Annealing create page should now see Plant 2 transferred RAP lots as source input\n- Existing old transfers are not backfilled; create a fresh transfer after deploy to test\n

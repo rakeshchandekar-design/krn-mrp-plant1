@@ -5300,6 +5300,18 @@ def rap_allocate(
     db.add(rec)
     db.flush()  # rec.id is now available
 
+    # IMPORTANT:
+    # Plant-2 movement must also create a RAPTransfer row so Annealing can see it as input.
+    if rec.kind == "PLANT2":
+        db.add(
+            RAPTransfer(
+                date=d,
+                lot_id=lot.id,
+                qty=qty,
+                remarks=remarks or "Transferred to Plant 2",
+            )
+        )
+
     # Update RAPLot mirror
     rap.available_qty = max(avail - qty, 0.0)
     rap.status = "CLOSED" if rap.available_qty <= 1e-6 else "OPEN"

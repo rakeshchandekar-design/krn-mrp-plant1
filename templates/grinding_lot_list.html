@@ -3,6 +3,7 @@
 <h2>Grinding Lots</h2>
 
 {% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
+{% set qa_access = request.state.role is defined and request.state.role|string in ['qa','admin'] %}
 
 <div class="toolbar" style="margin-bottom:10px; gap:8px; display:flex; flex-wrap:wrap; align-items:center">
   <a class="btn" href="/grind/">← Back to Grinding</a>
@@ -22,7 +23,7 @@
     <th>Date</th><th>Lot</th><th>Grade</th><th>Weight (kg)</th>
     <th>+80 (kg)</th><th>+40 (kg)</th>
     {% if admin %}<th>Proc Cost/kg (₹)</th><th>Final Cost/kg (₹)</th>{% endif %}
-    <th>QA</th><th>Docs</th><th>Action</th>
+    <th>QA</th><th>Docs</th>{% if qa_access %}<th>Action</th>{% endif %}
   </tr>
   {% for x in lots %}
   <tr class="{% if x.grade and x.grade.startswith('KIP') %} bg-info-subtle {% elif x.grade and x.grade.startswith('KFS') %} bg-warning-subtle {% endif %}">
@@ -39,7 +40,7 @@
       <a href="/grind/trace/{{ x.id }}">Trace</a> |
       <a href="/grind/pdf/{{ x.id }}" target="_blank">PDF</a> | <a href="/grind/jobcard/{{ x.id }}" target="_blank">Job Card</a>
     </td>
-    <td><a class="btn btn-small" href="/grind/qa/{{ x.id }}">QA</a></td>
+    {% if qa_access %}<td><a class="btn btn-small" href="/grind/qa/{{ x.id }}">QA</a></td>{% endif %}
   </tr>
   {% endfor %}
   <tr class="table-info">

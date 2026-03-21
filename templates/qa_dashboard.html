@@ -201,7 +201,7 @@
     <div class="section-title"><span class="emoji">🧪</span><span>Atomization — Lots</span></div>
     {% if lots and lots|length > 0 %}
     <table>
-      <thead><tr><th>Lot No</th><th>Date</th><th>Grade</th><th>Weight (kg)</th><th>QA Status</th><th>Remarks</th></tr></thead>
+      <thead><tr><th>Lot No</th><th>Date</th><th>Grade</th><th>Weight (kg)</th><th>QA Status</th><th>Remarks</th><th>Action</th></tr></thead>
       <tbody>
         {% for l in lots %}
         {% set st = (l.qa_status or 'PENDING') %}
@@ -212,6 +212,7 @@
           <td>{{ '%.1f' % (l.weight or 0) }}</td>
           <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% else %}info{% endif %}">{{ st }}</span></td>
           <td>{{ l.remarks or '' }}</td>
+          <td><a href="/qa/lot/{{ l.id }}">QA</a></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -223,7 +224,7 @@
     <div class="section-title"><span class="emoji">🔥🛠️</span><span>Annealing — Batches</span></div>
     {% if anneals and anneals|length > 0 %}
     <table>
-      <thead><tr><th>Lot No</th><th>Date</th><th>Grade</th><th>Weight (kg)</th><th>O₂ (%)</th><th>QA Status</th><th>Remarks</th></tr></thead>
+      <thead><tr><th>Lot No</th><th>Date</th><th>Grade</th><th>Weight (kg)</th><th>O₂ (%)</th><th>QA Status</th><th>Remarks</th><th>Action</th></tr></thead>
       <tbody>
         {% for a in anneals %}
         {% set st = (a.qa_status or 'PENDING') %}
@@ -232,6 +233,7 @@
           <td>{{ '%.1f' % (a.weight_kg or 0) }}</td><td>{{ a.oxygen or '' }}</td>
           <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% else %}info{% endif %}">{{ st }}</span></td>
           <td>{{ a.remarks or '' }}</td>
+          <td><a href="/anneal/qa/{{ a.id }}">QA</a></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -243,7 +245,7 @@
     <div class="section-title"><span class="emoji">⚙️</span><span>Grinding — Batches</span></div>
     {% if grinds and grinds|length > 0 %}
     <table>
-      <thead><tr><th>Lot No</th><th>Date</th><th>Grade</th><th>Weight (kg)</th><th>Compressibility</th><th>QA Status</th><th>Remarks</th></tr></thead>
+      <thead><tr><th>Lot No</th><th>Date</th><th>Grade</th><th>Weight (kg)</th><th>Compressibility</th><th>QA Status</th><th>Remarks</th><th>Action</th></tr></thead>
       <tbody>
         {% for g in grinds %}
         {% set st = (g.qa_status or 'PENDING') %}
@@ -252,6 +254,7 @@
           <td>{{ '%.1f' % (g.weight_kg or 0) }}</td><td>{{ g.compressibility or '' }}</td>
           <td><span class="chip {% if st=='APPROVED' %}ok{% elif st=='HOLD' %}warn{% elif st=='REJECTED' %}bad{% else %}info{% endif %}">{{ st }}</span></td>
           <td>{{ g.remarks or '' }}</td>
+          <td><a href="/grind/qa/{{ g.id }}">QA</a></td>
         </tr>
         {% endfor %}
       </tbody>
