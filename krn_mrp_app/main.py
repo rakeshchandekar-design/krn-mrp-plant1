@@ -4897,7 +4897,18 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
         if has_pv:
             pulvs = [dict(x) for x in _safe_all("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no, cost_per_kg, non_mag_pct, non_mag_qty_kg, ad, remarks FROM pulv_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id)]
 
-        atom_lots = trace_db.query(Lot).filter((Lot.trace_id == trace_id) | (Lot.lot_no == trace_id)).all()
+        atom_lot_objs = trace_db.query(Lot).filter((Lot.trace_id == trace_id) | (Lot.lot_no == trace_id)).all()
+        atom_lots = []
+        for lot in atom_lot_objs:
+            atom_lots.append({
+                'id': lot.id,
+                'lot_no': lot.lot_no,
+                'grade': lot.grade,
+                'weight': lot.weight,
+                'unit_cost': lot.unit_cost,
+                'qa_status': lot.qa_status,
+                'trace_id': lot.trace_id,
+            })
 
         # Expand upstream chain: FG -> Grinding -> Anneal -> Atom/Pulv -> Heat -> RM
         grind_lot_nos = set()
@@ -4931,9 +4942,19 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
                     atom_lot_nos.add(ln_s)
 
         if atom_lot_nos:
-            extra = trace_db.query(Lot).filter(Lot.lot_no.in_(list(atom_lot_nos))).all()
-            existing = {x.lot_no for x in atom_lots}
-            atom_lots.extend([x for x in extra if x.lot_no not in existing])
+            extra_objs = trace_db.query(Lot).filter(Lot.lot_no.in_(list(atom_lot_nos))).all()
+            existing = {x['lot_no'] for x in atom_lots}
+            for lot in extra_objs:
+                if lot.lot_no not in existing:
+                    atom_lots.append({
+                        'id': lot.id,
+                        'lot_no': lot.lot_no,
+                        'grade': lot.grade,
+                        'weight': lot.weight,
+                        'unit_cost': lot.unit_cost,
+                        'qa_status': lot.qa_status,
+                        'trace_id': lot.trace_id,
+                    })
 
         if pulv_lot_nos and has_pv:
             extra = [dict(x) for x in _safe_all("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no, cost_per_kg, non_mag_pct, non_mag_qty_kg, ad, remarks FROM pulv_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC", arr=list(pulv_lot_nos))]
@@ -4943,7 +4964,8 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
         for p in pulvs:
             p["source_lines"] = _format_alloc(p.get("src_grn_json"))
 
-        heat_ids = sorted({lh.heat_id for lot in atom_lots for lh in trace_db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()})
+        atom_lot_ids = [x['id'] for x in atom_lots]
+        heat_ids = sorted({lh.heat_id for lid in atom_lot_ids for lh in trace_db.query(LotHeat).filter(LotHeat.lot_id == lid).all()})
         if heat_ids:
             heats = [h for h in (trace_db.get(Heat, hid) for hid in heat_ids) if h]
 
@@ -4952,13 +4974,13 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             heat_qa[h.id] = dict(q) if q else {}
 
         for lot in atom_lots:
-            chem = getattr(lot, "chemistry", None)
-            phys = getattr(lot, "phys", None)
-            psd = getattr(lot, "psd", None)
-            atom_qa[lot.id] = {
-                'c': getattr(chem, 'c', None), 'si': getattr(chem, 'si', None), 'mn': getattr(chem, 'mn', None), 's': getattr(chem, 's', None), 'p': getattr(chem, 'p', None),
-                'ad': getattr(phys, 'ad', None), 'flow': getattr(phys, 'flow', None),
-                'p212': getattr(psd, 'p212', None), 'p180': getattr(psd, 'p180', None), 'n150p75': getattr(psd, 'n150p75', None),
+            chem = _safe_first("SELECT c, si, mn, s, p FROM lot_chem WHERE lot_id=:id ORDER BY id DESC LIMIT 1", id=lot['id'])
+            phys = _safe_first("SELECT ad, flow FROM lot_phys WHERE lot_id=:id ORDER BY id DESC LIMIT 1", id=lot['id'])
+            psd = _safe_first("SELECT p212, p180, n150p75 FROM lot_psd WHERE lot_id=:id ORDER BY id DESC LIMIT 1", id=lot['id'])
+            atom_qa[lot['id']] = {
+                'c': chem.get('c') if chem else None, 'si': chem.get('si') if chem else None, 'mn': chem.get('mn') if chem else None, 's': chem.get('s') if chem else None, 'p': chem.get('p') if chem else None,
+                'ad': phys.get('ad') if phys else None, 'flow': phys.get('flow') if phys else None,
+                'p212': psd.get('p212') if psd else None, 'p180': psd.get('p180') if psd else None, 'n150p75': psd.get('n150p75') if psd else None,
             }
 
         if anneals:
@@ -5029,13 +5051,13 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             current = dict(anneals[0]); stage_label = 'ANNEALING'
         elif atom_lots:
             lot = atom_lots[0]
-            current = {'lot_no': lot['lot_no'], 'grade': lot['grade'], 'weight_kg': lot['weight'], 'cost_per_kg': lot['unit_cost'], 'qa_status': lot['qa_status'], 'date': None}
+            current = {'lot_no': lot.get('lot_no'), 'grade': lot.get('grade'), 'weight_kg': lot.get('weight'), 'cost_per_kg': lot.get('unit_cost'), 'qa_status': lot.get('qa_status'), 'date': None}
             stage_label = 'ATOMIZATION'
         elif pulvs:
             current = dict(pulvs[0]); stage_label = 'PULVERIZATION'
         elif heats:
             h = heats[0]
-            current = {'lot_no': h['heat_no'], 'grade': h['grade'], 'weight_kg': h['output_qty'], 'cost_per_kg': h['unit_cost'], 'qa_status': h['qa_status'], 'date': heat_date_from_no(h['heat_no'])}
+            current = {'lot_no': h.get('heat_no'), 'grade': h.get('grade'), 'weight_kg': h.get('output_qty'), 'cost_per_kg': h.get('unit_cost'), 'qa_status': h.get('qa_status'), 'date': heat_date_from_no(h.get('heat_no')) if h.get('heat_no') else None}
             stage_label = 'MELTING'
 
         if fgs and has_di and has_do:
@@ -5045,15 +5067,6 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
                 FROM dispatch_items di JOIN dispatch_orders o ON o.id=di.dispatch_id
                 WHERE di.fg_lot_no = ANY(:arr) ORDER BY o.date DESC, o.id DESC
             """, arr=fg_nos)]
-
-        atom_lots = [{
-            "id": x.id, "lot_no": x.lot_no, "grade": x.grade, "weight": x.weight,
-            "unit_cost": x.unit_cost, "qa_status": x.qa_status, "trace_id": x.trace_id,
-        } for x in atom_lots]
-        heats = [{
-            "id": h.id, "heat_no": h.heat_no, "grade": heat_grade(h), "output_qty": h.actual_output,
-            "unit_cost": h.unit_cost, "qa_status": h.qa_status,
-        } for h in heats]
 
     except Exception as e:
         try:

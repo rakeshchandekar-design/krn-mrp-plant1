@@ -2,26 +2,20 @@
 {% block content %}
 {% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
 {% set qa_access = request.state.role is defined and request.state.role|string in ['qa','admin'] %}
-
 <h2>Annealing Lots</h2>
-
 <div class="toolbar" style="margin-bottom:10px; gap:8px; display:flex; flex-wrap:wrap; align-items:center">
   <a class="btn" href="/anneal/">← Back to Annealing</a>
-
   <form method="get" action="/anneal/lots" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
     <label>From</label>
     <input type="date" name="from_date" value="{{ from_date or '' }}">
     <label>To</label>
     <input type="date" name="to_date" value="{{ to_date or '' }}">
     <button class="btn" type="submit">Fetch</button>
-
     <a class="btn" href="/anneal/lots?from_date={{ today }}&to_date={{ today }}">Today</a>
     <a class="btn" href="/anneal/lots">Reset</a>
-
     <a class="btn" href="/anneal/lots?csv=1{% if from_date %}&from_date={{ from_date }}{% endif %}{% if to_date %}&to_date={{ to_date }}{% endif %}">Download CSV</a>
   </form>
 </div>
-
 <table class="table">
   <tr>
     <th>Date</th>
@@ -29,76 +23,47 @@
     <th>Grade</th>
     <th>Weight (kg)</th>
     <th>Ammonia (kg)</th>
-    {% if admin %}<th>Anneal Cost/kg (₹)</th>
-    <th>Total Value (₹)</th>{% endif %}
+    {% if admin %}<th>Anneal Cost/kg (₹)</th><th>Total Value (₹)</th>{% endif %}
     <th>QA</th>
-    <th>Remarks</th><th>Docs</th>
+    <th>Remarks</th>
+    <th>Docs</th>
     {% if qa_access %}<th>Action</th>{% endif %}
   </tr>
-
   {% set totals = namespace(value_sum=0.0) %}
-
   {% for x in lots %}
-    {% if x.weight_kg and x.weight_kg > 0 %}
-    <tr class="
-        {% if x.grade and x.grade.startswith('KIP') %} bg-info-subtle
-        {% elif x.grade and x.grade.startswith('KFS') %} bg-warning-subtle
-        {% endif %}
-    ">
+    {% if (x.weight_kg or 0) > 0 %}
+    {% set eff_cost = x.anneal_cost_per_kg if x.anneal_cost_per_kg is defined else (x.cost_per_kg or 0) %}
+    {% set tval = x.total_value if x.total_value is defined else ((eff_cost or 0) * (x.weight_kg or 0)) %}
+    {% set totals.value_sum = totals.value_sum + (tval or 0) %}
+    <tr class="{% if x.grade and x.grade.startswith('KIP') %}bg-info-subtle{% elif x.grade and x.grade.startswith('KFS') %}bg-warning-subtle{% endif %}">
       <td>{{ x.date }}</td>
       <td>{{ x.lot_no }}</td>
-      <td>
-        <span class="pill
-          {% if x.grade and x.grade.startswith('KIP') %} pill-blue
-          {% elif x.grade and x.grade.startswith('KFS') %} pill-orange
-          {% endif %}
-        ">{{ x.grade }}</span>
-      </td>
-      <td>{{ '%.0f'|format(x.weight_kg) }}</td>
+      <td><span class="pill {% if x.grade and x.grade.startswith('KIP') %}pill-blue{% elif x.grade and x.grade.startswith('KFS') %}pill-orange{% endif %}">{{ x.grade }}</span></td>
+      <td>{{ '%.0f'|format(x.weight_kg or 0) }}</td>
       <td>{{ '%.2f'|format(x.ammonia_kg or 0) }}</td>
-
-      {% set eff_cost = (x.anneal_cost_per_kg is defined and x.anneal_cost_per_kg) or (x.cost_per_kg or 0) %}
-      {% set tval = (x.total_value is defined and x.total_value) or (eff_cost * (x.weight_kg or 0)) %}
-
-      <td>{{ '%.2f'|format(eff_cost) }}</td>
-      <td>{{ '%.2f'|format(tval) }}</td>
-      {% set totals.value_sum = totals.value_sum + (tval or 0) %}
-
-      {% if admin %}<td>{{ '%.2f'|format(x.anneal_cost_per_kg or x.cost_per_kg or 0) }}</td><td>{{ '%.2f'|format((x.weight_kg or 0) * (x.anneal_cost_per_kg or x.cost_per_kg or 0)) }}</td>{% endif %}<td>{{ x.qa_status }}</td>
-     <td>
-  <a href="/anneal/trace/{{ x.id }}">Trace</a> | 
-  <a href="/anneal/pdf/{{ x.id }}" target="_blank">PDF</a> | <a href="/anneal/jobcard/{{ x.id }}" target="_blank">Job Card</a>
-  {% if x.qa_status %}
-    <br><small>QA: {{ x.qa_status }}</small>
-  {% endif %}
-     </td>
+      {% if admin %}<td>{{ '%.2f'|format(eff_cost or 0) }}</td><td>{{ '%.2f'|format(tval or 0) }}</td>{% endif %}
+      <td>{{ x.qa_status or '' }}</td>
+      <td>{{ x.remarks or '' }}</td>
+      <td>
+        <a href="/anneal/trace/{{ x.id }}">Trace</a> |
+        <a href="/anneal/pdf/{{ x.id }}" target="_blank">PDF</a> |
+        <a href="/anneal/jobcard/{{ x.id }}" target="_blank">Job Card</a>
+        {% if x.qa_status %}<br><small>QA: {{ x.qa_status }}</small>{% endif %}
+      </td>
       {% if qa_access %}<td><a class="btn btn-small" href="/anneal/qa/{{ x.id }}">QA</a></td>{% endif %}
     </tr>
     {% endif %}
   {% endfor %}
-
   <tr class="table-info">
     <th colspan="3">TOTAL</th>
     <th>{{ '%.2f'|format(total_weight) }}</th>
     <th></th>
-    <th>{{ '%.2f'|format(weighted_cost) }}</th>
-    <th>{{ '%.2f'|format(totals.value_sum) }}</th>
-    <th></th>
-    <th></th>
-    <th></th>
+    {% if admin %}<th>{{ '%.2f'|format(weighted_cost) }}</th><th>{{ '%.2f'|format(totals.value_sum) }}</th>{% endif %}
+    <th></th><th></th><th></th>{% if qa_access %}<th></th>{% endif %}
   </tr>
 </table>
-
-<div class="muted" style="margin-top:6px">
-  <span class="pill pill-blue">KIP</span> = KRIP output,
-  <span class="pill pill-orange">KFS</span> = KRFS output
-</div>
-
+<div class="muted" style="margin-top:6px"><span class="pill pill-blue">KIP</span> = KRIP output, <span class="pill pill-orange">KFS</span> = KRFS output</div>
 <style>
-  .bg-info-subtle    { background-color: #e6f4ff; }
-  .bg-warning-subtle { background-color: #fff3e0; }
-  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; line-height:18px; font-weight:600; }
-  .pill-blue   { background:#d7ebff; }
-  .pill-orange { background:#ffe9cf; }
+.bg-info-subtle{background-color:#e6f4ff;} .bg-warning-subtle{background-color:#fff3e0;} .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;line-height:18px;font-weight:600;} .pill-blue{background:#d7ebff;} .pill-orange{background:#ffe9cf;}
 </style>
 {% endblock %}

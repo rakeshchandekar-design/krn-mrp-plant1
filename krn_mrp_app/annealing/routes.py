@@ -414,18 +414,6 @@ async def anneal_create_post(
 
     # ---- create ANL lot number and insert ----
     with engine.begin() as conn:
-        try:
-            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS remarks TEXT"))
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS downtime_min INTEGER DEFAULT 0"))
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS downtime_type TEXT"))
-        except Exception:
-            pass
         prefix = "ANL-" + date.today().strftime("%Y%m%d") + "-"
         last = conn.execute(
             text("""
@@ -486,12 +474,38 @@ async def anneal_lots(
     csv: int = 0
 ):
     # make sure this variable name is exactly 'query'
-    query = """
+    remarks_expr = "'' AS remarks"
+    downtime_min_expr = "0 AS downtime_min"
+    downtime_type_expr = "'' AS downtime_type"
+    with engine.begin() as probe_conn:
+        try:
+            probe_conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS remarks TEXT"))
+        except Exception:
+            pass
+        try:
+            probe_conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS downtime_min INTEGER DEFAULT 0"))
+        except Exception:
+            pass
+        try:
+            probe_conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS downtime_type TEXT"))
+        except Exception:
+            pass
+        try:
+            if _column_exists(probe_conn, "anneal_lots", "remarks"):
+                remarks_expr = "COALESCE(remarks, '') AS remarks"
+            if _column_exists(probe_conn, "anneal_lots", "downtime_min"):
+                downtime_min_expr = "COALESCE(downtime_min,0) AS downtime_min"
+            if _column_exists(probe_conn, "anneal_lots", "downtime_type"):
+                downtime_type_expr = "COALESCE(downtime_type, '') AS downtime_type"
+        except Exception:
+            pass
+
+    query = f"""
         SELECT id, date, lot_no, grade, weight_kg, ammonia_kg,
                rap_cost_per_kg, cost_per_kg, qa_status,
-               COALESCE(remarks, '') AS remarks,
-               COALESCE(downtime_min,0) AS downtime_min,
-               COALESCE(downtime_type, '') AS downtime_type
+               {remarks_expr},
+               {downtime_min_expr},
+               {downtime_type_expr}
         FROM anneal_lots
         WHERE 1=1
     """
@@ -505,18 +519,6 @@ async def anneal_lots(
     query += " ORDER BY date DESC, id DESC"
 
     with engine.begin() as conn:
-        try:
-            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS remarks TEXT"))
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS downtime_min INTEGER DEFAULT 0"))
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE anneal_lots ADD COLUMN IF NOT EXISTS downtime_type TEXT"))
-        except Exception:
-            pass
         rows = conn.execute(text(query), params).mappings().all()
 
     # augment rows with anneal_cost_per_kg + total_value (no SQL changes)
@@ -888,49 +890,47 @@ def _fetch_grns_for_heat(conn, heat_id: int) -> List[Dict[str, Any]]:
 
 
 def _fetch_latest_anneal_qa_full(conn, anneal_lot_id: int) -> Dict[str, Any] | None:
-    """
-    Returns latest QA header + all parameter rows for the given anneal lot, if present.
-    Uses your actual columns: decision, oxygen, remarks, lot_id.
-    We alias decision -> status so templates can read qa.header.status.
-    """
-    qa_row = conn.execute(text("""
-        SELECT
-            id,
-            anneal_lot_id,
-            decision       AS status,
-            oxygen,
-            lot_id,
-            COALESCE(remarks, '') AS remarks
-        FROM anneal_qa
-        WHERE anneal_lot_id = :lid
-        ORDER BY id DESC
-        LIMIT 1
-    """), {"lid": anneal_lot_id}).mappings().first()
+    """Return latest anneal QA if QA tables exist, else None."""
+    try:
+        if not _table_exists(conn, "anneal_qa"):
+            return None
+    except Exception:
+        return None
+
+    try:
+        qa_row = conn.execute(text("""
+            SELECT
+                id,
+                anneal_lot_id,
+                decision AS status,
+                oxygen,
+                lot_id,
+                COALESCE(remarks, '') AS remarks
+            FROM anneal_qa
+            WHERE anneal_lot_id = :lid
+            ORDER BY id DESC
+            LIMIT 1
+        """), {"lid": anneal_lot_id}).mappings().first()
+    except Exception:
+        return None
 
     if not qa_row:
         return None
 
-    # Optional: parameters table (keep try/except in case it doesn't exist)
+    params = []
     try:
-        param_rows = conn.execute(text("""
-            SELECT
-                param_name  AS name,
-                param_value AS value,
-                unit,
-                spec_min,
-                spec_max
-            FROM anneal_qa_params
-            WHERE anneal_qa_id = :qid
-            ORDER BY id
-        """), {"qid": qa_row["id"]}).mappings().all()
-        params = [dict(r) for r in param_rows]
+        if _table_exists(conn, "anneal_qa_params"):
+            param_rows = conn.execute(text("""
+                SELECT param_name AS name, param_value AS value, unit, spec_min, spec_max
+                FROM anneal_qa_params
+                WHERE anneal_qa_id = :qid
+                ORDER BY id
+            """), {"qid": qa_row["id"]}).mappings().all()
+            params = [dict(r) for r in param_rows]
     except Exception:
         params = []
 
-    return {
-        "header": dict(qa_row),
-        "params": params,
-    }
+    return {"header": dict(qa_row), "params": params}
 
 
 @router.get("/trace/{anneal_id}", response_class=HTMLResponse)
