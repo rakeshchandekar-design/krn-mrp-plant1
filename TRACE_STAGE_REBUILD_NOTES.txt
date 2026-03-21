@@ -1,0 +1,5 @@
+Traceability rebuild fix:
+- Rebuilt templates/trace_thread.html from scratch with valid Jinja blocks
+- Removed malformed duplicated atomization block causing unknown endif error
+- Keeps stage-by-stage backward chain: FG -> Grinding -> Annealing -> Atom/Pulv -> Heat -> RM/GRN
+- Cost hidden for non-admin in trace view

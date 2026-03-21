@@ -1,10 +1,9 @@
-
 {% extends "base.html" %}
 {% block content %}
 <style>
 .trace-shell{max-width:1500px;margin:0 auto;padding:18px}
 .trace-hero{background:linear-gradient(135deg,#0f2d57 0%, #18477b 100%);color:#fff;border-radius:20px;padding:20px 22px;margin-bottom:18px}
-.trace-hero h2{margin:0 0 8px;color:#fff;font-size:1.85rem;text-align:left}
+.trace-hero h2{margin:0 0 8px;color:#fff;font-size:1.85rem}
 .trace-sub{color:#dbe7f5;font-size:13px}
 .kpis{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
 .kpi{background:rgba(255,255,255,.15);padding:8px 12px;border-radius:999px;font-weight:700}
@@ -40,6 +39,7 @@
 .arrow{display:flex;justify-content:center;color:#64748b;font-size:22px;font-weight:900}
 .linkline a{font-weight:700}
 </style>
+
 <div class="trace-shell">
   <div class="trace-hero">
     <h2>Traceability Thread</h2>
@@ -53,6 +53,7 @@
       <span class="kpi">Atom: {{ lots|length }}</span>
       <span class="kpi">Pulv: {{ pulvs|length }}</span>
       <span class="kpi">Heat: {{ heats|length }}</span>
+      <span class="kpi">RM / GRN: {{ rm_rows|length }}</span>
     </div>
   </div>
 
@@ -65,14 +66,27 @@
         <div class="mini"><div class="label">Grade / Family</div><div class="val">{{ current.fg_grade or current.grade or current.family or '-' }}</div></div>
         <div class="mini"><div class="label">QA Status</div><div class="val">{{ current.qa_status or 'PENDING' }}</div></div>
         <div class="mini"><div class="label">Qty (kg)</div><div class="val">{{ current.weight_kg or current.mag_output_qty_kg or current.input_qty_kg or '-' }}</div></div>
+        {% if request.state.role|string == 'admin' %}
         <div class="mini"><div class="label">Cost / kg</div><div class="val">{{ current.cost_per_kg or current.unit_cost or '-' }}</div></div>
+        {% endif %}
         <div class="mini"><div class="label">Date</div><div class="val">{{ current.date or '-' }}</div></div>
       </div>
     </div>
     <div class="card">
       <h3>Dispatch / Document</h3>
       {% if dispatches %}
-        <table class="tbl"><tr><th>Order</th><th>Date</th><th>Customer</th><th>FG Lot</th><th>Qty</th></tr>{% for d in dispatches %}<tr><td>{{ d.order_no or d.order_id }}</td><td>{{ d.date }}</td><td>{{ d.customer_name }}</td><td class="code">{{ d.fg_lot_no }}</td><td>{{ d.qty_kg }}</td></tr>{% endfor %}</table>
+        <table class="tbl">
+          <tr><th>Order</th><th>Date</th><th>Customer</th><th>FG Lot</th><th>Qty</th></tr>
+          {% for d in dispatches %}
+          <tr>
+            <td>{{ d.order_no or d.order_id }}</td>
+            <td>{{ d.date }}</td>
+            <td>{{ d.customer_name }}</td>
+            <td class="code">{{ d.fg_lot_no }}</td>
+            <td>{{ d.qty_kg }}</td>
+          </tr>
+          {% endfor %}
+        </table>
       {% else %}
         <div class="trace-sub" style="color:#64748b">No dispatch linked yet for this trace.</div>
       {% endif %}
@@ -84,63 +98,83 @@
     {% if fgs %}
     <section class="stage-card">
       <div class="stage-head"><div class="stage-title">FG / Dispatch</div><span class="badge">{{ fgs|length }} lot(s)</span></div>
-      <table class="tbl"><tr><th>Lot No</th><th>Grade</th><th>Qty</th><th>Cost/kg</th><th>QA</th><th>Source Grinding</th><th>Docs</th></tr>{% for x in fgs %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.fg_grade }}</td><td>{{ x.weight_kg }}</td><td>{{ x.cost_per_kg }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="code small">{% if x.source_lines %}{% for s in x.source_lines %}<div>{{ s.text }}</div>{% endfor %}{% else %}-{% endif %}</td><td class="linkline"><a href="/fg/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/fg/jobcard/{{ x.id }}" target="_blank">Job Card</a></td></tr>{% if fg_qa.get(x.id) %}<tr><td colspan="7"><div class="qa-list">{% for k,v in fg_qa.get(x.id, {}).items() %}<div class="qa-item"><div class="k">{{ k|replace('_',' ')|title }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endif %}{% endfor %}</table>
-    </section><div class="arrow">↓</div>{% endif %}
+      <table class="tbl">
+        <tr><th>Lot No</th><th>Grade</th><th>Qty</th>{% if request.state.role|string == 'admin' %}<th>Cost/kg</th>{% endif %}<th>QA</th><th>Source Grinding</th><th>Docs</th></tr>
+        {% for x in fgs %}
+        <tr>
+          <td class="code">{{ x.lot_no }}</td><td>{{ x.fg_grade }}</td><td>{{ x.weight_kg }}</td>{% if request.state.role|string == 'admin' %}<td>{{ x.cost_per_kg }}</td>{% endif %}
+          <td><span class="badge">{{ x.qa_status }}</span></td>
+          <td class="code">{% if x.source_lines %}{% for s in x.source_lines %}<div>{{ s.text }}</div>{% endfor %}{% else %}-{% endif %}</td>
+          <td class="linkline"><a href="/fg/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/fg/jobcard/{{ x.id }}" target="_blank">Job Card</a></td>
+        </tr>
+        {% if fg_qa.get(x.id) %}
+        <tr><td colspan="{% if request.state.role|string == 'admin' %}7{% else %}6{% endif %}"><div class="qa-list">{% for k,v in fg_qa.get(x.id, {}).items() %}<div class="qa-item"><div class="k">{{ k|replace('_',' ')|title }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>
+        {% endif %}
+        {% endfor %}
+      </table>
+    </section><div class="arrow">↓</div>
+    {% endif %}
 
     {% if grinds %}
     <section class="stage-card">
       <div class="stage-head"><div class="stage-title">Grinding</div><span class="badge">{{ grinds|length }} lot(s)</span></div>
-      <table class="tbl"><tr><th>Lot No</th><th>Grade</th><th>Qty</th><th>Cost/kg</th><th>QA</th><th>Source Anneal</th><th>Docs</th></tr>{% for x in grinds %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.weight_kg }}</td><td>{{ x.cost_per_kg }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="code">{% if x.source_lines %}{% for s in x.source_lines %}<div>{{ s.text }}</div>{% endfor %}{% else %}-{% endif %}</td><td class="linkline"><a href="/grind/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/grind/jobcard/{{ x.id }}" target="_blank">Job Card</a></td></tr>{% if grind_qa.get(x.id) %}<tr><td colspan="7"><div class="qa-list">{% for k,v in grind_qa.get(x.id, {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|replace('_',' ')|title }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endif %}{% endfor %}</table>
-    </section><div class="arrow">↓</div>{% endif %}
+      <table class="tbl">
+        <tr><th>Lot No</th><th>Grade</th><th>Qty</th>{% if request.state.role|string == 'admin' %}<th>Cost/kg</th>{% endif %}<th>QA</th><th>Source Anneal</th><th>Docs</th></tr>
+        {% for x in grinds %}
+        <tr>
+          <td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.weight_kg }}</td>{% if request.state.role|string == 'admin' %}<td>{{ x.cost_per_kg }}</td>{% endif %}
+          <td><span class="badge">{{ x.qa_status }}</span></td>
+          <td class="code">{% if x.source_lines %}{% for s in x.source_lines %}<div>{{ s.text }}</div>{% endfor %}{% else %}-{% endif %}</td>
+          <td class="linkline"><a href="/grind/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/grind/jobcard/{{ x.id }}" target="_blank">Job Card</a></td>
+        </tr>
+        {% if grind_qa.get(x.id) %}
+        <tr><td colspan="{% if request.state.role|string == 'admin' %}7{% else %}6{% endif %}"><div class="qa-list">{% for k,v in grind_qa.get(x.id, {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|replace('_',' ')|title }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>
+        {% endif %}
+        {% endfor %}
+      </table>
+    </section><div class="arrow">↓</div>
+    {% endif %}
 
     {% if anneals %}
     <section class="stage-card">
       <div class="stage-head"><div class="stage-title">Annealing</div><span class="badge">{{ anneals|length }} lot(s)</span></div>
-      <table class="tbl"><tr><th>Lot No</th><th>Grade</th><th>Qty</th><th>Cost/kg</th><th>QA</th><th>Source Prior Stage</th><th>Docs</th></tr>{% for x in anneals %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.weight_kg }}</td><td>{{ x.cost_per_kg }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="code">{% if x.source_lines %}{% for s in x.source_lines %}<div>{{ s.text }}</div>{% endfor %}{% else %}-{% endif %}</td><td class="linkline"><a href="/anneal/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/anneal/jobcard/{{ x.id }}" target="_blank">Job Card</a></td></tr>{% if anneal_qa.get(x.id) %}<tr><td colspan="7"><div class="qa-list">{% for k,v in anneal_qa.get(x.id, {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|replace('_',' ')|title }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endif %}{% endfor %}</table>
-    </section><div class="arrow">↓</div>{% endif %}
+      <table class="tbl">
+        <tr><th>Lot No</th><th>Grade</th><th>Qty</th>{% if request.state.role|string == 'admin' %}<th>Cost/kg</th>{% endif %}<th>QA</th><th>Source Prior Stage</th><th>Docs</th></tr>
+        {% for x in anneals %}
+        <tr>
+          <td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.weight_kg }}</td>{% if request.state.role|string == 'admin' %}<td>{{ x.cost_per_kg }}</td>{% endif %}
+          <td><span class="badge">{{ x.qa_status }}</span></td>
+          <td class="code">{% if x.source_lines %}{% for s in x.source_lines %}<div>{{ s.text }}</div>{% endfor %}{% else %}-{% endif %}</td>
+          <td class="linkline"><a href="/anneal/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/anneal/jobcard/{{ x.id }}" target="_blank">Job Card</a></td>
+        </tr>
+        {% if anneal_qa.get(x.id) %}
+        <tr><td colspan="{% if request.state.role|string == 'admin' %}7{% else %}6{% endif %}"><div class="qa-list">{% for k,v in anneal_qa.get(x.id, {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|replace('_',' ')|title }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>
+        {% endif %}
+        {% endfor %}
+      </table>
+    </section><div class="arrow">↓</div>
+    {% endif %}
 
-    
     {% if lots or pulvs %}
     <section class="stage-card">
-      <div class="stage-head">
-        <div class="stage-title">Atomization / Pulverization Source</div>
-        <span class="badge">Upstream production lots</span>
-      </div>
+      <div class="stage-head"><div class="stage-title">Atomization / Pulverization Source</div><span class="badge">Upstream production lots</span></div>
       <div class="row-grid">
         {% if lots %}
         <div>
           <h4 style="margin:0 0 8px;color:#0f2d57">Atomization Lots</h4>
           <table class="tbl">
-            <tr>
-              <th>Lot No</th>
-              <th>Grade</th>
-              <th>Qty</th>
-              <th>{% if request.state.role|string == 'admin' %}Cost/kg{% else %}Cost{% endif %}</th>
-              <th>QA</th>
-              <th>Docs</th>
-            </tr>
+            <tr><th>Lot No</th><th>Grade</th><th>Qty</th>{% if request.state.role|string == 'admin' %}<th>Cost/kg</th>{% endif %}<th>QA</th><th>Docs</th></tr>
             {% for x in lots %}
             <tr>
               <td class="code">{{ x['lot_no'] }}</td>
               <td>{{ x['grade'] }}</td>
               <td>{{ x['weight'] }}</td>
-              <td>{% if request.state.role|string == 'admin' %}{{ x['unit_cost'] }}{% else %}—{% endif %}</td>
+              {% if request.state.role|string == 'admin' %}<td>{{ x['unit_cost'] }}</td>{% endif %}
               <td><span class="badge">{{ x['qa_status'] }}</span></td>
-              <td class="linkline">
-                <a href="/traceability/lot/{{ x['id'] }}" target="_blank">Trace</a> |
-                <a href="/lot/{{ x['id'] }}/jobcard" target="_blank">Job Card</a>
-              </td>
+              <td class="linkline"><a href="/traceability/lot/{{ x['id'] }}" target="_blank">Trace</a> | <a href="/lot/{{ x['id'] }}/jobcard" target="_blank">Job Card</a></td>
             </tr>
             {% if atom_qa.get(x['id']) %}
-            <tr>
-              <td colspan="6">
-                <div class="qa-list">
-                  {% for k,v in atom_qa.get(x['id'], {}).items() if v not in [None,''] %}
-                  <div class="qa-item"><div class="k">{{ k|upper }}</div><div class="v">{{ v }}</div></div>
-                  {% endfor %}
-                </div>
-              </td>
-            </tr>
+            <tr><td colspan="{% if request.state.role|string == 'admin' %}6{% else %}5{% endif %}"><div class="qa-list">{% for k,v in atom_qa.get(x['id'], {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|upper }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>
             {% endif %}
             {% endfor %}
           </table>
@@ -151,25 +185,14 @@
         <div>
           <h4 style="margin:0 0 8px;color:#0f2d57">Pulverization Lots</h4>
           <table class="tbl">
-            <tr><th>Lot No</th><th>Grade</th><th>Mag Qty</th><th>Cost/kg</th><th>QA</th><th>Source GRN</th></tr>
+            <tr><th>Lot No</th><th>Grade</th><th>Mag Qty</th>{% if request.state.role|string == 'admin' %}<th>Cost/kg</th>{% endif %}<th>QA</th><th>Source GRN</th></tr>
             {% for x in pulvs %}
             <tr>
-              <td class="code">{{ x.lot_no }}</td>
-              <td>{{ x.grade }}</td>
-              <td>{{ x.mag_output_qty_kg }}</td>
-              <td>{{ x.cost_per_kg }}</td>
+              <td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.mag_output_qty_kg }}</td>{% if request.state.role|string == 'admin' %}<td>{{ x.cost_per_kg }}</td>{% endif %}
               <td><span class="badge">{{ x.qa_status }}</span></td>
               <td class="code">{% if x.source_lines %}{% for s in x.source_lines %}<div>{{ s.text }}</div>{% endfor %}{% else %}-{% endif %}</td>
             </tr>
-            <tr>
-              <td colspan="6">
-                <div class="qa-list">
-                  {% for k,v in {'AD':x.ad,'Non Mag %':(x.non_mag_pct or x.non_mag_qty_kg),'Remarks':x.remarks}.items() if v not in [None,''] %}
-                  <div class="qa-item"><div class="k">{{ k }}</div><div class="v">{{ v }}</div></div>
-                  {% endfor %}
-                </div>
-              </td>
-            </tr>
+            <tr><td colspan="{% if request.state.role|string == 'admin' %}6{% else %}5{% endif %}"><div class="qa-list">{% for k,v in {'AD':x.ad,'Non Mag %':(x.non_mag_pct or x.non_mag_qty_kg),'Remarks':x.remarks}.items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>
             {% endfor %}
           </table>
         </div>
@@ -177,23 +200,45 @@
       </div>
     </section><div class="arrow">↓</div>
     {% endif %}
-</th><th>QA</th><th>Docs</th></tr>{% for x in lots %}<tr><td class="code">{{ x['lot_no'] }}</td><td>{{ x['grade'] }}</td><td>{{ x['weight'] }}</td><td>{% if request.state.role|string == 'admin' %}{{ x['unit_cost'] }}{% else %}—{% endif %}</td><td><span class="badge">{{ x['qa_status'] }}</span></td><td class="linkline"><a href="/traceability/lot/{{ x['id'] }}" target="_blank">Trace</a> | <a href="/lot/{{ x['id'] }}/jobcard" target="_blank">Job Card</a></td></tr>{% if atom_qa.get(x['id']) %}<tr><td colspan="6"><div class="qa-list">{% for k,v in atom_qa.get(x['id'], {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|upper }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endif %}{% endfor %}</table></div>{% endif %}</th><th>QA</th><th>Docs</th></tr>{% for x in lots %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.weight }}</td><td>{{ x.unit_cost }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="linkline"><a href="/traceability/lot/{{ x.id }}" target="_blank">Trace</a> | <a href="/lot/{{ x.id }}/jobcard" target="_blank">Job Card</a></td></tr>{% if atom_qa.get((x.id if x.id is defined else x['id'])) %}<tr><td colspan="6"><div class="qa-list">{% for k,v in atom_qa.get((x.id if x.id is defined else x['id']), {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|upper }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endif %}{% endfor %}</table></div>{% endif %}
-        {% if pulvs %}<div><h4 style="margin:0 0 8px;color:#0f2d57">Pulverization Lots</h4><table class="tbl"><tr><th>Lot No</th><th>Grade</th><th>Mag Qty</th><th>Cost/kg</th><th>QA</th><th>Source GRN</th></tr>{% for x in pulvs %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.mag_output_qty_kg }}</td><td>{{ x.cost_per_kg }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="code">{% if x.source_lines %}{% for s in x.source_lines %}<div>{{ s.text }}</div>{% endfor %}{% else %}-{% endif %}</td></tr><tr><td colspan="6"><div class="qa-list">{% for k,v in {'AD':x.ad,'Non Mag %':(x.non_mag_pct or x.non_mag_qty_kg),'Remarks':x.remarks}.items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endfor %}</table></div>{% endif %}
-      </div>
-    </section><div class="arrow">↓</div>{% endif %}
 
     {% if heats %}
     <section class="stage-card">
       <div class="stage-head"><div class="stage-title">Melting Heats</div><span class="badge">{{ heats|length }} heat(s)</span></div>
-      <table class="tbl"><tr><th>Heat No</th><th>Grade</th><th>Output</th><th>Cost/kg</th><th>QA</th><th>Docs</th></tr>{% for h in heats %}<tr><td class="code">{{ h.heat_no }}</td><td>{{ h.grade }}</td><td>{{ h.output_qty }}</td><td>{{ h.unit_cost }}</td><td><span class="badge">{{ h.qa_status }}</span></td><td class="linkline"><a href="/traceability/heat/{{ h.id }}" target="_blank">Trace</a></td></tr>{% if heat_qa.get(h.id) %}<tr><td colspan="6"><div class="qa-list">{% for k,v in heat_qa.get(h.id, {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|upper }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endif %}{% endfor %}</table>
-    </section><div class="arrow">↓</div>{% endif %}
+      <table class="tbl">
+        <tr><th>Heat No</th><th>Grade</th><th>Qty</th>{% if request.state.role|string == 'admin' %}<th>Cost/kg</th>{% endif %}<th>QA</th><th>Docs</th></tr>
+        {% for h in heats %}
+        <tr>
+          <td class="code">{{ h['heat_no'] }}</td><td>{{ h['grade'] }}</td><td>{{ h['output_qty'] }}</td>{% if request.state.role|string == 'admin' %}<td>{{ h['unit_cost'] }}</td>{% endif %}
+          <td><span class="badge">{{ h['qa_status'] }}</span></td>
+          <td class="linkline"><a href="/traceability/heat/{{ h['id'] }}" target="_blank">Trace</a> | <a href="/heat/{{ h['id'] }}/jobcard" target="_blank">Job Card</a></td>
+        </tr>
+        {% if heat_qa.get(h['id']) %}
+        <tr><td colspan="{% if request.state.role|string == 'admin' %}6{% else %}5{% endif %}"><div class="qa-list">{% for k,v in heat_qa.get(h['id'], {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|replace('_',' ')|title }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>
+        {% endif %}
+        {% endfor %}
+      </table>
+    </section><div class="arrow">↓</div>
+    {% endif %}
 
-    {% if rm_rows or pulv_grns %}
+    {% if rm_rows %}
     <section class="stage-card">
-      <div class="stage-head"><div class="stage-title">RM / GRN Source</div><span class="badge">Raw material genealogy</span></div>
-      {% if rm_rows %}<table class="tbl" style="margin-bottom:12px"><tr><th>Heat</th><th>GRN ID</th><th>GRN No</th><th>Supplier</th><th>RM Type</th><th>Qty</th><th>Rate</th></tr>{% for r in rm_rows %}<tr><td class="code">{{ r.heat_no }}</td><td>{{ r.grn_id }}</td><td>{{ r.grn_no }}</td><td>{{ r.supplier }}</td><td>{{ r.rm_type }}</td><td>{{ '%.1f'|format(r.qty) }}</td><td>{{ '%.2f'|format(r.price) }}</td></tr>{% endfor %}</table>{% endif %}
-      {% if pulv_grns %}<table class="tbl"><tr><th>Pulv Lot</th><th>GRN ID</th><th>Supplier</th><th>RM Type</th><th>Qty</th><th>Rate</th></tr>{% for r in pulv_grns %}<tr><td class="code">{{ r.pulv_lot_no }}</td><td>{{ r.grn.id if r.grn else r.grn_id }}</td><td>{{ r.grn.supplier if r.grn else '' }}</td><td>{{ r.grn.rm_type if r.grn else '' }}</td><td>{{ r.qty }}</td><td>{{ r.grn.price if r.grn else '' }}</td></tr>{% endfor %}</table>{% endif %}
-    </section>{% endif %}
+      <div class="stage-head"><div class="stage-title">Raw Material / GRN Source</div><span class="badge">{{ rm_rows|length }} source line(s)</span></div>
+      <table class="tbl">
+        <tr><th>Heat No</th><th>RM Type</th><th>GRN</th><th>Supplier</th><th>Qty</th>{% if request.state.role|string == 'admin' %}<th>Price</th>{% endif %}<th>Date</th></tr>
+        {% for r in rm_rows %}
+        <tr>
+          <td class="code">{{ r.heat_no }}</td>
+          <td>{{ r.rm_type }}</td>
+          <td class="code">{{ r.grn_no or r.grn_id }}</td>
+          <td>{{ r.supplier or '-' }}</td>
+          <td>{{ r.qty }}</td>
+          {% if request.state.role|string == 'admin' %}<td>{{ r.price }}</td>{% endif %}
+          <td>{{ r.date or '-' }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </section>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
