@@ -1,3 +1,6 @@
+import time
+_DASHBOARD_CACHE = {}
+_DASHBOARD_CACHE_TTL = 60
 import os, io, datetime as dt
 import qrcode
 import json
@@ -4980,7 +4983,14 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             WHERE di.fg_lot_no = ANY(:arr) ORDER BY o.date DESC, o.id DESC
         """, arr=fg_nos)
 
-    return templates.TemplateResponse("trace_thread.html", {
+    
+except Exception as e:
+    trace_db.rollback()
+    print("TRACE ERROR:", e)
+
+finally:
+    trace_db.close()
+return templates.TemplateResponse("trace_thread.html", {
         "request": request,
         "trace_id": trace_id,
         "current": current,
