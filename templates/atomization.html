@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="module-shell">
+{% set qa_access = role in ['qa', 'admin'] %}
 
   {% if error_msg %}
   <div class="alert" style="background:#fee2e2;color:#991b1b;border-color:#fecaca">
@@ -222,7 +223,7 @@
           <th>QA</th>
           <th>Trace</th>
           <th>PDF</th>
-          <th>QA Form</th>
+          {% if qa_access %}<th>QA Form</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -241,7 +242,7 @@
             <td>{{ lot.qa_status or '' }}</td>
             <td><a class="btn btn-secondary" style="background:#e5e7eb;color:#111827;border:none" href="/traceability/lot/{{ lot.id }}">Trace</a></td>
             <td><a class="btn" href="/pdf/lot/{{ lot.id }}">PDF</a> <a class="btn" href="/lot/{{ lot.id }}/jobcard" target="_blank">Job Card</a></td>
-            <td><a class="btn btn-secondary" href="/qa/lot/{{ lot.id }}">Lot QA</a></td>
+            {% if qa_access %}<td><a class="btn btn-secondary" href="/qa/lot/{{ lot.id }}">Lot QA</a></td>{% endif %}
           </tr>
         {% endfor %}
       </tbody>

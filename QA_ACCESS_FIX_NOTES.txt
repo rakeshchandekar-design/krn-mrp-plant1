@@ -1,0 +1,5 @@
+QA access control fix:
+- Atomization page hides Lot QA button for non-QA/non-admin users.
+- Annealing lots page hides QA button for non-QA/non-admin users.
+- Grinding lots page hides QA button for non-QA/non-admin users.
+- QA dashboard now shows QA action links for Atomization, Annealing, Grinding.

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 {% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
+{% set qa_access = request.state.role is defined and request.state.role|string in ['qa','admin'] %}
 
 <h2>Annealing Lots</h2>
 
@@ -32,7 +33,7 @@
     <th>Total Value (₹)</th>
     <th>QA</th>
     <th>Docs</th>   {# NEW COLUMN #}
-    <th>Action</th>
+    {% if qa_access %}<th>Action</th>{% endif %}
   </tr>
 
   {% set totals = namespace(value_sum=0.0) %}
@@ -71,7 +72,7 @@
     <br><small>QA: {{ x.qa_status }}</small>
   {% endif %}
      </td>
-      <td><a class="btn btn-small" href="/anneal/qa/{{ x.id }}">QA</a></td>
+      {% if qa_access %}<td><a class="btn btn-small" href="/anneal/qa/{{ x.id }}">QA</a></td>{% endif %}
     </tr>
     {% endif %}
   {% endfor %}
