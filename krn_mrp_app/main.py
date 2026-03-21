@@ -1435,6 +1435,17 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 # session middleware (keep the secret; regenerate for production)
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", "dev-only-change-me"), max_age=INACTIVITY_SECONDS, same_site="lax")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def _safe_plain(obj, fields):
+    d = {}
+    for f in fields:
+        try:
+            d[f] = getattr(obj, f)
+        except Exception:
+            d[f] = None
+    return d
+
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
@@ -5018,13 +5029,13 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             current = dict(anneals[0]); stage_label = 'ANNEALING'
         elif atom_lots:
             lot = atom_lots[0]
-            current = {'lot_no': lot.get('lot_no'), 'grade': lot.get('grade'), 'weight_kg': lot.get('weight'), 'cost_per_kg': lot.get('unit_cost'), 'qa_status': lot.get('qa_status'), 'date': None}
+            current = {'lot_no': lot['lot_no'], 'grade': lot['grade'], 'weight_kg': lot['weight'], 'cost_per_kg': lot['unit_cost'], 'qa_status': lot['qa_status'], 'date': None}
             stage_label = 'ATOMIZATION'
         elif pulvs:
             current = dict(pulvs[0]); stage_label = 'PULVERIZATION'
         elif heats:
             h = heats[0]
-            current = {'lot_no': h.get('heat_no'), 'grade': h.get('grade'), 'weight_kg': h.get('output_qty') or h.get('actual_output'), 'cost_per_kg': h.get('unit_cost'), 'qa_status': h.get('qa_status'), 'date': heat_date_from_no(h.get('heat_no')) if h.get('heat_no') else None}
+            current = {'lot_no': h['heat_no'], 'grade': h['grade'], 'weight_kg': h['output_qty'], 'cost_per_kg': h['unit_cost'], 'qa_status': h['qa_status'], 'date': heat_date_from_no(h['heat_no'])}
             stage_label = 'MELTING'
 
         if fgs and has_di and has_do:

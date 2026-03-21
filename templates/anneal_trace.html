@@ -20,8 +20,8 @@
     <th>RAP Lot</th>
     <th>Grade</th>
     <th class="right">Qty (kg)</th>
-    {% if request.state.role|string == 'admin' %}<th class="right">RAP Cost/kg (₹)</th>
-    <th class="right">Value (₹)</th>{% endif %}
+    <th class="right">RAP Cost/kg (₹)</th>
+    <th class="right">Value (₹)</th>
     <th>Trace</th>
   </tr>
   {% for r in rap_rows %}
@@ -30,8 +30,8 @@
     <td>{{ r.rap_lot_no }}</td>
     <td>{{ r.rap_grade }}</td>
     <td class="right">{{ '%.2f'|format(r.allocated_kg or 0) }}</td>
-    {% if request.state.role|string == "admin" %}{% if request.state.role|string == 'admin' %}<td class="right">{{ '%.2f'|format(r.rap_cost_per_kg or 0) }}</td>
-    <td class="right">{{ '%.2f'|format(val) }}</td>{% endif %}{% endif %}
+    {% if request.state.role|string == "admin" %}<td class="right">{{ '%.2f'|format(r.rap_cost_per_kg or 0) }}</td>
+    <td class="right">{{ '%.2f'|format(val) }}</td>{% endif %}
     <td>
       {% if r.base_lot_id %}
         <a href="/traceability/lot/{{ r.base_lot_id }}" target="_blank">Trace</a>

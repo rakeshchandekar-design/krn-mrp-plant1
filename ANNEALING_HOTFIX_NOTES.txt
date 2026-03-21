@@ -1,0 +1,5 @@
+Hotfixes:
+- annealing_lot_list hides cost columns/values for non-admin
+- annealing job card hides cost and adds Print button
+- trace_thread atom_qa access uses dict-safe ids
+- main trace_thread converts ORM objects to plain dicts before render
