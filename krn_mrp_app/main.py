@@ -4810,22 +4810,34 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
 
     def _safe_first(sql, **kw):
         try:
-            return conn.execute(text(sql), kw).mappings().first()
+            with engine.connect() as conn:
+                return conn.execute(text(sql), kw).mappings().first()
         except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
             return None
 
     def _safe_all(sql, **kw):
         try:
-            return conn.execute(text(sql), kw).mappings().all()
+            with engine.connect() as conn:
+                return conn.execute(text(sql), kw).mappings().all()
         except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
             return []
-
-    conn = db.connection()
 
     fgs = _safe_all("SELECT id, lot_no, date, family, fg_grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, remarks FROM fg_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'fg_lots') else []
     grinds = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, oversize_p80_kg, oversize_p40_kg, remarks FROM grinding_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'grinding_lots') else []
     anneals = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, ammonia_kg, o_pct, compressibility, remarks FROM anneal_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'anneal_lots') else []
     pulvs = _safe_all("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no, cost_per_kg, non_mag_pct, non_mag_qty_kg, ad, remarks FROM pulv_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'pulv_lots') else []
+    try:
+        db.rollback()
+    except Exception:
+        pass
     atom_lots = db.query(Lot).filter((Lot.trace_id == trace_id) | (Lot.lot_no == trace_id)).all()
 
     # Walk upstream if current trace is a downstream stage
