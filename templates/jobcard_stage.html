@@ -20,7 +20,7 @@ table{width:100%;border-collapse:collapse}td,th{border:1px solid #ddd;padding:8p
       <tr><th>Job Card No</th><td>{{ job_card_no }}</td><th>Trace ID</th><td>{{ trace_id }}</td></tr>
       <tr><th>Lot No</th><td>{{ header.lot_no }}</td><th>Date</th><td>{{ header.date if header.date else '' }}</td></tr>
       <tr><th>Grade / Family</th><td>{{ header.grade if header.grade is defined else header.family }}</td><th>QA Status</th><td>{{ header.qa_status }}</td></tr>
-      <tr><th>Weight (kg)</th><td>{{ header.weight_kg if header.weight_kg is defined else header.weight }}</td><th>Cost/kg</th><td>{{ header.cost_per_kg if header.cost_per_kg is defined else header.unit_cost }}</td></tr>
+      <tr><th>Weight (kg)</th><td>{{ header.weight_kg if header.weight_kg is defined else header.weight }}</td></tr>
       <tr><th>Remarks</th><td colspan="3">{{ header.remarks if header.remarks is defined else header.qa_remarks }}</td></tr>
     </table>
     <div style="margin-top:22px"><div><strong>Operator Sign:</strong> ____________________</div><div style="margin-top:14px"><strong>QA Sign:</strong> ____________________</div></div>

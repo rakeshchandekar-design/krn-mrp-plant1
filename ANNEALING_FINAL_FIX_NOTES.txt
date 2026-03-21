@@ -1,0 +1,6 @@
+Final annealing fixes:
+- Annealing lot list hides cost values properly for non-admin
+- Annealing job card hides cost and adds Print button
+- Trace thread template updated for dict-safe access to atom/heats data
+- Main trace function converts ORM objects to dicts to avoid DetachedInstanceError
+- Anneal trace/pdf cost visibility restricted for non-admin
