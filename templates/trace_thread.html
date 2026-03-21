@@ -1,68 +1,125 @@
+
 {% extends "base.html" %}
 {% block content %}
 <style>
-.trace-wrap{max-width:1400px;margin:0 auto;padding:18px}
-.trace-hero{background:linear-gradient(135deg,#0e2a47 0%, #173b63 100%);color:#fff;border-radius:18px;padding:18px 20px;margin-bottom:16px}
-.trace-hero h2{margin:0 0 6px;font-size:1.9rem;color:#fff}
-.trace-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-@media (max-width: 900px){.trace-grid{grid-template-columns:1fr}}
-.trace-card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px;box-shadow:0 6px 16px rgba(15,23,42,.04)}
-.trace-card h3{margin:0 0 10px;color:#0e2a47}
-.trace-sub{font-size:12px;color:#64748b;margin-top:-4px;margin-bottom:10px}
-.trace-table{width:100%;border-collapse:collapse}
-.trace-table th,.trace-table td{border:1px solid #e5e7eb;padding:8px;vertical-align:top}
-.trace-table th{background:#f8fafc;text-align:left}
-.kpi{display:inline-block;margin-right:10px;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.14);font-weight:700}
-.badge{display:inline-block;padding:3px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px;font-weight:700}
-.small{font-size:12px;color:#64748b}
+.trace-shell{max-width:1500px;margin:0 auto;padding:18px}
+.trace-hero{background:linear-gradient(135deg,#0f2d57 0%, #18477b 100%);color:#fff;border-radius:20px;padding:20px 22px;margin-bottom:18px}
+.trace-hero h2{margin:0 0 8px;color:#fff;font-size:1.85rem;text-align:left}
+.trace-sub{color:#dbe7f5;font-size:13px}
+.kpis{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.kpi{background:rgba(255,255,255,.15);padding:8px 12px;border-radius:999px;font-weight:700}
+.current-grid{display:grid;grid-template-columns:1.3fr .7fr;gap:16px;margin-bottom:18px}
+@media(max-width:1000px){.current-grid{grid-template-columns:1fr}}
+.card{background:#fff;border:1px solid #e8ecf3;border-radius:18px;box-shadow:0 8px 18px rgba(15,23,42,.04);padding:16px}
+.card h3{margin:0 0 12px;color:#0f2d57}
+.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:900px){.summary-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:640px){.summary-grid{grid-template-columns:1fr}}
+.mini{background:#f8fafc;border:1px solid #e8ecf3;border-radius:14px;padding:12px}
+.mini .label{font-size:12px;color:#64748b}
+.mini .val{font-weight:800;color:#0f172a;font-size:1rem;margin-top:4px}
+.chain{display:flex;flex-direction:column;gap:14px}
+.stage-card{background:#fff;border:1px solid #e8ecf3;border-radius:18px;padding:16px;position:relative;box-shadow:0 8px 18px rgba(15,23,42,.04)}
+.stage-card:before{content:"";position:absolute;left:24px;top:-14px;height:14px;width:2px;background:#cbd5e1}
+.stage-card:first-child:before{display:none}
+.stage-head{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.stage-title{font-size:1.05rem;font-weight:800;color:#0f2d57}
+.badge{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:800;background:#eef2ff;color:#3730a3}
+.row-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media(max-width:900px){.row-grid{grid-template-columns:1fr}}
+.tbl{width:100%;border-collapse:collapse}
+.tbl th,.tbl td{border:1px solid #e5e7eb;padding:8px;vertical-align:top}
+.tbl th{background:#f8fafc;text-align:left;font-size:12px;color:#334155}
 .code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.qa-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media(max-width:1000px){.qa-list{grid-template-columns:1fr 1fr}}
+@media(max-width:640px){.qa-list{grid-template-columns:1fr}}
+.qa-item{background:#f8fafc;border:1px solid #e8ecf3;border-radius:12px;padding:10px}
+.qa-item .k{font-size:12px;color:#64748b}
+.qa-item .v{font-weight:700;color:#0f172a;margin-top:3px}
+.arrow{display:flex;justify-content:center;color:#64748b;font-size:22px;font-weight:900}
+.linkline a{font-weight:700}
 </style>
-<div class="trace-wrap">
+<div class="trace-shell">
   <div class="trace-hero">
-    <h2>Trace Thread</h2>
-    <div class="small" style="color:#dbe7f5">Full backward chain from current stage to RM / GRN source</div>
-    <div style="margin-top:10px">
+    <h2>Traceability Thread</h2>
+    <div class="trace-sub">Complete backward genealogy from current stage to RM / GRN source with stage-wise QA snapshot.</div>
+    <div class="kpis">
       <span class="kpi">Trace ID: <span class="code">{{ trace_id }}</span></span>
+      <span class="kpi">Current Stage: {{ current_stage }}</span>
       <span class="kpi">FG: {{ fgs|length }}</span>
       <span class="kpi">Grinding: {{ grinds|length }}</span>
-      <span class="kpi">Anneal: {{ anneals|length }}</span>
+      <span class="kpi">Annealing: {{ anneals|length }}</span>
       <span class="kpi">Atom: {{ lots|length }}</span>
       <span class="kpi">Pulv: {{ pulvs|length }}</span>
       <span class="kpi">Heat: {{ heats|length }}</span>
     </div>
   </div>
-  <div class="trace-grid">
-    {% if fgs %}
-    <section class="trace-card"><h3>FG Lots</h3><table class="trace-table"><tr><th>Lot No</th><th>Grade</th><th>QA</th><th>Source Grinding</th><th>Docs</th></tr>{% for x in fgs %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.fg_grade }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="small code">{{ x.src_alloc_json }}</td><td><a href="/fg/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/fg/jobcard/{{ x.id }}" target="_blank">Job Card</a></td></tr>{% endfor %}</table></section>
-    {% endif %}
-    {% if grinds %}
-    <section class="trace-card"><h3>Grinding Lots</h3><table class="trace-table"><tr><th>Lot No</th><th>Grade</th><th>QA</th><th>Source Anneal</th><th>Docs</th></tr>{% for x in grinds %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="small code">{{ x.src_alloc_json }}</td><td><a href="/grind/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/grind/jobcard/{{ x.id }}" target="_blank">Job Card</a></td></tr>{% endfor %}</table></section>
-    {% endif %}
-    {% if anneals %}
-    <section class="trace-card"><h3>Annealing Lots</h3><table class="trace-table"><tr><th>Lot No</th><th>Grade</th><th>QA</th><th>Source Prior Stage</th><th>Docs</th></tr>{% for x in anneals %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="small code">{{ x.src_alloc_json }}</td><td><a href="/anneal/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/anneal/jobcard/{{ x.id }}" target="_blank">Job Card</a></td></tr>{% endfor %}</table></section>
-    {% endif %}
-    {% if lots %}
-    <section class="trace-card"><h3>Atomization Lots</h3><table class="trace-table"><tr><th>Lot No</th><th>Grade</th><th>QA</th><th>Docs</th></tr>{% for x in lots %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td><a href="/traceability/lot/{{ x.id }}" target="_blank">Trace</a> | <a href="/lot/{{ x.id }}/jobcard" target="_blank">Job Card</a></td></tr>{% endfor %}</table></section>
-    {% endif %}
-    {% if pulvs %}
-    <section class="trace-card"><h3>Pulverization Lots</h3><table class="trace-table"><tr><th>Lot No</th><th>Grade</th><th>Mag Output</th><th>QA</th><th>Source GRN</th></tr>{% for x in pulvs %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.mag_output_qty_kg }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="small code">{{ x.src_grn_json }}</td></tr>{% endfor %}</table></section>
-    {% endif %}
-    {% if heats %}
-    <section class="trace-card"><h3>Melting Heats</h3><table class="trace-table"><tr><th>Heat No</th><th>Grade</th><th>QA</th><th>Docs</th></tr>{% for h in heats %}<tr><td class="code">{{ h.heat_no }}</td><td>{{ h.grade }}</td><td><span class="badge">{{ h.qa_status }}</span></td><td><a href="/traceability/heat/{{ h.id }}" target="_blank">Trace</a></td></tr>{% endfor %}</table></section>
-    {% endif %}
-  </div>
 
-  {% if rm_rows or pulv_grns %}
-  <section class="trace-card" style="margin-top:16px">
-    <h3>RM / GRN Source</h3>
-    <div class="trace-sub">This is the final backward source chain to raw-material lots consumed.</div>
-    {% if rm_rows %}
-    <table class="trace-table" style="margin-bottom:12px"><tr><th>Heat</th><th>RM Type</th><th>GRN ID</th><th>Supplier</th><th>Qty (kg)</th><th>Rate</th></tr>{% for r in rm_rows %}<tr><td class="code">{{ r.heat_no }}</td><td>{{ r.rm_type }}</td><td>{{ r.grn_id }}</td><td>{{ r.supplier }}</td><td>{{ '%.1f'|format(r.qty) }}</td><td>{{ '%.2f'|format(r.price) }}</td></tr>{% endfor %}</table>
-    {% endif %}
-    {% if pulv_grns %}
-    <table class="trace-table"><tr><th>Pulv Lot</th><th>GRN ID</th><th>Supplier</th><th>RM Type</th><th>Qty (kg)</th><th>Rate</th></tr>{% for r in pulv_grns %}<tr><td class="code">{{ r.pulv_lot_no }}</td><td>{{ r.grn.id if r.grn else r.grn_id }}</td><td>{{ r.grn.supplier if r.grn else '' }}</td><td>{{ r.grn.rm_type if r.grn else '' }}</td><td>{{ r.qty }}</td><td>{{ r.grn.price if r.grn else '' }}</td></tr>{% endfor %}</table>
-    {% endif %}
-  </section>
+  {% if current %}
+  <div class="current-grid">
+    <div class="card">
+      <h3>Current Lot Summary</h3>
+      <div class="summary-grid">
+        <div class="mini"><div class="label">Current Lot</div><div class="val code">{{ current.lot_no }}</div></div>
+        <div class="mini"><div class="label">Grade / Family</div><div class="val">{{ current.fg_grade or current.grade or current.family or '-' }}</div></div>
+        <div class="mini"><div class="label">QA Status</div><div class="val">{{ current.qa_status or 'PENDING' }}</div></div>
+        <div class="mini"><div class="label">Qty (kg)</div><div class="val">{{ current.weight_kg or current.mag_output_qty_kg or current.input_qty_kg or '-' }}</div></div>
+        <div class="mini"><div class="label">Cost / kg</div><div class="val">{{ current.cost_per_kg or current.unit_cost or '-' }}</div></div>
+        <div class="mini"><div class="label">Date</div><div class="val">{{ current.date or '-' }}</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Dispatch / Document</h3>
+      {% if dispatches %}
+        <table class="tbl"><tr><th>Order</th><th>Date</th><th>Customer</th><th>FG Lot</th><th>Qty</th></tr>{% for d in dispatches %}<tr><td>{{ d.order_no or d.order_id }}</td><td>{{ d.date }}</td><td>{{ d.customer_name }}</td><td class="code">{{ d.fg_lot_no }}</td><td>{{ d.qty_kg }}</td></tr>{% endfor %}</table>
+      {% else %}
+        <div class="trace-sub" style="color:#64748b">No dispatch linked yet for this trace.</div>
+      {% endif %}
+    </div>
+  </div>
   {% endif %}
+
+  <div class="chain">
+    {% if fgs %}
+    <section class="stage-card">
+      <div class="stage-head"><div class="stage-title">FG / Dispatch</div><span class="badge">{{ fgs|length }} lot(s)</span></div>
+      <table class="tbl"><tr><th>Lot No</th><th>Grade</th><th>Qty</th><th>Cost/kg</th><th>QA</th><th>Source Grinding</th><th>Docs</th></tr>{% for x in fgs %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.fg_grade }}</td><td>{{ x.weight_kg }}</td><td>{{ x.cost_per_kg }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="code small">{{ x.src_alloc_json }}</td><td class="linkline"><a href="/fg/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/fg/jobcard/{{ x.id }}" target="_blank">Job Card</a></td></tr>{% if fg_qa.get(x.id) %}<tr><td colspan="7"><div class="qa-list">{% for k,v in fg_qa.get(x.id, {}).items() %}<div class="qa-item"><div class="k">{{ k|replace('_',' ')|title }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endif %}{% endfor %}</table>
+    </section><div class="arrow">↓</div>{% endif %}
+
+    {% if grinds %}
+    <section class="stage-card">
+      <div class="stage-head"><div class="stage-title">Grinding</div><span class="badge">{{ grinds|length }} lot(s)</span></div>
+      <table class="tbl"><tr><th>Lot No</th><th>Grade</th><th>Qty</th><th>Cost/kg</th><th>QA</th><th>Source Anneal</th><th>Docs</th></tr>{% for x in grinds %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.weight_kg }}</td><td>{{ x.cost_per_kg }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="code">{{ x.src_alloc_json }}</td><td class="linkline"><a href="/grind/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/grind/jobcard/{{ x.id }}" target="_blank">Job Card</a></td></tr>{% if grind_qa.get(x.id) %}<tr><td colspan="7"><div class="qa-list">{% for k,v in grind_qa.get(x.id, {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|replace('_',' ')|title }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endif %}{% endfor %}</table>
+    </section><div class="arrow">↓</div>{% endif %}
+
+    {% if anneals %}
+    <section class="stage-card">
+      <div class="stage-head"><div class="stage-title">Annealing</div><span class="badge">{{ anneals|length }} lot(s)</span></div>
+      <table class="tbl"><tr><th>Lot No</th><th>Grade</th><th>Qty</th><th>Cost/kg</th><th>QA</th><th>Source Prior Stage</th><th>Docs</th></tr>{% for x in anneals %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.weight_kg }}</td><td>{{ x.cost_per_kg }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="code">{{ x.src_alloc_json }}</td><td class="linkline"><a href="/anneal/trace/{{ x.id }}" target="_blank">Trace</a> | <a href="/anneal/jobcard/{{ x.id }}" target="_blank">Job Card</a></td></tr>{% if anneal_qa.get(x.id) %}<tr><td colspan="7"><div class="qa-list">{% for k,v in anneal_qa.get(x.id, {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|replace('_',' ')|title }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endif %}{% endfor %}</table>
+    </section><div class="arrow">↓</div>{% endif %}
+
+    {% if lots or pulvs %}
+    <section class="stage-card">
+      <div class="stage-head"><div class="stage-title">Atomization / Pulverization Source</div><span class="badge">Upstream production lots</span></div>
+      <div class="row-grid">
+        {% if lots %}<div><h4 style="margin:0 0 8px;color:#0f2d57">Atomization Lots</h4><table class="tbl"><tr><th>Lot No</th><th>Grade</th><th>Qty</th><th>Cost/kg</th><th>QA</th><th>Docs</th></tr>{% for x in lots %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.weight }}</td><td>{{ x.unit_cost }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="linkline"><a href="/traceability/lot/{{ x.id }}" target="_blank">Trace</a> | <a href="/lot/{{ x.id }}/jobcard" target="_blank">Job Card</a></td></tr>{% if atom_qa.get(x.id) %}<tr><td colspan="6"><div class="qa-list">{% for k,v in atom_qa.get(x.id, {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|upper }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endif %}{% endfor %}</table></div>{% endif %}
+        {% if pulvs %}<div><h4 style="margin:0 0 8px;color:#0f2d57">Pulverization Lots</h4><table class="tbl"><tr><th>Lot No</th><th>Grade</th><th>Mag Qty</th><th>Cost/kg</th><th>QA</th><th>Source GRN</th></tr>{% for x in pulvs %}<tr><td class="code">{{ x.lot_no }}</td><td>{{ x.grade }}</td><td>{{ x.mag_output_qty_kg }}</td><td>{{ x.cost_per_kg }}</td><td><span class="badge">{{ x.qa_status }}</span></td><td class="code">{{ x.src_grn_json }}</td></tr><tr><td colspan="6"><div class="qa-list">{% for k,v in {'AD':x.ad,'Non Mag %':(x.non_mag_pct or x.non_mag_qty_kg),'Remarks':x.remarks}.items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endfor %}</table></div>{% endif %}
+      </div>
+    </section><div class="arrow">↓</div>{% endif %}
+
+    {% if heats %}
+    <section class="stage-card">
+      <div class="stage-head"><div class="stage-title">Melting Heats</div><span class="badge">{{ heats|length }} heat(s)</span></div>
+      <table class="tbl"><tr><th>Heat No</th><th>Grade</th><th>Output</th><th>Cost/kg</th><th>QA</th><th>Docs</th></tr>{% for h in heats %}<tr><td class="code">{{ h.heat_no }}</td><td>{{ h.grade }}</td><td>{{ h.output_qty }}</td><td>{{ h.unit_cost }}</td><td><span class="badge">{{ h.qa_status }}</span></td><td class="linkline"><a href="/traceability/heat/{{ h.id }}" target="_blank">Trace</a></td></tr>{% if heat_qa.get(h.id) %}<tr><td colspan="6"><div class="qa-list">{% for k,v in heat_qa.get(h.id, {}).items() if v not in [None,''] %}<div class="qa-item"><div class="k">{{ k|upper }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div></td></tr>{% endif %}{% endfor %}</table>
+    </section><div class="arrow">↓</div>{% endif %}
+
+    {% if rm_rows or pulv_grns %}
+    <section class="stage-card">
+      <div class="stage-head"><div class="stage-title">RM / GRN Source</div><span class="badge">Raw material genealogy</span></div>
+      {% if rm_rows %}<table class="tbl" style="margin-bottom:12px"><tr><th>Heat</th><th>GRN ID</th><th>GRN No</th><th>Supplier</th><th>RM Type</th><th>Qty</th><th>Rate</th></tr>{% for r in rm_rows %}<tr><td class="code">{{ r.heat_no }}</td><td>{{ r.grn_id }}</td><td>{{ r.grn_no }}</td><td>{{ r.supplier }}</td><td>{{ r.rm_type }}</td><td>{{ '%.1f'|format(r.qty) }}</td><td>{{ '%.2f'|format(r.price) }}</td></tr>{% endfor %}</table>{% endif %}
+      {% if pulv_grns %}<table class="tbl"><tr><th>Pulv Lot</th><th>GRN ID</th><th>Supplier</th><th>RM Type</th><th>Qty</th><th>Rate</th></tr>{% for r in pulv_grns %}<tr><td class="code">{{ r.pulv_lot_no }}</td><td>{{ r.grn.id if r.grn else r.grn_id }}</td><td>{{ r.grn.supplier if r.grn else '' }}</td><td>{{ r.grn.rm_type if r.grn else '' }}</td><td>{{ r.qty }}</td><td>{{ r.grn.price if r.grn else '' }}</td></tr>{% endfor %}</table>{% endif %}
+    </section>{% endif %}
+  </div>
 </div>
 {% endblock %}

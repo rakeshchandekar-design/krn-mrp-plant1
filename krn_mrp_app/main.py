@@ -4799,6 +4799,7 @@ def lot_jobcard(request: Request, lot_id: int, db: Session = Depends(get_db)):
         "heats": [h for h in heats if h],
     })
 
+
 @app.get("/traceability/thread/{trace_id}", response_class=HTMLResponse)
 def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db)):
     def _j(raw):
@@ -4806,41 +4807,112 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             return json.loads(raw or "{}") if isinstance(raw, str) else (raw or {})
         except Exception:
             return {}
+
+    def _safe_first(sql, **kw):
+        try:
+            return conn.execute(text(sql), kw).mappings().first()
+        except Exception:
+            return None
+
+    def _safe_all(sql, **kw):
+        try:
+            return conn.execute(text(sql), kw).mappings().all()
+        except Exception:
+            return []
+
     conn = db.connection()
-    # find nearest/current stage rows for this trace id
-    fgs = conn.execute(text("SELECT id, lot_no, date, family, fg_grade, weight_kg, qa_status, src_alloc_json, trace_id FROM fg_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC"), {"t": trace_id}).mappings().all() if _table_exists(engine.connect(), 'fg_lots') else []
-    grinds = conn.execute(text("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id FROM grinding_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC"), {"t": trace_id}).mappings().all() if _table_exists(engine.connect(), 'grinding_lots') else []
-    anneals = conn.execute(text("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id FROM anneal_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC"), {"t": trace_id}).mappings().all() if _table_exists(engine.connect(), 'anneal_lots') else []
-    pulvs = conn.execute(text("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no FROM pulv_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC"), {"t": trace_id}).mappings().all() if _table_exists(engine.connect(), 'pulv_lots') else []
+
+    fgs = _safe_all("SELECT id, lot_no, date, family, fg_grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, remarks FROM fg_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'fg_lots') else []
+    grinds = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, oversize_p80_kg, oversize_p40_kg, remarks FROM grinding_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'grinding_lots') else []
+    anneals = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, ammonia_kg, o_pct, compressibility, remarks FROM anneal_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'anneal_lots') else []
+    pulvs = _safe_all("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no, cost_per_kg, non_mag_pct, non_mag_qty_kg, ad, remarks FROM pulv_lots WHERE trace_id=:t OR lot_no=:t ORDER BY id DESC", t=trace_id) if _table_exists(engine.connect(), 'pulv_lots') else []
     atom_lots = db.query(Lot).filter((Lot.trace_id == trace_id) | (Lot.lot_no == trace_id)).all()
 
-    # walk upstream from FG -> Grind -> Anneal -> (Atom/Pulv) -> Heat -> RM/GRN
+    # Walk upstream if current trace is a downstream stage
     grind_lot_nos = set()
     for r in fgs:
         grind_lot_nos.update(_j(r.get('src_alloc_json')).keys())
-    if not grinds and grind_lot_nos:
-        grinds = conn.execute(text("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id FROM grinding_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC"), {"arr": list(grind_lot_nos)}).mappings().all()
+    if grind_lot_nos:
+        extra = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, oversize_p80_kg, oversize_p40_kg, remarks FROM grinding_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC", arr=list(grind_lot_nos))
+        existing={x['lot_no'] for x in grinds}
+        grinds.extend([x for x in extra if x['lot_no'] not in existing])
 
     anneal_lot_nos = set()
     for r in grinds:
         anneal_lot_nos.update(_j(r.get('src_alloc_json')).keys())
-    if not anneals and anneal_lot_nos:
-        anneals = conn.execute(text("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id FROM anneal_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC"), {"arr": list(anneal_lot_nos)}).mappings().all()
+    if anneal_lot_nos:
+        extra = _safe_all("SELECT id, lot_no, date, grade, weight_kg, qa_status, src_alloc_json, trace_id, cost_per_kg, ammonia_kg, o_pct, compressibility, remarks FROM anneal_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC", arr=list(anneal_lot_nos))
+        existing={x['lot_no'] for x in anneals}
+        anneals.extend([x for x in extra if x['lot_no'] not in existing])
 
     atom_lot_nos = set(); pulv_lot_nos = set()
     for r in anneals:
         for ln in _j(r.get('src_alloc_json')).keys():
-            if str(ln).upper().startswith('PULV'):
-                pulv_lot_nos.add(ln)
+            ln_s = str(ln)
+            if ln_s.upper().startswith('PULV'):
+                pulv_lot_nos.add(ln_s)
             else:
-                atom_lot_nos.add(ln)
-    if not atom_lots and atom_lot_nos:
-        atom_lots = db.query(Lot).filter(Lot.lot_no.in_(list(atom_lot_nos))).all()
-    if not pulvs and pulv_lot_nos:
-        pulvs = conn.execute(text("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no FROM pulv_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC"), {"arr": list(pulv_lot_nos)}).mappings().all()
+                atom_lot_nos.add(ln_s)
+    if atom_lot_nos:
+        extra = db.query(Lot).filter(Lot.lot_no.in_(list(atom_lot_nos))).all()
+        existing={x.lot_no for x in atom_lots}
+        atom_lots.extend([x for x in extra if x.lot_no not in existing])
+    if pulv_lot_nos:
+        extra = _safe_all("SELECT id, lot_no, date, grade, input_qty_kg, mag_output_qty_kg, qa_status, src_grn_json, trace_id, job_card_no, cost_per_kg, non_mag_pct, non_mag_qty_kg, ad, remarks FROM pulv_lots WHERE lot_no = ANY(:arr) ORDER BY id DESC", arr=list(pulv_lot_nos))
+        existing={x['lot_no'] for x in pulvs}
+        pulvs.extend([x for x in extra if x['lot_no'] not in existing])
 
     heat_ids = sorted({lh.heat_id for lot in atom_lots for lh in db.query(LotHeat).filter(LotHeat.lot_id == lot.id).all()})
     heats = [db.get(Heat, hid) for hid in heat_ids if db.get(Heat, hid)]
+
+    # Stage QA snapshots
+    heat_qa = {}
+    for h in heats:
+        q = _safe_first("SELECT c, si, mn, s, p, cu, ni, fe FROM heat_chem WHERE heat_id=:id ORDER BY id DESC LIMIT 1", id=h.id)
+        heat_qa[h.id] = dict(q) if q else {}
+
+    atom_qa = {}
+    for lot in atom_lots:
+        chem = lot.chemistry
+        phys = lot.phys
+        psd = lot.psd
+        atom_qa[lot.id] = {
+            'c': getattr(chem, 'c', None), 'si': getattr(chem, 'si', None), 'mn': getattr(chem, 'mn', None), 's': getattr(chem, 's', None), 'p': getattr(chem, 'p', None),
+            'ad': getattr(phys, 'ad', None), 'flow': getattr(phys, 'flow', None),
+            'p212': getattr(psd, 'p212', None), 'p180': getattr(psd, 'p180', None), 'n150p75': getattr(psd, 'n150p75', None),
+        }
+
+    anneal_qa = {}
+    if anneals:
+        ids=[int(x['id']) for x in anneals]
+        params_map = _anneal_latest_params_map(db, ids)
+        for row in anneals:
+            rid=int(row['id'])
+            qa={'oxygen': row.get('o_pct'), 'compressibility': row.get('compressibility')}
+            qa.update(params_map.get(rid, {}))
+            anneal_qa[rid]=qa
+
+    grind_qa = {}
+    if grinds:
+        ids=[int(x['id']) for x in grinds]
+        hdr = _grind_latest_qa_header_map(ids)
+        try:
+            prm = _grinding_latest_params_map(db, ids)
+        except Exception:
+            prm = {}
+        for row in grinds:
+            rid=int(row['id'])
+            qa={}
+            qa.update(hdr.get(rid, {}))
+            qa.update(prm.get(rid, {}))
+            grind_qa[rid]=qa
+
+    fg_qa = {}
+    if fgs:
+        ids=[int(x['id']) for x in fgs]
+        prm = _fg_latest_params_map(db, ids)
+        for row in fgs:
+            fg_qa[int(row['id'])]=prm.get(int(row['id']), {})
 
     rm_rows = []
     for h in heats:
@@ -4854,19 +4926,51 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
                 'grn_no': getattr(cons.grn, 'grn_no', '') if cons.grn else '',
                 'qty': float(cons.qty or 0.0),
                 'price': float(getattr(cons.grn, 'price', 0.0) or 0.0) if cons.grn else 0.0,
+                'date': getattr(cons.grn, 'date', None) if cons.grn else None,
             })
     pulv_grns = []
     for p in pulvs:
         for gid, qty in _j(p.get('src_grn_json')).items():
             try:
-                g = conn.execute(text("SELECT id, grn_no, supplier, rm_type, price, date FROM grn WHERE id=:id"), {"id": int(gid)}).mappings().first()
+                g = _safe_first("SELECT id, grn_no, supplier, rm_type, price, date FROM grn WHERE id=:id", id=int(gid))
             except Exception:
                 g = None
             pulv_grns.append({'pulv_lot_no': p.get('lot_no'), 'grn_id': gid, 'qty': qty, 'grn': g})
 
+    # current record summary
+    current = None
+    stage_label = 'TRACE'
+    if fgs:
+        current = dict(fgs[0]); stage_label = 'FG / DISPATCH'
+    elif grinds:
+        current = dict(grinds[0]); stage_label = 'GRINDING'
+    elif anneals:
+        current = dict(anneals[0]); stage_label = 'ANNEALING'
+    elif atom_lots:
+        lot = atom_lots[0]
+        current = {'lot_no': lot.lot_no, 'grade': lot.grade, 'weight_kg': lot.weight, 'cost_per_kg': lot.unit_cost, 'qa_status': lot.qa_status, 'date': None}
+        stage_label = 'ATOMIZATION'
+    elif pulvs:
+        current = dict(pulvs[0]); stage_label = 'PULVERIZATION'
+    elif heats:
+        h = heats[0]
+        current = {'lot_no': h.heat_no, 'grade': h.grade, 'weight_kg': h.output_qty, 'cost_per_kg': h.unit_cost, 'qa_status': h.qa_status, 'date': h.date}
+        stage_label = 'MELTING'
+
+    dispatches=[]
+    if fgs and _table_exists(engine.connect(), 'dispatch_items') and _table_exists(engine.connect(), 'dispatch_orders'):
+        fg_nos=[x['lot_no'] for x in fgs]
+        dispatches = _safe_all("""
+            SELECT o.id as order_id, o.order_no, o.date, o.customer_name, di.fg_lot_no, di.qty_kg
+            FROM dispatch_items di JOIN dispatch_orders o ON o.id=di.dispatch_order_id
+            WHERE di.fg_lot_no = ANY(:arr) ORDER BY o.date DESC, o.id DESC
+        """, arr=fg_nos)
+
     return templates.TemplateResponse("trace_thread.html", {
         "request": request,
         "trace_id": trace_id,
+        "current": current,
+        "current_stage": stage_label,
         "fgs": fgs,
         "grinds": grinds,
         "anneals": anneals,
@@ -4875,9 +4979,16 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
         "heats": heats,
         "rm_rows": rm_rows,
         "pulv_grns": pulv_grns,
+        "heat_qa": heat_qa,
+        "atom_qa": atom_qa,
+        "anneal_qa": anneal_qa,
+        "grind_qa": grind_qa,
+        "fg_qa": fg_qa,
+        "dispatches": dispatches,
         "user": current_username(request),
         "role": current_role(request),
     })
+
 
 @app.get("/traceability/heat/{heat_id}", response_class=HTMLResponse)
 def trace_heat(heat_id: int, request: Request, db: Session = Depends(get_db)):
