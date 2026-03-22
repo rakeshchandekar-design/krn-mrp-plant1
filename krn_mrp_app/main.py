@@ -2519,12 +2519,15 @@ def kpi_fg_gradewise_stock(db):
     # Grade expression
     grade_expr = f"UPPER(COALESCE(fl.{grade_col}, 'KRIP'))" if grade_col else "'KRIP'"
 
-    # WHERE clause (live, approved)
+    # WHERE clause (live, approved) and exclude oversize pseudo-FG lines
     where_parts = []
     if status_exists:
         where_parts.append("fl.status = 'ON_HAND'")
     if qa_exists:
         where_parts.append("COALESCE(fl.qa_status,'APPROVED') = 'APPROVED'")
+    # Oversize is byproduct, not FG. Converted grades like KIP 20 / KFS 40.29 remain valid FG.
+    if grade_col:
+        where_parts.append(f"UPPER(COALESCE(fl.{grade_col}, '')) NOT LIKE 'OVERSIZE %'")
     where_q = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
     # Primary stock expression

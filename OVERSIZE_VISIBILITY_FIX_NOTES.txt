@@ -1,0 +1,5 @@
+Oversize visibility fix:
+- FG Home live stock excludes fg_grade starting with 'Oversize '
+- Dashboard FG grade-wise stock excludes grades starting with 'OVERSIZE '
+- Added separate Oversize Byproduct section in FG home
+- This fixes display/reporting. Historical oversize records remain in fg_lots unless migrated separately.

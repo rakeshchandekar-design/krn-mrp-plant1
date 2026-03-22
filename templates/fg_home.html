@@ -51,5 +51,27 @@
       <div class="compact-muted">Use View Lots for trace, PDF, job card and QA links. Approved FG stock shown here is dispatch-ready inventory snapshot.</div>
     </div>
   </div>
+
+  <div class="grid-2">
+    <div class="card table-card">
+      <h3>Live Stock — Oversize Byproduct</h3>
+      <table class="table small">
+        <tr><th>Family</th><th>+80 Qty (kg)</th><th>+40 Qty (kg)</th><th>Value</th></tr>
+        {% for s in byproduct_stock or [] %}
+          <tr>
+            <td>{{ s.family }}</td>
+            <td>{{ '%.0f'|format(s.p80_qty or 0) }}</td>
+            <td>{{ '%.0f'|format(s.p40_qty or 0) }}</td>
+            <td>{% if is_admin %}₹ {{ '%.2f'|format(s.value or 0) }}{% else %}—{% endif %}</td>
+          </tr>
+        {% endfor %}
+      </table>
+      <div class="compact-muted">Oversize is byproduct. Only converted grades like 40.29 and 20 should appear in FG.</div>
+    </div>
+    <div class="card table-card">
+      <h3>FG Logic Note</h3>
+      <div class="compact-muted">Direct grades named Oversize 40 / Oversize 80 are excluded from FG stock display. They are treated as byproduct visibility only.</div>
+    </div>
+  </div>
 </div>
 {% endblock %}

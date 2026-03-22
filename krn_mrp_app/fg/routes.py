@@ -296,7 +296,10 @@ async def fg_home(request: Request, dep: None = Depends(require_roles("admin","f
         """), {"d5": today - timedelta(days=4)}).mappings().all()
         live_stock = conn.execute(text("""
             SELECT fg_grade, COALESCE(SUM(weight_kg),0) AS qty
-            FROM fg_lots GROUP BY fg_grade ORDER BY fg_grade
+            FROM fg_lots
+            WHERE UPPER(COALESCE(fg_grade,'')) NOT LIKE 'OVERSIZE %'
+            GROUP BY fg_grade
+            ORDER BY fg_grade
         """),).mappings().all()
 
     # Oversize byproduct bucket = remaining +80/+40 from approved grinding lots minus FG conversions
@@ -328,6 +331,7 @@ async def fg_home(request: Request, dep: None = Depends(require_roles("admin","f
         "weighted_cost_today": weighted_cost_today,
         "last5": last5,
         "live_stock": live_stock,
+        "byproduct_stock": byproduct_stock,
         "is_admin": _is_admin(request),
         "user": (request.session.get("username") if getattr(request, "session", None) else request.cookies.get("username", "")),
         "role": (request.session.get("role") if getattr(request, "session", None) else request.cookies.get("role", "guest")),
