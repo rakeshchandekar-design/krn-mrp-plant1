@@ -1,0 +1,5 @@
+Fixes oversize opening-stock visibility.
+- Handles databases where fg_lots does not have remaining_qty/status/family columns.
+- Dashboard byproduct monitor now includes legacy Oversize 40/80 opening stock with fallbacks.
+- FG byproduct section now includes legacy Oversize 40/80 opening stock with fallbacks.
+- Oversize remains excluded from FG stock summary.

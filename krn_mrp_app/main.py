@@ -3200,29 +3200,43 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             bucket[fam]["p40_qty"] += p40_av
             bucket[fam]["value"] += (p80_av + p40_av) * float(r["cost_per_kg"] or 0.0)
 
-        legacy_rows = db.execute(text("""
+        cols = {str(r[0]).lower() for r in db.execute(text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='fg_lots'
+        """)).all()}
+        qty_expr = "COALESCE(weight_kg, 0)"
+        if "remaining_qty" in cols:
+            qty_expr = "COALESCE(remaining_qty, weight_kg, 0)"
+        status_expr = "COALESCE(status,'ON_HAND')='ON_HAND'" if "status" in cols else "1=1"
+        family_expr = "UPPER(COALESCE(family,''))" if "family" in cols else "''"
+
+        legacy_rows = db.execute(text(f"""
             SELECT
-                UPPER(COALESCE(family,'')) AS family,
+                {family_expr} AS family,
                 UPPER(COALESCE(fg_grade,'')) AS fg_grade,
-                COALESCE(SUM(COALESCE(remaining_qty, weight_kg, 0)),0)::double precision AS qty,
-                COALESCE(SUM(COALESCE(remaining_qty, weight_kg, 0) * COALESCE(cost_per_kg,0)),0)::double precision AS value
+                COALESCE(SUM({qty_expr}),0)::double precision AS qty,
+                COALESCE(SUM(({qty_expr}) * COALESCE(cost_per_kg,0)),0)::double precision AS value
             FROM fg_lots
             WHERE COALESCE(qa_status,'APPROVED')='APPROVED'
-              AND COALESCE(status,'ON_HAND')='ON_HAND'
+              AND {status_expr}
               AND UPPER(COALESCE(fg_grade,'')) IN ('OVERSIZE 80', 'OVERSIZE 40')
-            GROUP BY UPPER(COALESCE(family,'')), UPPER(COALESCE(fg_grade,''))
+            GROUP BY {family_expr}, UPPER(COALESCE(fg_grade,''))
         """)).mappings().all()
         for r in legacy_rows:
-            fam = (r["family"] or "MISC").strip().upper()
+            fam = (r["family"] or "").strip().upper()
+            fg_grade = str(r["fg_grade"] or "").strip().upper()
+            if not fam:
+                fam = "MISC"
             bucket.setdefault(fam, {"family": fam, "p80_qty": 0.0, "p40_qty": 0.0, "value": 0.0})
             qty = float(r["qty"] or 0.0)
-            if r["fg_grade"] == "OVERSIZE 80":
+            if fg_grade == "OVERSIZE 80":
                 bucket[fam]["p80_qty"] += qty
-            elif r["fg_grade"] == "OVERSIZE 40":
+            elif fg_grade == "OVERSIZE 40":
                 bucket[fam]["p40_qty"] += qty
             bucket[fam]["value"] += float(r["value"] or 0.0)
 
-        byproduct_stock_dash = list(bucket.values())
+        byproduct_stock_dash = [v for v in bucket.values() if (float(v["p80_qty"] or 0)+float(v["p40_qty"] or 0)) > 0.0001]
         byproduct_stock_dash.sort(key=lambda x: x["family"])
         byproduct_total_qty = sum(float(x["p80_qty"] or 0) + float(x["p40_qty"] or 0) for x in byproduct_stock_dash)
         byproduct_total_value = sum(float(x["value"] or 0) for x in byproduct_stock_dash)

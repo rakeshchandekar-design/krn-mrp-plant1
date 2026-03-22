@@ -311,40 +311,55 @@ async def fg_home(request: Request, dep: None = Depends(require_roles("admin","f
         p40_rows = fetch_oversize_balance("P40")
         bucket = {}
         for r in p80_rows:
-            fam = r["family"]
+            fam = (r.get("family") or "MISC")
             bucket.setdefault(fam, {"family": fam, "p80_qty": 0.0, "p40_qty": 0.0, "value": 0.0})
-            bucket[fam]["p80_qty"] += float(r["available_kg"] or 0.0)
-            bucket[fam]["value"] += float(r["available_kg"] or 0.0) * float(r["grind_cost_per_kg"] or 0.0)
+            bucket[fam]["p80_qty"] += float(r.get("available_kg") or 0.0)
+            bucket[fam]["value"] += float(r.get("available_kg") or 0.0) * float(r.get("grind_cost_per_kg") or 0.0)
         for r in p40_rows:
-            fam = r["family"]
+            fam = (r.get("family") or "MISC")
             bucket.setdefault(fam, {"family": fam, "p80_qty": 0.0, "p40_qty": 0.0, "value": 0.0})
-            bucket[fam]["p40_qty"] += float(r["available_kg"] or 0.0)
-            bucket[fam]["value"] += float(r["available_kg"] or 0.0) * float(r["grind_cost_per_kg"] or 0.0)
+            bucket[fam]["p40_qty"] += float(r.get("available_kg") or 0.0)
+            bucket[fam]["value"] += float(r.get("available_kg") or 0.0) * float(r.get("grind_cost_per_kg") or 0.0)
 
         with engine.begin() as conn:
-            legacy_rows = conn.execute(text("""
+            cols = {str(r[0]).lower() for r in conn.execute(text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='fg_lots'
+            """)).all()}
+            qty_expr = "COALESCE(weight_kg, 0)"
+            if "remaining_qty" in cols:
+                qty_expr = "COALESCE(remaining_qty, weight_kg, 0)"
+            status_expr = "COALESCE(status,'ON_HAND')='ON_HAND'" if "status" in cols else "1=1"
+            family_expr = "UPPER(COALESCE(family,''))" if "family" in cols else "''"
+
+            legacy_rows = conn.execute(text(f"""
                 SELECT
-                    UPPER(COALESCE(family,'')) AS family,
+                    {family_expr} AS family,
                     UPPER(COALESCE(fg_grade,'')) AS fg_grade,
-                    COALESCE(SUM(COALESCE(remaining_qty, weight_kg, 0)),0)::float AS qty,
-                    COALESCE(SUM(COALESCE(remaining_qty, weight_kg, 0) * COALESCE(cost_per_kg,0)),0)::float AS value
+                    COALESCE(SUM({qty_expr}),0)::float AS qty,
+                    COALESCE(SUM(({qty_expr}) * COALESCE(cost_per_kg,0)),0)::float AS value
                 FROM fg_lots
                 WHERE COALESCE(qa_status,'APPROVED')='APPROVED'
-                  AND COALESCE(status,'ON_HAND')='ON_HAND'
+                  AND {status_expr}
                   AND UPPER(COALESCE(fg_grade,'')) IN ('OVERSIZE 80', 'OVERSIZE 40')
-                GROUP BY UPPER(COALESCE(family,'')), UPPER(COALESCE(fg_grade,''))
+                GROUP BY {family_expr}, UPPER(COALESCE(fg_grade,''))
             """)).mappings().all()
+
         for r in legacy_rows:
-            fam = (r["family"] or "MISC").strip().upper()
+            fam = (r["family"] or "").strip().upper()
+            fg_grade = str(r["fg_grade"] or "").strip().upper()
+            if not fam:
+                fam = "KIPM" if "M 40.29" in fg_grade or "M 80.29" in fg_grade else "MISC"
             bucket.setdefault(fam, {"family": fam, "p80_qty": 0.0, "p40_qty": 0.0, "value": 0.0})
             qty = float(r["qty"] or 0.0)
-            if r["fg_grade"] == "OVERSIZE 80":
+            if fg_grade == "OVERSIZE 80":
                 bucket[fam]["p80_qty"] += qty
-            elif r["fg_grade"] == "OVERSIZE 40":
+            elif fg_grade == "OVERSIZE 40":
                 bucket[fam]["p40_qty"] += qty
             bucket[fam]["value"] += float(r["value"] or 0.0)
 
-        byproduct_stock = list(bucket.values())
+        byproduct_stock = [v for v in bucket.values() if (float(v["p80_qty"] or 0)+float(v["p40_qty"] or 0)) > 0.0001]
         byproduct_stock.sort(key=lambda x: x["family"])
     except Exception:
         byproduct_stock = []
