@@ -3154,7 +3154,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     fg_by_grade = kpi_fg_gradewise_stock(db)
     qa_eagle = kpi_qa_eagle(db, _from, _to)
 
-    # Oversize byproduct buckets from grinding lots (remaining after FG conversions)
+    # Oversize byproduct buckets:
+    # live remaining oversize from grinding + legacy opening stock stored in fg_lots as Oversize 80 / Oversize 40
     byproduct_stock_dash = []
     byproduct_total_qty = 0.0
     byproduct_total_value = 0.0
@@ -3198,6 +3199,28 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             bucket[fam]["p80_qty"] += p80_av
             bucket[fam]["p40_qty"] += p40_av
             bucket[fam]["value"] += (p80_av + p40_av) * float(r["cost_per_kg"] or 0.0)
+
+        legacy_rows = db.execute(text("""
+            SELECT
+                UPPER(COALESCE(family,'')) AS family,
+                UPPER(COALESCE(fg_grade,'')) AS fg_grade,
+                COALESCE(SUM(COALESCE(remaining_qty, weight_kg, 0)),0)::double precision AS qty,
+                COALESCE(SUM(COALESCE(remaining_qty, weight_kg, 0) * COALESCE(cost_per_kg,0)),0)::double precision AS value
+            FROM fg_lots
+            WHERE COALESCE(qa_status,'APPROVED')='APPROVED'
+              AND COALESCE(status,'ON_HAND')='ON_HAND'
+              AND UPPER(COALESCE(fg_grade,'')) IN ('OVERSIZE 80', 'OVERSIZE 40')
+            GROUP BY UPPER(COALESCE(family,'')), UPPER(COALESCE(fg_grade,''))
+        """)).mappings().all()
+        for r in legacy_rows:
+            fam = (r["family"] or "MISC").strip().upper()
+            bucket.setdefault(fam, {"family": fam, "p80_qty": 0.0, "p40_qty": 0.0, "value": 0.0})
+            qty = float(r["qty"] or 0.0)
+            if r["fg_grade"] == "OVERSIZE 80":
+                bucket[fam]["p80_qty"] += qty
+            elif r["fg_grade"] == "OVERSIZE 40":
+                bucket[fam]["p40_qty"] += qty
+            bucket[fam]["value"] += float(r["value"] or 0.0)
 
         byproduct_stock_dash = list(bucket.values())
         byproduct_stock_dash.sort(key=lambda x: x["family"])

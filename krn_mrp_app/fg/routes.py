@@ -302,7 +302,9 @@ async def fg_home(request: Request, dep: None = Depends(require_roles("admin","f
             ORDER BY fg_grade
         """),).mappings().all()
 
-    # Oversize byproduct bucket = remaining +80/+40 from approved grinding lots minus FG conversions
+    # Oversize byproduct bucket:
+    # 1) live remaining +80/+40 from approved grinding lots minus FG conversions
+    # 2) legacy opening stock already stored in fg_lots as Oversize 80 / Oversize 40
     byproduct_stock = []
     try:
         p80_rows = fetch_oversize_balance("P80")
@@ -318,6 +320,30 @@ async def fg_home(request: Request, dep: None = Depends(require_roles("admin","f
             bucket.setdefault(fam, {"family": fam, "p80_qty": 0.0, "p40_qty": 0.0, "value": 0.0})
             bucket[fam]["p40_qty"] += float(r["available_kg"] or 0.0)
             bucket[fam]["value"] += float(r["available_kg"] or 0.0) * float(r["grind_cost_per_kg"] or 0.0)
+
+        with engine.begin() as conn:
+            legacy_rows = conn.execute(text("""
+                SELECT
+                    UPPER(COALESCE(family,'')) AS family,
+                    UPPER(COALESCE(fg_grade,'')) AS fg_grade,
+                    COALESCE(SUM(COALESCE(remaining_qty, weight_kg, 0)),0)::float AS qty,
+                    COALESCE(SUM(COALESCE(remaining_qty, weight_kg, 0) * COALESCE(cost_per_kg,0)),0)::float AS value
+                FROM fg_lots
+                WHERE COALESCE(qa_status,'APPROVED')='APPROVED'
+                  AND COALESCE(status,'ON_HAND')='ON_HAND'
+                  AND UPPER(COALESCE(fg_grade,'')) IN ('OVERSIZE 80', 'OVERSIZE 40')
+                GROUP BY UPPER(COALESCE(family,'')), UPPER(COALESCE(fg_grade,''))
+            """)).mappings().all()
+        for r in legacy_rows:
+            fam = (r["family"] or "MISC").strip().upper()
+            bucket.setdefault(fam, {"family": fam, "p80_qty": 0.0, "p40_qty": 0.0, "value": 0.0})
+            qty = float(r["qty"] or 0.0)
+            if r["fg_grade"] == "OVERSIZE 80":
+                bucket[fam]["p80_qty"] += qty
+            elif r["fg_grade"] == "OVERSIZE 40":
+                bucket[fam]["p40_qty"] += qty
+            bucket[fam]["value"] += float(r["value"] or 0.0)
+
         byproduct_stock = list(bucket.values())
         byproduct_stock.sort(key=lambda x: x["family"])
     except Exception:

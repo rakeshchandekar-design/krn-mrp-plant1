@@ -1,0 +1,2 @@
+This patch includes legacy opening stock rows from fg_lots (Oversize 40 / Oversize 80) inside byproduct monitor.
+They remain visible in FG lot history, but are excluded from FG stock summaries.
