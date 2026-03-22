@@ -1,0 +1,6 @@
+Oversize / byproduct patch:
+- Oversize treated as byproduct source for FG 40.29 / 20 grades only
+- Family-wise conversion supported for KIP, KIPM, KSP, KFS
+- Grinding create now enforces oversize band 8% to 14%
+- Dashboard includes Oversize Byproduct Monitor card
+- FG create shows only relevant source rows for selected FG grade

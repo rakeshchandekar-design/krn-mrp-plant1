@@ -3151,6 +3151,60 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     fg_by_grade = kpi_fg_gradewise_stock(db)
     qa_eagle = kpi_qa_eagle(db, _from, _to)
 
+    # Oversize byproduct buckets from grinding lots (remaining after FG conversions)
+    byproduct_stock_dash = []
+    byproduct_total_qty = 0.0
+    byproduct_total_value = 0.0
+    try:
+        fg_alloc_rows = db.execute(text("SELECT src_alloc_json FROM fg_lots")).fetchall()
+        ov80_used, ov40_used = {}, {}
+        for (alloc_json,) in fg_alloc_rows:
+            if not alloc_json:
+                continue
+            try:
+                d = json.loads(alloc_json)
+                for key, qty in d.items():
+                    q = float(qty or 0.0)
+                    if str(key).startswith("OV80|"):
+                        lot_no = str(key).split("|", 1)[1]
+                        ov80_used[lot_no] = ov80_used.get(lot_no, 0.0) + q
+                    elif str(key).startswith("OV40|"):
+                        lot_no = str(key).split("|", 1)[1]
+                        ov40_used[lot_no] = ov40_used.get(lot_no, 0.0) + q
+            except Exception:
+                pass
+
+        grind_rows = db.execute(text("""
+            SELECT lot_no, grade,
+                   COALESCE(cost_per_kg,0)::double precision AS cost_per_kg,
+                   COALESCE(oversize_p80_kg,0)::double precision AS p80,
+                   COALESCE(oversize_p40_kg,0)::double precision AS p40
+            FROM grinding_lots
+            WHERE UPPER(COALESCE(qa_status,''))='APPROVED'
+        """)).mappings().all()
+
+        bucket = {}
+        for r in grind_rows:
+            g = (r["grade"] or "").strip().upper()
+            fam = "KIPM" if g.startswith("KIPM") else ("KSP" if g.startswith("KSP") else ("KFS" if g.startswith("KFS") else "KIP"))
+            p80_av = max(float(r["p80"] or 0.0) - float(ov80_used.get(r["lot_no"], 0.0)), 0.0)
+            p40_av = max(float(r["p40"] or 0.0) - float(ov40_used.get(r["lot_no"], 0.0)), 0.0)
+            if p80_av <= 0 and p40_av <= 0:
+                continue
+            bucket.setdefault(fam, {"family": fam, "p80_qty": 0.0, "p40_qty": 0.0, "value": 0.0})
+            bucket[fam]["p80_qty"] += p80_av
+            bucket[fam]["p40_qty"] += p40_av
+            bucket[fam]["value"] += (p80_av + p40_av) * float(r["cost_per_kg"] or 0.0)
+
+        byproduct_stock_dash = list(bucket.values())
+        byproduct_stock_dash.sort(key=lambda x: x["family"])
+        byproduct_total_qty = sum(float(x["p80_qty"] or 0) + float(x["p40_qty"] or 0) for x in byproduct_stock_dash)
+        byproduct_total_value = sum(float(x["value"] or 0) for x in byproduct_stock_dash)
+    except Exception:
+        byproduct_stock_dash = []
+        byproduct_total_qty = 0.0
+        byproduct_total_value = 0.0
+
     # Fallback: compute on-hand FG by grade inside the route (uses remaining_qty if present)
     _fg_sql = text("""
     SELECT
@@ -3269,6 +3323,9 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "gr_eff_y":           grd["eff_y"],
         "gr_eff_m":           grd["eff_m"],
         "fg_stock_by_grade":  fg_by_grade,
+        "byproduct_stock_dash": byproduct_stock_dash,
+        "byproduct_total_qty": byproduct_total_qty,
+        "byproduct_total_value": byproduct_total_value,
         "qa_eagle":           qa_eagle,
     }
 

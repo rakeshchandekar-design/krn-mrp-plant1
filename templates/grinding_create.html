@@ -24,7 +24,7 @@
     </div>
   </div>
   <div class="muted" style="margin:4px 0 10px">
-    Oversize total (+80 + +40) must be <b>≥ 7%</b> of Lot Weight.
+    Oversize total (+80 + +40) must stay between <b>8%</b> and <b>14%</b> of Lot Weight.
   </div>
 
   <table class="table">
@@ -106,13 +106,14 @@
     const p80 = parseFloat(p80El.value||'0');
     const p40 = parseFloat(p40El.value||'0');
     const oversize = (isFinite(p80)?p80:0) + (isFinite(p40)?p40:0);
-    const oversizeMin = (isFinite(lw)? lw*0.07 : 0);
+    const oversizeMin = (isFinite(lw)? lw*0.08 : 0);
+    const oversizeMax = (isFinite(lw)? lw*0.14 : 0);
 
     let msg = '';
     if (!isFinite(lw) || lw <= 0) msg = 'Enter Lot Weight (> 0).';
     else if (Math.abs(total - lw) > 0.01) msg = `Lot Weight must equal total allocated (diff ${fmt(Math.abs(total-lw),2)} kg).`;
     else if (gradesSelected().size > 1) msg = 'Only one family (KIP, KIPM, KSP or KFS) may be allocated.';
-    else if (oversize < oversizeMin) msg = `Oversize total must be ≥ ${fmt(oversizeMin,2)} kg.`;
+    else if (oversize < oversizeMin || oversize > oversizeMax) msg = `Oversize total must stay between ${fmt(oversizeMin,2)} kg and ${fmt(oversizeMax,2)} kg.`;
 
     if (msg) { errBox.style.display=''; errBox.textContent=msg; submitBtn.disabled=true; }
     else { errBox.style.display='none'; submitBtn.disabled=false; }

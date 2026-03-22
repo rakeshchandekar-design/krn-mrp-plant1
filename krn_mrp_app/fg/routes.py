@@ -49,6 +49,8 @@ FG_SURCHARGE: Dict[str, float] = {
     # KFS family (existing surcharges increased by ₹4)
     "KFS 15/45": 24.0,
     "KFS 15/60": 24.0,
+    "KFS 40.29": 9.0,
+    "KFS 20": 6.0,
 }
 
 # Which FG grades belong to which family (validation lock)
@@ -82,12 +84,27 @@ FG_FAMILY: Dict[str, str] = {
     # KFS family
     "KFS 15/45": "KFS",
     "KFS 15/60": "KFS",
+    "KFS 40.29": "KFS",
+    "KFS 20": "KFS",
 }
 
 # For QA auto-prefill: take average of available params (same as your anneal logic style)
 AUTO_QA_FIELDS_CHEM = ["C","Si","S","P","Cu","Ni","Mn","Fe"]
 AUTO_QA_FIELDS_PHYS = ["ad","flow","compressibility"]
 AUTO_QA_FIELDS_PSD  = ["p212","p180","n180p150","n150p75","n75p45","n45"]
+
+
+def _family_from_grade_text(g: str) -> str:
+    g = (g or "").strip().upper()
+    if g.startswith("KIPM") or g.startswith("KIP M"):
+        return "KIPM"
+    if g.startswith("KSP"):
+        return "KSP"
+    if g.startswith("KFS"):
+        return "KFS"
+    if g.startswith("KIP"):
+        return "KIP"
+    return "KIP"
 
 def _compose_trace_id(parts):
     vals=[]
@@ -192,9 +209,14 @@ def fetch_grind_balance() -> List[Dict[str, Any]]:
     return out
 
 
-def fetch_oversize_balance(kind: str) -> List[Dict[str, Any]]:
-    """Oversize balances available for conversion to KIP 40.29 (P80) or KIP 20 (P40)."""
+
+def fetch_oversize_balance(kind: str, family_needed: str | None = None) -> List[Dict[str, Any]]:
+    """
+    Oversize balances available for conversion to 40.29 / 20 FG grades.
+    Oversize stays as BYPRODUCT until converted into FG.
+    """
     kind = (kind or "").upper()
+    family_needed = (family_needed or "").strip().upper()
     col = "p80" if kind == "P80" else "p40"
     key_prefix = "OV80|" if kind == "P80" else "OV40|"
     label = "+80 Oversize" if kind == "P80" else "+40 Oversize"
@@ -210,12 +232,14 @@ def fetch_oversize_balance(kind: str) -> List[Dict[str, Any]]:
             WHERE UPPER(COALESCE(qa_status,''))='APPROVED'
             ORDER BY date DESC, id DESC
         """)).mappings().all()
-
         _main_used, ov80_used, ov40_used = _load_fg_allocations_used(conn)
 
     out: List[Dict[str, Any]] = []
     for r in rows:
         ln = r["lot_no"]
+        fam = _family_from_grade_text(r["grade"] or "")
+        if family_needed and fam != family_needed:
+            continue
         used_map = ov80_used if kind == "P80" else ov40_used
         raw_qty = float(r[col] or 0.0)
         avail = raw_qty - float(used_map.get(ln, 0.0))
@@ -226,7 +250,7 @@ def fetch_oversize_balance(kind: str) -> List[Dict[str, Any]]:
                 "lot_no": f"{key_prefix}{ln}",
                 "display_lot_no": ln,
                 "date": r["date"],
-                "family": "KIPM" if (r["grade"] or "").strip().upper().startswith("KIPM") else ("KSP" if (r["grade"] or "").strip().upper().startswith("KSP") else "KIP"),
+                "family": fam,
                 "grade": label,
                 "available_kg": avail,
                 "grind_cost_per_kg": float(r["grind_cost_per_kg"] or 0.0),
@@ -238,11 +262,12 @@ def fetch_oversize_balance(kind: str) -> List[Dict[str, Any]]:
 
 def fetch_fg_source_balance(fg_grade: str) -> List[Dict[str, Any]]:
     grade = (fg_grade or "").strip().upper()
-    if grade in ("KIP 40.29", "KIP M 40.29", "KSP 40.29"):
-        return fetch_oversize_balance("P80")
-    if grade in ("KIP 20", "KIP M 20", "KSP 20"):
-        return fetch_oversize_balance("P40")
-    return fetch_grind_balance()
+    family_needed = _fg_family_for_grade(fg_grade)
+    if grade.endswith("40.29"):
+        return fetch_oversize_balance("P80", family_needed=family_needed)
+    if grade.endswith("20"):
+        return fetch_oversize_balance("P40", family_needed=family_needed)
+    return [r for r in fetch_grind_balance() if r.get("family") == family_needed]
 
 def _fg_family_for_grade(fg_grade: str) -> str:
     return FG_FAMILY.get(fg_grade, "KIP")
@@ -272,7 +297,28 @@ async def fg_home(request: Request, dep: None = Depends(require_roles("admin","f
         live_stock = conn.execute(text("""
             SELECT fg_grade, COALESCE(SUM(weight_kg),0) AS qty
             FROM fg_lots GROUP BY fg_grade ORDER BY fg_grade
-        """)).mappings().all()
+        """),).mappings().all()
+
+    # Oversize byproduct bucket = remaining +80/+40 from approved grinding lots minus FG conversions
+    byproduct_stock = []
+    try:
+        p80_rows = fetch_oversize_balance("P80")
+        p40_rows = fetch_oversize_balance("P40")
+        bucket = {}
+        for r in p80_rows:
+            fam = r["family"]
+            bucket.setdefault(fam, {"family": fam, "p80_qty": 0.0, "p40_qty": 0.0, "value": 0.0})
+            bucket[fam]["p80_qty"] += float(r["available_kg"] or 0.0)
+            bucket[fam]["value"] += float(r["available_kg"] or 0.0) * float(r["grind_cost_per_kg"] or 0.0)
+        for r in p40_rows:
+            fam = r["family"]
+            bucket.setdefault(fam, {"family": fam, "p80_qty": 0.0, "p40_qty": 0.0, "value": 0.0})
+            bucket[fam]["p40_qty"] += float(r["available_kg"] or 0.0)
+            bucket[fam]["value"] += float(r["available_kg"] or 0.0) * float(r["grind_cost_per_kg"] or 0.0)
+        byproduct_stock = list(bucket.values())
+        byproduct_stock.sort(key=lambda x: x["family"])
+    except Exception:
+        byproduct_stock = []
 
     return templates.TemplateResponse("fg_home.html", {
         "request": request,
@@ -290,11 +336,13 @@ async def fg_home(request: Request, dep: None = Depends(require_roles("admin","f
 # --------------- CREATE ---------------
 @router.get("/create", response_class=HTMLResponse)
 async def fg_create_get(request: Request, dep: None = Depends(require_roles("fg","admin"))):
-    rows = fetch_grind_balance() + fetch_oversize_balance("P80") + fetch_oversize_balance("P40")
     err = request.query_params.get("err", "")
+    selected_fg_grade = request.query_params.get("fg_grade", "")
+    rows = fetch_fg_source_balance(selected_fg_grade) if selected_fg_grade else []
     return templates.TemplateResponse("fg_create.html", {
         "request": request,
         "src_rows": rows,
+        "selected_fg_grade": selected_fg_grade,
         "grades": sorted(FG_SURCHARGE.keys()),
         "surcharges": FG_SURCHARGE,
         "err": err,

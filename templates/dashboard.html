@@ -191,6 +191,33 @@
     <div class="muted" id="wipNote">Snapshot as of {{ today }} — qty in MT, value in ₹ Cr.</div>
   </div>
 
+
+  <div class="section card">
+    <h2><span>Oversize Byproduct Monitor</span><span class="muted">Grinding byproduct bucket, not FG until converted</span></h2>
+    <div class="grid-2">
+      <div>
+        <div class="mini-kpi"><span>Total Byproduct Qty</span><span class="v">{{ (byproduct_total_qty | default(0) | float) | round(0) }} kg</span></div>
+        <div class="mini-kpi"><span>Total Byproduct Value</span><span class="v"><span class="money" data-rupees="{{ (byproduct_total_value | default(0) | float) }}"></span></span></div>
+        <div class="mini-kpi"><span>Grinding Oversize KPI</span><span class="v">Target 8% to 14%</span></div>
+        <div class="muted">Only converted grades like 40.29 and 20 should enter FG. Remaining oversize stays in byproduct bucket family-wise.</div>
+      </div>
+      <div>
+        <table class="table small">
+          <tr><th>Family</th><th>+80 Qty</th><th>+40 Qty</th><th>Value</th></tr>
+          {% for s in byproduct_stock_dash | default([]) %}
+            <tr>
+              <td>{{ s.family }}</td>
+              <td>{{ '%.0f'|format(s.p80_qty or 0) }}</td>
+              <td>{{ '%.0f'|format(s.p40_qty or 0) }}</td>
+              <td><span class="money" data-rupees="{{ (s.value or 0) }}"></span></td>
+            </tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
+  </div>
+
+
   <div class="section">
     <div class="snapshot-grid">
       <div class="card">

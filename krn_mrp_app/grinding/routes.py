@@ -188,9 +188,11 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
     except Exception:
         return RedirectResponse("/grind/create?err=Oversize+must+be+numeric.", status_code=303)
 
-    if (p80 + p40) < (OVERSIZE_MIN_SHARE * lot_weight - 1e-6):
-        min_need = OVERSIZE_MIN_SHARE * lot_weight
-        msg = f"Oversize total (+80 + +40) must be ≥ {min_need:.2f} kg ({OVERSIZE_MIN_SHARE*100:.1f}%)."
+    oversize_total = p80 + p40
+    min_need = OVERSIZE_MIN_SHARE * lot_weight
+    max_allow = OVERSIZE_MAX_SHARE * lot_weight
+    if oversize_total < (min_need - 1e-6) or oversize_total > (max_allow + 1e-6):
+        msg = f"Oversize total (+80 + +40) must stay between {min_need:.2f} kg and {max_allow:.2f} kg ({OVERSIZE_MIN_SHARE*100:.0f}% to {OVERSIZE_MAX_SHARE*100:.0f}%)."
         return RedirectResponse(f"/grind/create?err={msg.replace(' ','+')}", status_code=303)
 
     avail_rows = fetch_anneal_balance()

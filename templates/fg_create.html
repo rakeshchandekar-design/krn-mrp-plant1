@@ -5,11 +5,12 @@
 {% if err %}<div class="alert alert-danger" style="margin:10px 0">{{ err }}</div>{% endif %}
 
 <form method="post" id="createForm">
+  <div class="muted" style="margin-bottom:8px">For grades 40.29 and 20, source comes only from oversize byproduct bucket of the same family.</div>
   <label>FG Grade</label>
-  <select name="fg_grade" id="fg_grade" required>
+  <select name="fg_grade" id="fg_grade" required onchange="window.location='/fg/create?fg_grade='+encodeURIComponent(this.value)">
     <option value="">-- select --</option>
     {% for g in grades %}
-      <option value="{{ g }}">{{ g }}</option>
+      <option value="{{ g }}" {% if selected_fg_grade==g %}selected{% endif %}>{{ g }}</option>
     {% endfor %}
   </select>
 
@@ -18,14 +19,15 @@
 
   <p class="muted">Daily capacity: {{ '%.0f'|format(cap or 0) }} kg</p>
 
-  <h3 style="margin-top:10px">Allocate from APPROVED Grinding</h3>
+  <h3 style="margin-top:10px">Allocate from Approved Source</h3>
   <table class="table">
     <tr>
-      <th>Grinding Lot</th><th>Family</th><th>Avail (kg)</th><th>Cost/kg (₹)</th><th>Allocate (kg)</th>
+      <th>Source Lot</th><th>Family</th><th>Source Type</th><th>Avail (kg)</th><th>Cost/kg (₹)</th><th>Allocate (kg)</th>
     </tr>
     {% for r in src_rows %}
       <tr>
-        <td>{{ r.lot_no }}</td>
+        <td>{{ r.display_lot_no or r.lot_no }}</td>
+        <td>{{ r.family }}</td>
         <td>{{ r.grade }}</td>
         <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
         <td>{{ '%.2f'|format(r.grind_cost_per_kg or 0) }}</td>
@@ -33,7 +35,7 @@
       </tr>
     {% endfor %}
     <tr class="table-info">
-      <th colspan="4" style="text-align:right">Total Alloc</th>
+      <th colspan="5" style="text-align:right">Total Alloc</th>
       <th><span id="total_alloc">0.00</span></th>
     </tr>
   </table>
