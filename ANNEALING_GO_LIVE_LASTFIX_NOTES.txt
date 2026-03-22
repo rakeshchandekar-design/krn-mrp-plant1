@@ -1,0 +1,7 @@
+Last go-live annealing fix bundle:
+- QA dashboard shows annealing lots even if anneal_qa table/columns do not exist yet
+- Annealing create: lot weight auto-calculated and locked to allocated qty
+- Downtime cannot be negative
+- Downtime type and remarks required only if downtime > 0; disabled otherwise
+- Remarks not compulsory when downtime is zero
+- Server validation aligned with UI logic

@@ -45,8 +45,8 @@
   
 <div class="anneal-grid-2x2">
   <div class="field-block">
-    <label>Lot Weight (kg)</label>
-    <input id="lot_weight" type="number" step="0.01" min="0" name="lot_weight" value="{{ request.query_params.get('lot_weight','') }}">
+    <label>Lot Weight (kg)</label><div style="font-size:12px;color:#64748b;margin-bottom:6px">Auto-calculated from allocated RAP / Plant-2 lot quantity.</div>
+    <input id="lot_weight" type="number" step="0.01" min="0" name="lot_weight" value="{{ request.query_params.get('lot_weight','') }}" readonly>
   </div>
 
   <div class="field-block">
@@ -133,82 +133,109 @@
   .bg-warning-subtle { background-color: #fff3e0; } /* KRFS → KFS */
 </style>
 
+
 <script>
 (function () {
   const form = document.getElementById('createForm');
+  if (!form) return;
+  const allocInputs = Array.from(form.querySelectorAll('input[name^="alloc_"]'));
   const lotWeightEl = document.getElementById('lot_weight');
   const ammoniaEl = document.getElementById('ammonia_kg');
-  const nh3MinSpan = document.getElementById('nh3_min');
-  const totalSpan = document.getElementById('total_alloc');
-  const errBox = document.getElementById('client_err');
-  const submitBtn = document.getElementById('submitBtn');
-
-  const allocInputs = Array.from(document.querySelectorAll('input[name^="alloc_"]'));
+  const downtimeEl = document.getElementById('downtime_min');
+  const downtimeTypeEl = document.getElementById('downtime_type');
+  const remarksEl = document.getElementById('remarks');
+  const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+  const totalSpan = document.getElementById('allocTotal');
+  const nh3MinSpan = document.getElementById('nh3Min');
+  const errBox = document.getElementById('errBox');
 
   function sumAlloc() {
     let s = 0;
     for (const el of allocInputs) {
-      const v = parseFloat(el.value);
-      if (!isNaN(v)) s += v;
+      const v = parseFloat(el.value || '0');
+      if (!isNaN(v) && v > 0) s += v;
     }
     return s;
   }
-
   function allocatedGrades() {
     const g = new Set();
     for (const el of allocInputs) {
-      const v = parseFloat(el.value);
+      const v = parseFloat(el.value || '0');
       if (!isNaN(v) && v > 0) g.add(el.dataset.grade || '');
     }
     return g;
   }
-
   function fmt(n, d=2) { return (isFinite(n) ? n : 0).toFixed(d); }
 
-  function recompute() {
-    const total = sumAlloc();
-    totalSpan.textContent = fmt(total, 2);
-
-    const lw = parseFloat(lotWeightEl.value);
-    const nh3Min = (isFinite(lw) ? lw * 0.025 : 0);
-    nh3MinSpan.textContent = fmt(nh3Min, 3);
-
-    let msg = '';
-    if (!isFinite(lw) || lw <= 0) {
-      msg = 'Enter Lot Weight (> 0).';
-    } else if (Math.abs(total - lw) > 0.01) {
-      msg = `Lot Weight must equal total allocated (diff ${fmt(Math.abs(total-lw),2)} kg).`;
-    } else if (allocatedGrades().size > 1) {
-      msg = 'Only one grade may be allocated per anneal lot.';
-    } else {
-      const nh3 = parseFloat(ammoniaEl.value || '0');
-      if (nh3 < nh3Min) {
-        msg = `Ammonia must be at least ${fmt(nh3Min,3)} kg.`;
-      }
+  function toggleDowntimeFields() {
+    const mins = parseFloat(downtimeEl?.value || '0') || 0;
+    const active = mins > 0;
+    if (downtimeTypeEl) {
+      downtimeTypeEl.required = active;
+      downtimeTypeEl.disabled = !active;
+      if (!active) downtimeTypeEl.value = '';
     }
-
-    if (msg) {
-      errBox.style.display = '';
-      errBox.textContent = msg;
-      submitBtn. = true;
-    } else {
-      errBox.style.display = 'none';
-      submitBtn. = false;
+    if (remarksEl) {
+      remarksEl.required = active;
+      remarksEl.readOnly = !active;
+      if (!active) remarksEl.value = '';
     }
   }
 
-  allocInputs.forEach(el => el.addEventListener('input', recompute));
-  lotWeightEl.addEventListener('input', recompute);
-  ammoniaEl.addEventListener('input', recompute);
+  function recompute() {
+    const total = sumAlloc();
+    if (totalSpan) totalSpan.textContent = fmt(total, 2);
+    if (lotWeightEl) lotWeightEl.value = total > 0 ? fmt(total, 2) : '';
 
-  form.addEventListener('submit', function (e) {
+    const lw = parseFloat(lotWeightEl?.value || '0');
+    const nh3Min = (isFinite(lw) ? lw * 0.025 : 0);
+    if (nh3MinSpan) nh3MinSpan.textContent = fmt(nh3Min, 3);
+    toggleDowntimeFields();
+
+    let msg = '';
+    if (!isFinite(lw) || lw <= 0) {
+      msg = 'Allocate quantity to create lot.';
+    } else if (allocatedGrades().size > 1) {
+      msg = 'Only one grade family may be allocated per annealing lot.';
+    } else {
+      const nh3 = parseFloat(ammoniaEl?.value || '0');
+      if (!isNaN(nh3) && nh3 < nh3Min) {
+        msg = `Ammonia must be at least ${fmt(nh3Min,3)} kg.`;
+      }
+      const mins = parseFloat(downtimeEl?.value || '0') || 0;
+      if (mins < 0) {
+        msg = 'Downtime cannot be negative.';
+      } else if (mins > 0) {
+        if (!downtimeTypeEl?.value) msg = 'Select downtime type.';
+        else if (!(remarksEl?.value || '').trim()) msg = 'Enter downtime remarks.';
+      }
+    }
+
+    if (errBox) {
+      errBox.style.display = msg ? '' : 'none';
+      errBox.textContent = msg;
+    }
+    if (submitBtn) submitBtn.disabled = !!msg;
+  }
+
+  allocInputs.forEach(el => el.addEventListener('input', recompute));
+  if (ammoniaEl) ammoniaEl.addEventListener('input', recompute);
+  if (downtimeEl) {
+    downtimeEl.addEventListener('input', recompute);
+    downtimeEl.addEventListener('change', recompute);
+  }
+  if (downtimeTypeEl) downtimeTypeEl.addEventListener('change', recompute);
+  if (remarksEl) remarksEl.addEventListener('input', recompute);
+
+  form.addEventListener('submit', function(e){
     recompute();
-    if (submitBtn.) e.preventDefault();
+    if (submitBtn && submitBtn.disabled) e.preventDefault();
   });
 
   recompute();
 })();
 </script>
+
 
 <script>
 (function(){

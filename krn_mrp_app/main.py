@@ -4233,26 +4233,54 @@ from sqlalchemy import text
 
 def _anneal_rows_in_range(db, start_date, end_date):
     # Figure out which FK column exists in anneal_qa: anneal_lot_id or anneal_id
-    qa_fk = db.execute(text("""
-        SELECT CASE
-          WHEN EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema='public' AND table_name='anneal_qa' AND column_name='anneal_lot_id'
-          ) THEN 'anneal_lot_id'
-          WHEN EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema='public' AND table_name='anneal_qa' AND column_name='anneal_id'
-          ) THEN 'anneal_id'
-          ELSE NULL
-        END
-    """)).scalar()
+    qa_fk = None
+    try:
+        qa_fk = db.execute(text("""
+            SELECT CASE
+              WHEN EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='anneal_qa' AND column_name='anneal_lot_id'
+              ) THEN 'anneal_lot_id'
+              WHEN EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='anneal_qa' AND column_name='anneal_id'
+              ) THEN 'anneal_id'
+              ELSE NULL
+            END
+        """)).scalar()
+    except Exception:
+        qa_fk = None
 
     if not qa_fk:
-        # Fresh/clean databases may not yet have anneal QA linkage columns.
-        # Return no rows instead of crashing the whole QA dashboard.
-        return []
+        # No anneal_qa yet: still show annealing lots using anneal_lots.qa_status
+        try:
+            rows = db.execute(text("""
+                SELECT
+                    al.id,
+                    al.lot_no,
+                    al.grade,
+                    COALESCE(al.weight_kg, 0)::double precision AS weight_kg,
+                    (NULLIF(al.date::text, ''))::date           AS lot_date,
+                    COALESCE(al.qa_status, 'PENDING')           AS qa_status,
+                    COALESCE(al.o_pct, 0)::double precision     AS oxygen,
+                    COALESCE(al.remarks, '')                    AS remarks
+                FROM anneal_lots al
+                WHERE (NULLIF(al.date::text, ''))::date BETWEEN :s AND :e
+                ORDER BY lot_date DESC, al.id DESC
+            """), {"s": start_date, "e": end_date}).mappings().all()
+        except Exception:
+            return []
+        return [{
+            "id": r["id"],
+            "lot_no": r["lot_no"],
+            "grade": r["grade"],
+            "lot_date": r["lot_date"],
+            "weight_kg": float(r["weight_kg"] or 0.0),
+            "qa_status": r["qa_status"] or "PENDING",
+            "oxygen": float(r["oxygen"] or 0.0),
+            "remarks": r["remarks"] or "",
+        } for r in rows]
 
-    # If the table uses anneal_id, alias it out as anneal_lot_id so the rest of the code can stay the same
     latest_sql = f"""
         WITH latest AS (
             SELECT DISTINCT ON ({qa_fk})
@@ -4270,9 +4298,9 @@ def _anneal_rows_in_range(db, start_date, end_date):
             al.grade,
             COALESCE(al.weight_kg, 0)::double precision      AS weight_kg,
             (NULLIF(al.date::text, ''))::date                AS lot_date,
-            COALESCE(lat.decision, 'PENDING')                AS qa_status,
-            COALESCE(NULLIF(lat.oxygen::text,'')::float8,0)  AS oxygen,
-            COALESCE(lat.remarks, '')                        AS remarks
+            COALESCE(lat.decision, COALESCE(al.qa_status, 'PENDING')) AS qa_status,
+            COALESCE(NULLIF(lat.oxygen::text,'')::float8, COALESCE(al.o_pct,0)::float8) AS oxygen,
+            COALESCE(lat.remarks, COALESCE(al.remarks,''))   AS remarks
         FROM anneal_lots al
         LEFT JOIN latest lat
                ON lat.anneal_lot_id = al.id
