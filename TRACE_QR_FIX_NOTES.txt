@@ -1,0 +1,5 @@
+Fix applied for Annealing Job Card QR / traceability thread:
+- removed remaining Heat ORM dependency from trace_thread
+- heats now loaded as plain dict rows via SQL
+- RM / GRN rows now loaded via SQL from heat_rm + grn
+- prevents DetachedInstanceError and aborted transaction path during QR scan

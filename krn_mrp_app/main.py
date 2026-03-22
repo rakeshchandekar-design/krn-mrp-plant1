@@ -4993,13 +4993,47 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             p["source_lines"] = _format_alloc(p.get("src_grn_json"))
 
         atom_lot_ids = [x['id'] for x in atom_lots]
-        heat_ids = sorted({lh.heat_id for lid in atom_lot_ids for lh in trace_db.query(LotHeat).filter(LotHeat.lot_id == lid).all()})
+        heat_ids = sorted({
+            lh.heat_id
+            for lid in atom_lot_ids
+            for lh in trace_db.query(LotHeat).filter(LotHeat.lot_id == lid).all()
+        })
+
         if heat_ids:
-            heats = [h for h in (trace_db.get(Heat, hid) for hid in heat_ids) if h]
+            heats = [dict(x) for x in _safe_all("""
+                SELECT
+                    h.id,
+                    h.heat_no,
+                    COALESCE(h.actual_output, 0)::double precision AS output_qty,
+                    COALESCE(h.unit_cost, 0)::double precision AS unit_cost,
+                    COALESCE(h.qa_status, 'PENDING') AS qa_status,
+                    CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM heat_rm hr
+                            JOIN grn g ON g.id = hr.grn_id
+                            WHERE hr.heat_id = h.id
+                              AND lower(COALESCE(g.supplier, '')) LIKE '%motherson%'
+                        ) THEN 'KRM'
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM heat_rm hr
+                            WHERE hr.heat_id = h.id
+                              AND hr.rm_type = 'FeSi'
+                        ) THEN 'KRFS'
+                        ELSE 'KRIP'
+                    END AS grade
+                FROM heat h
+                WHERE h.id = ANY(:ids)
+                ORDER BY h.id
+            """, ids=heat_ids)]
 
         for h in heats:
-            q = _safe_first("SELECT c, si, mn, s, p, cu, ni, fe FROM heat_chem WHERE heat_id=:id ORDER BY id DESC LIMIT 1", id=h.id)
-            heat_qa[h.id] = dict(q) if q else {}
+            q = _safe_first(
+                "SELECT c, si, mn, s, p, cu, ni, fe FROM heat_chem WHERE heat_id=:id ORDER BY id DESC LIMIT 1",
+                id=h['id']
+            )
+            heat_qa[h['id']] = dict(q) if q else {}
 
         for lot in atom_lots:
             chem = _safe_first("SELECT c, si, mn, s, p FROM lot_chem WHERE lot_id=:id ORDER BY id DESC LIMIT 1", id=lot['id'])
@@ -5049,30 +5083,25 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
             for row in fgs:
                 fg_qa[int(row['id'])] = prm.get(int(row['id']), {})
 
-        # Build RM rows while heat ORM objects are still attached
-        heat_plain = []
-        for h in heats:
-            for cons in getattr(h, 'rm_consumptions', []) or []:
-                rm_rows.append({
-                    'heat_no': h.heat_no,
-                    'heat_id': h.id,
-                    'rm_type': cons.rm_type,
-                    'grn_id': cons.grn_id,
-                    'supplier': cons.grn.supplier if cons.grn else '',
-                    'grn_no': getattr(cons.grn, 'grn_no', '') if cons.grn else '',
-                    'qty': float(cons.qty or 0.0),
-                    'price': float(getattr(cons.grn, 'price', 0.0) or 0.0) if cons.grn else 0.0,
-                    'date': getattr(cons.grn, 'date', None) if cons.grn else None,
-                })
-            heat_plain.append({
-                'id': h.id,
-                'heat_no': h.heat_no,
-                'grade': heat_grade(h),
-                'output_qty': float(h.actual_output or 0.0),
-                'unit_cost': float(h.unit_cost or 0.0),
-                'qa_status': h.qa_status,
-            })
-        heats = heat_plain
+        # Build RM rows with raw SQL so trace QR never depends on ORM-attached Heat objects
+        if heat_ids:
+            rm_rows = [dict(x) for x in _safe_all("""
+                SELECT
+                    h.heat_no,
+                    h.id AS heat_id,
+                    hr.rm_type,
+                    hr.grn_id,
+                    COALESCE(g.supplier, '') AS supplier,
+                    COALESCE(g.grn_no, '') AS grn_no,
+                    COALESCE(hr.qty, 0)::double precision AS qty,
+                    COALESCE(g.price, 0)::double precision AS price,
+                    g.date
+                FROM heat_rm hr
+                JOIN heat h ON h.id = hr.heat_id
+                LEFT JOIN grn g ON g.id = hr.grn_id
+                WHERE hr.heat_id = ANY(:ids)
+                ORDER BY h.id, hr.id
+            """, ids=heat_ids)]
 
         for p in pulvs:
             for gid, qty in _j(p.get('src_grn_json')).items():
@@ -5102,7 +5131,7 @@ def trace_thread(request: Request, trace_id: str, db: Session = Depends(get_db))
                 'weight_kg': h.get('output_qty'),
                 'cost_per_kg': h.get('unit_cost'),
                 'qa_status': h.get('qa_status'),
-                'date': heat_date_from_no(h.get('heat_no')) if h.get('heat_no') else None
+                'date': heat_date_from_no(h.get('heat_no')) if h.get('heat_no') else None,
             }
             stage_label = 'MELTING'
 
