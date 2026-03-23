@@ -1135,14 +1135,23 @@ def _anneal_default_blocks(conn, header: Dict[str, Any]) -> Dict[str, Dict[str, 
     return {"chem": chem, "phys": phys, "psd": psd}
 
 def _get_latest_anneal_qa(conn, anneal_id: int) -> Dict[str, Any] | None:
-    row = conn.execute(text("""
-        SELECT id, anneal_lot_id, decision, oxygen, remarks
-        FROM anneal_qa
-        WHERE anneal_lot_id = :lid
-        ORDER BY id DESC
-        LIMIT 1
-    """), {"lid": anneal_id}).mappings().first()
-    return dict(row) if row else None
+    try:
+        if not _table_exists(conn, "anneal_qa"):
+            return None
+    except Exception:
+        return None
+
+    try:
+        row = conn.execute(text("""
+            SELECT id, anneal_lot_id, decision, oxygen, remarks
+            FROM anneal_qa
+            WHERE anneal_lot_id = :lid
+            ORDER BY id DESC
+            LIMIT 1
+        """), {"lid": anneal_id}).mappings().first()
+        return dict(row) if row else None
+    except Exception:
+        return None
 
 def _get_params_for_qa(conn, qa_id: int) -> Dict[str, str]:
     try:
@@ -1341,7 +1350,7 @@ async def anneal_qa_save(
 
         qa_row = conn.execute(text("""
             INSERT INTO anneal_qa (anneal_lot_id, decision, oxygen, remarks)
-            VALUES (:lid, :decision, :oxygen, :remarks, NOW())
+            VALUES (:lid, :decision, :oxygen, :remarks)
             RETURNING id
         """), {
             "lid": anneal_id,

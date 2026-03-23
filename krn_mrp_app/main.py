@@ -542,6 +542,61 @@ def migrate_schema(engine):
                 )
             """))
 
+
+        # --- Anneal QA tables ---
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_qa(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    anneal_lot_id INTEGER NOT NULL,
+                    decision TEXT NOT NULL DEFAULT 'PENDING',
+                    oxygen REAL,
+                    remarks TEXT,
+                    lot_id TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (anneal_lot_id) REFERENCES anneal_lots(id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_qa_params(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    anneal_qa_id INTEGER NOT NULL,
+                    param_name TEXT NOT NULL,
+                    param_value TEXT,
+                    unit TEXT,
+                    spec_min REAL,
+                    spec_max REAL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (anneal_qa_id) REFERENCES anneal_qa(id)
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_qa(
+                    id SERIAL PRIMARY KEY,
+                    anneal_lot_id INT NOT NULL REFERENCES anneal_lots(id) ON DELETE CASCADE,
+                    decision TEXT NOT NULL DEFAULT 'PENDING',
+                    oxygen DOUBLE PRECISION,
+                    remarks TEXT,
+                    lot_id TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS anneal_qa_params(
+                    id SERIAL PRIMARY KEY,
+                    anneal_qa_id INT NOT NULL REFERENCES anneal_qa(id) ON DELETE CASCADE,
+                    param_name TEXT NOT NULL,
+                    param_value TEXT,
+                    unit TEXT,
+                    spec_min DOUBLE PRECISION,
+                    spec_max DOUBLE PRECISION,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_anneal_qa_lot_id_id ON anneal_qa(anneal_lot_id, id DESC)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_anneal_qa_params_qaid ON anneal_qa_params(anneal_qa_id)"))
+
         # --- Safety: ensure anneal_lots has expected columns ---
         for coldef in [
             "rap_cost_per_kg REAL DEFAULT 0",
@@ -4424,6 +4479,12 @@ def _anneal_latest_params_map(db, anneal_ids: list[int]) -> dict[int, dict[str, 
     No LATERAL; uses a max(id) per anneal_lot_id subquery.
     """
     if not anneal_ids:
+        return {}
+
+    try:
+        if not _table_exists(db, "anneal_qa") or not _table_exists(db, "anneal_qa_params"):
+            return {}
+    except Exception:
         return {}
 
     rows = db.execute(text("""
