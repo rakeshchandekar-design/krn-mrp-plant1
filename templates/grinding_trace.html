@@ -12,6 +12,7 @@
   Weight: {{ '%.0f'|format(header.weight_kg or 0) }} kg |
   Oversize: {{ '%.2f'|format((header.oversize_p80_kg or 0) + (header.oversize_p40_kg or 0)) }} kg
 </p>
+{% if header.remarks %}<p class="muted"><strong>Lot Remarks:</strong> {{ header.remarks }}</p>{% endif %}
 
 <table class="table">
   <tr>

@@ -24,7 +24,7 @@
     </div>
   </div>
   <div class="muted" style="margin:4px 0 10px">
-    Oversize total (+80 + +40) must stay between <b>8%</b> and <b>14%</b> of Lot Weight.
+    Oversize total (+80 + +40) must be minimum <b>8%</b> of Lot Weight. If it is above <b>14%</b>, lot creation will continue and an automatic alert remark will be saved on the lot.
   </div>
 
   <table class="table">
@@ -55,6 +55,7 @@
   </table>
 
   <div id="client_err" class="alert alert-danger" style="display:none;margin:10px 0"></div>
+  <div id="client_warn" class="alert alert-warning" style="display:none;margin:10px 0"></div>
 
   <p class="muted" style="margin-top:6px">
     Cost rule: <strong>Grinding Cost/kg = Weighted Anneal Cost/kg + ₹6</strong>. Family lock: KIP, KIPM, KSP or KFS (single).
@@ -76,6 +77,7 @@
   const p40El = document.getElementById('oversize_p40');
   const totalSpan = document.getElementById('total_alloc');
   const errBox = document.getElementById('client_err');
+  const warnBox = document.getElementById('client_warn');
   const submitBtn = document.getElementById('submitBtn');
 
   const allocInputs = Array.from(document.querySelectorAll('input[name^="alloc_"]'));
@@ -108,15 +110,21 @@
     const oversize = (isFinite(p80)?p80:0) + (isFinite(p40)?p40:0);
     const oversizeMin = (isFinite(lw)? lw*0.08 : 0);
     const oversizeMax = (isFinite(lw)? lw*0.14 : 0);
+    const oversizePct = (isFinite(lw) && lw > 0) ? (oversize / lw * 100) : 0;
 
     let msg = '';
+    let warn = '';
     if (!isFinite(lw) || lw <= 0) msg = 'Enter Lot Weight (> 0).';
     else if (Math.abs(total - lw) > 0.01) msg = `Lot Weight must equal total allocated (diff ${fmt(Math.abs(total-lw),2)} kg).`;
     else if (gradesSelected().size > 1) msg = 'Only one family (KIP, KIPM, KSP or KFS) may be allocated.';
-    else if (oversize < oversizeMin || oversize > oversizeMax) msg = `Oversize total must stay between ${fmt(oversizeMin,2)} kg and ${fmt(oversizeMax,2)} kg.`;
+    else if (oversize < oversizeMin) msg = `Oversize total must be minimum ${fmt(oversizeMin,2)} kg (8% of Lot Weight).`;
+    else if (oversize > oversizeMax) warn = `Alert: Oversize is above 14%. Actual oversize is ${fmt(oversizePct,2)}% (${fmt(oversize,2)} kg vs 14% theoretical max ${fmt(oversizeMax,2)} kg). Lot creation will continue and this alert will be saved in lot remarks.`;
 
     if (msg) { errBox.style.display=''; errBox.textContent=msg; submitBtn.disabled=true; }
     else { errBox.style.display='none'; submitBtn.disabled=false; }
+
+    if (warn) { warnBox.style.display=''; warnBox.textContent=warn; }
+    else { warnBox.style.display='none'; warnBox.textContent=''; }
   }
 
   [...allocInputs, lotWeightEl, p80El, p40El].forEach(el => el.addEventListener('input', recompute));

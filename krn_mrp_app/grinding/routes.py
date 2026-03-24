@@ -25,7 +25,8 @@ def _compose_trace_id(parts):
         if s and s not in vals:
             vals.append(s)
     return vals[0] if len(vals)==1 else ("+".join(vals)[:240] if vals else "")
-OVERSIZE_MIN_SHARE = 0.07  # +80 + +40 must be ≥ 7% of created lot
+OVERSIZE_MIN_SHARE = 0.08  # +80 + +40 must be at least 8% of created lot
+OVERSIZE_MAX_SHARE = 0.14  # >14% allowed with automatic alert remark only
 TARGET_KG_PER_DAY = 10000.0  # daily target capacity for KPI
 
 # --------- Helpers ---------
@@ -191,9 +192,17 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
     oversize_total = p80 + p40
     min_need = OVERSIZE_MIN_SHARE * lot_weight
     max_allow = OVERSIZE_MAX_SHARE * lot_weight
-    if oversize_total < (min_need - 1e-6) or oversize_total > (max_allow + 1e-6):
-        msg = f"Oversize total (+80 + +40) must stay between {min_need:.2f} kg and {max_allow:.2f} kg ({OVERSIZE_MIN_SHARE*100:.0f}% to {OVERSIZE_MAX_SHARE*100:.0f}%)."
+    if oversize_total < (min_need - 1e-6):
+        msg = f"Oversize total (+80 + +40) must be minimum {min_need:.2f} kg ({OVERSIZE_MIN_SHARE*100:.0f}% of Lot Weight)."
         return RedirectResponse(f"/grind/create?err={msg.replace(' ','+')}", status_code=303)
+
+    oversize_pct = (oversize_total / lot_weight * 100.0) if lot_weight > 0 else 0.0
+    oversize_alert_remark = ""
+    if oversize_total > (max_allow + 1e-6):
+        oversize_alert_remark = (
+            f"Alert - Oversize is more than 14% - It is {oversize_pct:.2f}% "
+            f"({oversize_total:.2f} kg vs 14% theoretical max {max_allow:.2f} kg)."
+        )
 
     avail_rows = fetch_anneal_balance()
     amap = {r["lot_no"]: r for r in avail_rows}
@@ -234,10 +243,10 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
             INSERT INTO grinding_lots
                 (date, lot_no, src_alloc_json, grade, weight_kg,
                  input_cost_per_kg, process_cost_per_kg, cost_per_kg,
-                 oversize_p80_kg, oversize_p40_kg, qa_status, trace_id, job_card_no)
+                 oversize_p80_kg, oversize_p40_kg, qa_status, remarks, trace_id, job_card_no)
             VALUES
                 (:date, :lot_no, :src_alloc_json, :grade, :weight_kg,
-                 :input_cost, :proc_cost, :cost, :p80, :p40, 'PENDING', :trace_id, :job_card_no)
+                 :input_cost, :proc_cost, :cost, :p80, :p40, 'PENDING', :remarks, :trace_id, :job_card_no)
         """), {
             "date": date.today(),
             "lot_no": lot_no,
@@ -249,6 +258,7 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
             "cost": cost_per_kg,
             "p80": p80,
             "p40": p40,
+            "remarks": oversize_alert_remark,
             "trace_id": _compose_trace_id(parent_trace_ids),
             "job_card_no": f"JC-GRD-{lot_no}",
         })
@@ -262,7 +272,7 @@ async def grind_lots(request: Request, dep: None = Depends(require_roles("admin"
     query = """
         SELECT id, date, lot_no, grade, weight_kg,
                input_cost_per_kg, process_cost_per_kg, cost_per_kg,
-               oversize_p80_kg, oversize_p40_kg, qa_status
+               oversize_p80_kg, oversize_p40_kg, qa_status, remarks
         FROM grinding_lots WHERE 1=1
     """
     params = {}
@@ -327,7 +337,7 @@ def _fetch_grind_header(conn, lot_id: int) -> Dict[str,Any] | None:
     row = conn.execute(text("""
         SELECT id, date, lot_no, grade, weight_kg,
                input_cost_per_kg, process_cost_per_kg, cost_per_kg,
-               oversize_p80_kg, oversize_p40_kg, src_alloc_json, qa_status
+               oversize_p80_kg, oversize_p40_kg, src_alloc_json, qa_status, remarks
         FROM grinding_lots WHERE id=:id
     """), {"id": lot_id}).mappings().first()
     return dict(row) if row else None
