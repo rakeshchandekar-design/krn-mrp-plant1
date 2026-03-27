@@ -190,7 +190,10 @@ def fetch_grind_balance() -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for r in rows:
         ln = r["lot_no"]
-        avail = float(r["weight_kg"] or 0) - float(main_used.get(ln, 0.0))
+        main_qty = float(r["weight_kg"] or 0.0) - float(r.get("p80") or 0.0) - float(r.get("p40") or 0.0)
+        if main_qty < 0:
+            main_qty = 0.0
+        avail = main_qty - float(main_used.get(ln, 0.0))
         if avail > 0.0001:
             g = (r["grade"] or "").strip().upper()
             family = "KIPM" if g.startswith("KIPM") else ("KSP" if g.startswith("KSP") else ("KIP" if g.startswith("KIP") else ("KFS" if g.startswith("KFS") else "KIP")))

@@ -145,10 +145,17 @@ async def grind_home(request: Request, dep: None = Depends(require_roles("admin"
 async def grind_create_get(request: Request, dep: None = Depends(require_roles("grind", "admin"))):
     rows = fetch_anneal_balance()
     err = request.query_params.get("err", "")
+    lot_date = request.query_params.get("lot_date") or date.today().isoformat()
+    today = date.today()
+    min_lot_date = (today - timedelta(days=4)).isoformat()
+    max_lot_date = today.isoformat()
     return templates.TemplateResponse("grinding_create.html", {
         "request": request,
         "anneal_rows": rows,
         "err": err,
+        "lot_date": lot_date,
+        "min_lot_date": min_lot_date,
+        "max_lot_date": max_lot_date,
         "is_admin": _is_admin(request),
         **_tpl_auth(request),
     })
@@ -156,6 +163,22 @@ async def grind_create_get(request: Request, dep: None = Depends(require_roles("
 @router.post("/create")
 async def grind_create_post(request: Request, dep: None = Depends(require_roles("grind", "admin"))):
     form = await request.form()
+
+    lot_date_raw = (form.get("lot_date") or "").strip()
+    try:
+        lot_date = datetime.strptime(lot_date_raw, "%Y-%m-%d").date() if lot_date_raw else date.today()
+    except Exception:
+        return RedirectResponse("/grind/create?err=Lot+Date+is+invalid.&lot_date=" + lot_date_raw.replace(" ", "+"), status_code=303)
+
+    today = date.today()
+    min_allowed_date = today - timedelta(days=4)
+    if lot_date > today:
+        return RedirectResponse(f"/grind/create?err=Future+date+is+not+allowed.&lot_date={lot_date.isoformat()}", status_code=303)
+    if lot_date < min_allowed_date:
+        return RedirectResponse(
+            f"/grind/create?err=Only+current+date+and+last+4+days+are+allowed+for+Grinding+lot+creation.&lot_date={lot_date.isoformat()}",
+            status_code=303,
+        )
 
     allocations, total_alloc = {}, 0.0
     for k, v in form.items():
@@ -170,24 +193,24 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
                 total_alloc += qty
 
     if total_alloc <= 0:
-        return RedirectResponse("/grind/create?err=Allocate+quantity+%3E+0+kg.", status_code=303)
+        return RedirectResponse(f"/grind/create?err=Allocate+quantity+%3E+0+kg.&lot_date={lot_date.isoformat()}", status_code=303)
 
     try:
         lot_weight = float(form.get("lot_weight") or 0)
     except Exception:
-        return RedirectResponse("/grind/create?err=Lot+Weight+must+be+a+number.", status_code=303)
+        return RedirectResponse(f"/grind/create?err=Lot+Weight+must+be+a+number.&lot_date={lot_date.isoformat()}", status_code=303)
     if lot_weight <= 0:
-        return RedirectResponse("/grind/create?err=Lot+Weight+must+be+%3E+0.", status_code=303)
+        return RedirectResponse(f"/grind/create?err=Lot+Weight+must+be+%3E+0.&lot_date={lot_date.isoformat()}", status_code=303)
 
     if abs(lot_weight - total_alloc) > 0.01:
         msg = f"Lot Weight mismatch: allocated {total_alloc:.2f} kg, entered {lot_weight:.2f} kg."
-        return RedirectResponse(f"/grind/create?err={msg.replace(' ','+')}", status_code=303)
+        return RedirectResponse(f"/grind/create?err={msg.replace(' ','+')}&lot_date={lot_date.isoformat()}", status_code=303)
 
     try:
         p80 = float(form.get("oversize_p80") or 0)
         p40 = float(form.get("oversize_p40") or 0)
     except Exception:
-        return RedirectResponse("/grind/create?err=Oversize+must+be+numeric.", status_code=303)
+        return RedirectResponse(f"/grind/create?err=Oversize+must+be+numeric.&lot_date={lot_date.isoformat()}", status_code=303)
 
     oversize_total = p80 + p40
     min_need = OVERSIZE_MIN_SHARE * lot_weight
@@ -211,14 +234,14 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
         r = amap.get(lot_no)
         if (r is None) or (qty > float(r.get("available_kg") or 0)):
             return RedirectResponse(
-                f"/grind/create?err=Anneal+lot+{lot_no}+not+found+or+insufficient+balance.",
+                f"/grind/create?err=Anneal+lot+{lot_no}+not+found+or+insufficient+balance.&lot_date={lot_date.isoformat()}",
                 status_code=303
             )
         grades.add((r.get("grade") or "").strip().upper())
 
     fam = {"KIPM" if g.startswith("KIPM") else ("KSP" if g.startswith("KSP") else ("KIP" if g.startswith("KIP") else ("KFS" if g.startswith("KFS") else g))) for g in grades}
     if len(fam) > 1:
-        return RedirectResponse("/grind/create?err=Only+one+family+(KIP,+KIPM,+KSP+or+KFS)+per+grind+lot.", status_code=303)
+        return RedirectResponse(f"/grind/create?err=Only+one+family+(KIP,+KIPM,+KSP+or+KFS)+per+grind+lot.&lot_date={lot_date.isoformat()}", status_code=303)
     out_grade = list(fam)[0] or ""
 
     wsum = sum(allocations[ln] * float(amap[ln].get("anneal_cost_per_kg") or 0.0) for ln in allocations)
@@ -231,7 +254,7 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
         parent_trace_ids.append(parent_tid if parent_tid else ln)
 
     with engine.begin() as conn:
-        prefix = "GRD-" + date.today().strftime("%Y%m%d") + "-"
+        prefix = "GRD-" + lot_date.strftime("%Y%m%d") + "-"
         last = conn.execute(text("""
             SELECT lot_no FROM grinding_lots
             WHERE lot_no LIKE :pfx ORDER BY lot_no DESC LIMIT 1
@@ -248,7 +271,7 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
                 (:date, :lot_no, :src_alloc_json, :grade, :weight_kg,
                  :input_cost, :proc_cost, :cost, :p80, :p40, 'PENDING', :remarks, :trace_id, :job_card_no)
         """), {
-            "date": date.today(),
+            "date": lot_date,
             "lot_no": lot_no,
             "src_alloc_json": json.dumps(allocations),
             "grade": out_grade,

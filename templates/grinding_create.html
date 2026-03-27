@@ -10,6 +10,10 @@
 {% if err %}<div class="alert alert-danger" style="margin:10px 0">{{ err }}</div>{% endif %}
 
 <form method="post" id="createForm">
+  <label>Lot Date</label>
+  <input id="lot_date" name="lot_date" type="date" value="{{ lot_date }}" min="{{ min_lot_date }}" max="{{ max_lot_date }}" required>
+  <div class="muted" style="margin:4px 0 10px">Only current date and last 4 days are allowed. Future date is not allowed.</div>
+
   <label>Lot Weight (kg)</label>
   <input id="lot_weight" name="lot_weight" type="number" step="0.01" min="0.01" required>
 
@@ -72,6 +76,7 @@
 <script>
 (function () {
   const form = document.getElementById('createForm');
+  const lotDateEl = document.getElementById('lot_date');
   const lotWeightEl = document.getElementById('lot_weight');
   const p80El = document.getElementById('oversize_p80');
   const p40El = document.getElementById('oversize_p40');
@@ -105,6 +110,9 @@
     totalSpan.textContent = fmt(total,2);
 
     const lw = parseFloat(lotWeightEl.value||'0');
+    const lotDate = lotDateEl.value || '';
+    const todayStr = '{{ max_lot_date }}';
+    const minDateStr = '{{ min_lot_date }}';
     const p80 = parseFloat(p80El.value||'0');
     const p40 = parseFloat(p40El.value||'0');
     const oversize = (isFinite(p80)?p80:0) + (isFinite(p40)?p40:0);
@@ -114,7 +122,10 @@
 
     let msg = '';
     let warn = '';
-    if (!isFinite(lw) || lw <= 0) msg = 'Enter Lot Weight (> 0).';
+    if (!lotDate) msg = 'Enter Lot Date.';
+    else if (lotDate > todayStr) msg = 'Future date is not allowed.';
+    else if (lotDate < minDateStr) msg = 'Only current date and last 4 days are allowed.';
+    else if (!isFinite(lw) || lw <= 0) msg = 'Enter Lot Weight (> 0).';
     else if (Math.abs(total - lw) > 0.01) msg = `Lot Weight must equal total allocated (diff ${fmt(Math.abs(total-lw),2)} kg).`;
     else if (gradesSelected().size > 1) msg = 'Only one family (KIP, KIPM, KSP or KFS) may be allocated.';
     else if (oversize < oversizeMin) msg = `Oversize total must be minimum ${fmt(oversizeMin,2)} kg (8% of Lot Weight).`;
@@ -127,7 +138,7 @@
     else { warnBox.style.display='none'; warnBox.textContent=''; }
   }
 
-  [...allocInputs, lotWeightEl, p80El, p40El].forEach(el => el.addEventListener('input', recompute));
+  [...allocInputs, lotDateEl, lotWeightEl, p80El, p40El].forEach(el => el.addEventListener('input', recompute));
   form.addEventListener('submit', (e)=>{ recompute(); if (submitBtn.disabled) e.preventDefault(); });
   recompute();
 })();
