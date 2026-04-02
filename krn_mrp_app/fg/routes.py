@@ -483,7 +483,8 @@ async def fg_create_post(
                  src_alloc_json, qa_status, remarks, trace_id, job_card_no)
             VALUES
                 (:date, :lot_no, :family, :fg_grade, :weight_kg,
-                 :base_cost, :surcharge, :cost, :src_alloc_json, 'PENDING', :remarks, :trace_id, :job_card_no)
+                 :base_cost_per_kg, :surcharge_per_kg, :cost_per_kg,
+                 :src_alloc_json, 'PENDING', :remarks, :trace_id, :job_card_no)
         """), {
             "date": date.today(),
             "lot_no": lot_no,
