@@ -154,7 +154,9 @@
             <tr>
               <td>{{ h.heat_no }}</td>
               <td>
-                {% if g == 'KRFS' %}
+                {% if g == 'KRM' %}
+                  <span class="badge badge-krm">KRM (Motherson)</span>
+                {% elif g == 'KRFS' %}
                   <span class="badge badge-krfs">KRFS (FeSi)</span>
                 {% else %}
                   <span class="badge badge-krip">KRIP</span>
@@ -231,7 +233,9 @@
           <tr>
             <td>{{ lot.lot_no }}</td>
             <td>
-              {% if (lot.grade or 'KRIP') == 'KRFS' %}
+              {% if (lot.grade or 'KRIP') == 'KRM' %}
+                <span class="badge badge-krm">KRM</span>
+              {% elif (lot.grade or 'KRIP') == 'KRFS' %}
                 <span class="badge badge-krfs">KRFS</span>
               {% else %}
                 <span class="badge badge-krip">KRIP</span>

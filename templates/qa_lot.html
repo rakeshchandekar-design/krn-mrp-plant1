@@ -11,6 +11,7 @@
     .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;color:#fff}
     .badge-success{background:#16a34a}
     .badge-info{background:#0ea5e9}
+    .badge-krm{background:#f59e0b}
     .sec{margin-top:16px}
     label{display:block;margin-top:6px}
     input{padding:4px 6px}
@@ -43,7 +44,9 @@
   </div>
 
   <h2>QA – Lot {{ lot.lot_no }}
-    {% if grade == 'KRFS' %}
+    {% if grade == 'KRM' %}
+      <span class="badge badge-krm">KRM (Motherson)</span>
+    {% elif grade == 'KRFS' %}
       <span class="badge badge-info">KRFS (FeSi)</span>
     {% else %}
       <span class="badge badge-success">KRIP</span>

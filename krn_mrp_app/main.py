@@ -1781,16 +1781,26 @@ def _lot_default_chemistry(db: Session, lot: Lot) -> Dict[str, Optional[float]]:
     return {k: (sums[k] / total) for k in sums.keys()}
 
 def heat_grade(heat: Heat) -> str:
-    # Motherson job-work family takes priority and carries same cost forward across stages
-    for cons in heat.rm_consumptions:
+    """Resolve melting heat family in the same priority used across the project.
+
+    Priority:
+    1. Motherson / job-work / Others family -> KRM
+    2. FeSi-containing heat -> KRFS
+    3. Default -> KRIP
+    """
+    for cons in (getattr(heat, "rm_consumptions", None) or []):
         try:
             supplier = (getattr(getattr(cons, "grn", None), "supplier", "") or "").strip().lower()
         except Exception:
             supplier = ""
+        rm_type = (getattr(cons, "rm_type", "") or "").strip().lower()
         if "motherson" in supplier:
             return "KRM"
-    for cons in heat.rm_consumptions:
-        if cons.rm_type == "FeSi":
+        # Defensive fallback: job-work heats are entered under Others RM line in this project.
+        if rm_type == "others" and (not supplier or "motherson" in supplier or "job" in supplier):
+            return "KRM"
+    for cons in (getattr(heat, "rm_consumptions", None) or []):
+        if (getattr(cons, "rm_type", "") or "").strip() == "FeSi":
             return "KRFS"
     return "KRIP"
 
@@ -3823,12 +3833,14 @@ def melting_page(
         last5.append({"date": d.isoformat(), "actual": actual, "target": target})
 
     # Live stock summary by grade
-    krip_qty = krip_val = krfs_qty = krfs_val = 0.0
+    krip_qty = krip_val = krfs_qty = krfs_val = krm_qty = krm_val = 0.0
     for r in rows:
         if r["available"] <= 0:
             continue
         val = r["available"] * (r["heat"].unit_cost or 0.0)
-        if r["grade"] == "KRFS":
+        if r["grade"] == "KRM":
+            krm_qty += r["available"]; krm_val += val
+        elif r["grade"] == "KRFS":
             krfs_qty += r["available"]; krfs_val += val
         else:
             krip_qty += r["available"]; krip_val += val
@@ -3875,7 +3887,9 @@ def melting_page(
                 "krip_qty": krip_qty,
                 "krip_val": krip_val,
                 "krfs_qty": krfs_qty,
-                "krfs_val": krfs_val
+                "krfs_val": krfs_val,
+                "krm_qty": krm_qty,
+                "krm_val": krm_val,
             },
             "today_iso": today.isoformat(),
             "start": s,

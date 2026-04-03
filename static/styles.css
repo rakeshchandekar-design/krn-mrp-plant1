@@ -293,3 +293,5 @@ input[type="date"], .date-field{max-width:220px}
 .filter-row{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px}
 .filter-row label{display:flex;flex-direction:column;gap:6px;font-weight:600;color:#334155}
 .compact-muted{color:#64748b;font-size:.92rem}
+
+.badge-krm { background:#f59e0b; } /* amber */

@@ -117,7 +117,9 @@
               <td><input type="checkbox" class="pick" name="lot_ids" value="{{ r.id }}"></td>
               <td>{{ r.lot.lot_no }}</td>
               <td>
-                {% if (r.lot.grade or 'KRIP') == 'KRFS' %}
+                {% if (r.lot.grade or 'KRIP') == 'KRM' %}
+                  <span class="badge badge-krm">KRM</span>
+                {% elif (r.lot.grade or 'KRIP') == 'KRFS' %}
                   <span class="badge badge-krfs">KRFS</span>
                 {% else %}
                   <span class="badge badge-krip">KRIP</span>
@@ -216,7 +218,9 @@
           <tr>
             <td>{{ lot.lot_no }}</td>
             <td>
-              {% if (lot.grade or 'KRIP') == 'KRFS' %}
+              {% if (lot.grade or 'KRIP') == 'KRM' %}
+                <span class="badge badge-krm">KRM</span>
+              {% elif (lot.grade or 'KRIP') == 'KRFS' %}
                 <span class="badge badge-krfs">KRFS</span>
               {% else %}
                 <span class="badge badge-krip">KRIP</span>
