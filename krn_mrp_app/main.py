@@ -3537,6 +3537,7 @@ def grn_list(
             "role": current_role(request),
             "read_only": (not role_allowed(request, {"admin", "store"})),
             "grns": grns,
+            "is_admin": role_allowed(request, {"admin"}),
             "prices": rm_price_defaults(),
             "report": report,
             "start": start or "",
@@ -3620,6 +3621,41 @@ def grn_new_post(
             status_code=400,
         )
 
+    supplier_clean = (supplier or "").strip()
+    rm_type_clean = (rm_type or "").strip()
+    transporter_clean = (transporter or "").strip()
+    vehicle_no_clean = (vehicle_no or "").strip().upper()
+
+    duplicate = (
+        db.query(GRN)
+        .filter(
+            GRN.date == d,
+            func.lower(func.trim(GRN.supplier)) == supplier_clean.lower(),
+            func.lower(func.trim(GRN.rm_type)) == rm_type_clean.lower(),
+            func.coalesce(GRN.qty, 0) == qty,
+            func.coalesce(GRN.price, 0) == price,
+            func.upper(func.trim(func.coalesce(GRN.vehicle_no, ""))) == vehicle_no_clean,
+        )
+        .order_by(GRN.id.desc())
+        .first()
+    )
+    if duplicate:
+        min_date = (today - dt.timedelta(days=4)).isoformat()
+        max_date = today.isoformat()
+        return templates.TemplateResponse(
+            "grn_new.html",
+            {
+                "request": request,
+                "role": current_role(request),
+                "read_only": (not role_allowed(request, {"admin", "store"})),
+                "rm_types": RM_TYPES,
+                "min_date": min_date,
+                "max_date": max_date,
+                "error_text": f"Possible duplicate GRN detected. Existing entry: {duplicate.grn_no or duplicate.id} on {duplicate.date} for {duplicate.supplier} / {duplicate.rm_type} / {float(duplicate.qty or 0):.1f} kg / vehicle {duplicate.vehicle_no or '-'}.",
+            },
+            status_code=400,
+        )
+
     # Save files (helper returns saved filename or None)
     inv_name = _save_upload(invoice_file)
     ewb_name = _save_upload(ewaybill_file)
@@ -3628,19 +3664,42 @@ def grn_new_post(
     g = GRN(
         grn_no=next_grn_no(db, d),
         date=d,
-        supplier=supplier,
-        rm_type=rm_type,
+        supplier=supplier_clean,
+        rm_type=rm_type_clean,
         qty=qty,
         remaining_qty=qty,
         price=price,
-        transporter=transporter,    # NEW
-        vehicle_no=vehicle_no,      # NEW
+        transporter=transporter_clean,    # NEW
+        vehicle_no=vehicle_no_clean,      # NEW
         invoice_file=inv_name,      # NEW (can be None)
         ewaybill_file=ewb_name,     # NEW (can be None)
     )
     db.add(g)
     db.commit()
     return RedirectResponse("/grn", status_code=303)
+
+@app.post("/grn/{grn_id}/delete")
+def delete_grn(
+    grn_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    if not role_allowed(request, {"admin"}):
+        return RedirectResponse("/grn", status_code=303)
+
+    grn = db.query(GRN).filter(GRN.id == grn_id).first()
+    if not grn:
+        return RedirectResponse("/grn?report=1", status_code=303)
+
+    used = (db.query(func.coalesce(func.sum(HeatRM.qty), 0.0)).filter(HeatRM.grn_id == grn_id).scalar() or 0.0)
+    remaining_qty = float(grn.remaining_qty or 0.0)
+    original_qty = float(grn.qty or 0.0)
+    if used > 0.0001 or abs(remaining_qty - original_qty) > 0.0001:
+        return HTMLResponse("<script>alert('GRN cannot be deleted because it is already consumed in downstream process or stock has changed.');window.location='/grn?report=1';</script>")
+
+    db.delete(grn)
+    db.commit()
+    return RedirectResponse("/grn?report=1", status_code=303)
 
 # ---------- CSV export for report range (unchanged) ----------
 @app.get("/grn/export")

@@ -299,6 +299,8 @@ async def anneal_create_get(
 ):
     rap_rows = fetch_plant2_balance()
     err = request.query_params.get("err", "")
+    today = date.today()
+    min_date = (today - timedelta(days=4)).isoformat()
 
     return templates.TemplateResponse(
         "annealing_create.html",
@@ -310,6 +312,8 @@ async def anneal_create_get(
             "err": err,
             "is_admin": _is_admin(request),
             "downtime_types": ["production","maintenance","power","other"],
+            "today": today.isoformat(),
+            "min_date": min_date,
         },
     )
 
@@ -321,7 +325,19 @@ async def anneal_create_post(
 ):
     form = await request.form()
 
-    # ---- collect allocations from the form ----
+    lot_date_raw = str(form.get("lot_date") or "").strip()
+    try:
+        lot_date = date.fromisoformat(lot_date_raw) if lot_date_raw else date.today()
+    except Exception:
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus('Annealing lot date is invalid.')}&lot_date={quote_plus(lot_date_raw)}", status_code=303)
+
+    today = date.today()
+    min_allowed_date = today - timedelta(days=4)
+    if lot_date > today:
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus('Future date is not allowed.')}&lot_date={lot_date.isoformat()}", status_code=303)
+    if lot_date < min_allowed_date:
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus('Only current date and last 4 days are allowed for Annealing lot creation.')}&lot_date={lot_date.isoformat()}", status_code=303)
+
     allocations: dict[str, float] = {}
     total_alloc = 0.0
     for k, v in form.items():
@@ -335,26 +351,23 @@ async def anneal_create_post(
                 allocations[rap_lot_no] = qty
                 total_alloc += qty
 
-    # ----- basic guard: must allocate something -----
     if total_alloc <= 0:
         msg = "Allocate quantity > 0 kg."
-        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
 
-    # ---- Lot Weight must be entered and must equal total allocation (±0.01 kg) ----
     lw_raw = form.get("lot_weight")
     try:
         lot_weight = float(lw_raw)
     except Exception:
-        return RedirectResponse(url="/anneal/create?err=Lot%20Weight%20must%20be%20a%20number.", status_code=303)
+        return RedirectResponse(url=f"/anneal/create?err=Lot%20Weight%20must%20be%20a%20number.&lot_date={lot_date.isoformat()}", status_code=303)
 
     if lot_weight <= 0:
-        return RedirectResponse(url="/anneal/create?err=Lot%20Weight%20must%20be%20%3E%200.", status_code=303)
+        return RedirectResponse(url=f"/anneal/create?err=Lot%20Weight%20must%20be%20%3E%200.&lot_date={lot_date.isoformat()}", status_code=303)
 
     if abs(lot_weight - total_alloc) > 0.01:
         msg = f"Lot Weight mismatch: allocated {total_alloc:.2f} kg, entered {lot_weight:.2f} kg."
-        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
 
-    # ---- Ammonia must be at least 0.025 × lot weight ----
     try:
         ammonia_kg = float(form.get("ammonia_kg") or 0)
     except Exception:
@@ -369,52 +382,45 @@ async def anneal_create_post(
     nh3_min = 0.025 * lot_weight
     if not remarks:
         msg = "Remarks are required for every annealing lot."
-        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
     if downtime_min > 0 and downtime_type == "":
         msg = "Downtime type is required when downtime minutes are entered."
-        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
     if ammonia_kg < nh3_min:
         msg = f"Ammonia must be at least {nh3_min:.3f} kg for lot weight {lot_weight:.2f} kg."
-        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
 
-    # ---- availability & cost: use the same Plant-2 balance you show on GET ----
-    #     (so POST validates against exactly what the page displayed)
-    avail_rows = fetch_plant2_balance()       # returns list of mappings: lot_no, grade, cost_per_kg, available_kg
+    avail_rows = fetch_plant2_balance()
     avail_map = {r["lot_no"]: r for r in avail_rows}
 
-    # ensure every selected lot exists and has enough Plant-2 balance
     for lot_no, qty in allocations.items():
         r = avail_map.get(lot_no)
         if (r is None) or (qty > float(r.get("available_kg") or 0)):
             msg = f"Selected RAP lot {lot_no} not found or insufficient Plant-2 balance."
-            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
 
-    # ---- single family rule (KRIP or KRFS only) ----
     fam = {avail_map[lot]["grade"] for lot in allocations.keys()}
     if len(fam) > 1:
         msg = "Only one grade family allowed per anneal lot (KRIP or KRFS or KRM or KRSP)."
-        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}", status_code=303)
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
 
     rap_grade = next(iter(fam))
     out_grade = JOBWORK_ANNEAL_GRADE if rap_grade == JOBWORK_RAP_GRADE else (SPONGE_ANNEAL_GRADE if rap_grade == SPONGE_PULV_GRADE else ("KIP" if rap_grade == "KRIP" else "KFS"))
 
-    # ---- weighted RAP cost (from unit_cost surfaced by helper as cost_per_kg) ----
     rap_cost_wsum = sum(
         allocations[lot_no] * float(avail_map[lot_no].get("cost_per_kg") or 0)
         for lot_no in allocations.keys()
     )
     rap_cost_per_kg = rap_cost_wsum / lot_weight if lot_weight else 0.0
-    cost_per_kg = rap_cost_per_kg + ANNEAL_ADD_COST  # job-work uses same processing cost as KRIP
+    cost_per_kg = rap_cost_per_kg + ANNEAL_ADD_COST
 
-    # ---- derive trace_id from selected upstream lots ----
     parent_trace_ids = []
     for lot_no in allocations.keys():
         parent_tid = str(avail_map[lot_no].get("trace_id") or "").strip()
         parent_trace_ids.append(parent_tid if parent_tid else lot_no)
 
-    # ---- create ANL lot number and insert ----
     with engine.begin() as conn:
-        prefix = "ANL-" + date.today().strftime("%Y%m%d") + "-"
+        prefix = "ANL-" + lot_date.strftime("%Y%m%d") + "-"
         last = conn.execute(
             text("""
                 SELECT lot_no
@@ -438,7 +444,7 @@ async def anneal_create_post(
                      :rap_cost_per_kg, :cost_per_kg, :ammonia_kg, 'PENDING', :trace_id, :job_card_no, :remarks, :downtime_min, :downtime_type)
             """),
             {
-                "date": date.today(),
+                "date": lot_date,
                 "lot_no": lot_no,
                 "src_alloc_json": json.dumps(allocations),
                 "grade": out_grade,
@@ -458,9 +464,7 @@ async def anneal_create_post(
             conn.execute(text("""
                 INSERT INTO anneal_downtime (date, minutes, area, reason)
                 VALUES (:d, :m, :a, :r)
-            """), {"d": date.today(), "m": downtime_min, "a": downtime_type or "production", "r": remarks})
-
-        # NOTE: no UPDATE to rap tables — Plant-2 availability is derived (PLANT2 allocations minus anneal usage)
+            """), {"d": lot_date, "m": downtime_min, "a": downtime_type or "production", "r": remarks})
 
     return RedirectResponse(url="/anneal/lots", status_code=303)
 

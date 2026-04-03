@@ -5,9 +5,13 @@
 {% if err %}<div class="alert alert-danger" style="margin:10px 0">{{ err }}</div>{% endif %}
 
 <form method="post" id="createForm">
+  <label>FG Lot Date <span style="color:#ef4444">*</span></label>
+  <input type="date" name="lot_date" id="lot_date" value="{{ selected_lot_date or today }}" required min="{{ min_date }}" max="{{ today }}">
+  <div class="muted" style="margin-bottom:8px">Allowed: current date and last 4 days only.</div>
+
   <div class="muted" style="margin-bottom:8px">For grades 40.29 and 20, source comes only from oversize byproduct bucket of the same family.</div>
   <label>FG Grade</label>
-  <select name="fg_grade" id="fg_grade" required onchange="window.location='/fg/create?fg_grade='+encodeURIComponent(this.value)">
+  <select name="fg_grade" id="fg_grade" required onchange="(function(el){const d=document.getElementById('lot_date'); const qs='?fg_grade='+encodeURIComponent(el.value)+(d&&d.value?'&lot_date='+encodeURIComponent(d.value):''); window.location='/fg/create'+qs;})(this)">
     <option value="">-- select --</option>
     {% for g in grades %}
       <option value="{{ g }}" {% if selected_fg_grade==g %}selected{% endif %}>{{ g }}</option>

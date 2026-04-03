@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 import json, io, csv
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -387,14 +388,20 @@ async def fg_create_get(request: Request, dep: None = Depends(require_roles("fg"
     err = request.query_params.get("err", "")
     selected_fg_grade = request.query_params.get("fg_grade", "")
     rows = fetch_fg_source_balance(selected_fg_grade) if selected_fg_grade else []
+    today = date.today()
+    min_date = (today - timedelta(days=4)).isoformat()
+    selected_lot_date = request.query_params.get("lot_date", today.isoformat())
     return templates.TemplateResponse("fg_create.html", {
         "request": request,
         "src_rows": rows,
         "selected_fg_grade": selected_fg_grade,
+        "selected_lot_date": selected_lot_date,
         "grades": sorted(FG_SURCHARGE.keys()),
         "surcharges": FG_SURCHARGE,
         "err": err,
         "cap": 10000.0,
+        "today": today.isoformat(),
+        "min_date": min_date,
         "is_admin": _is_admin(request),
         "user": (request.session.get("username") if getattr(request, "session", None) else request.cookies.get("username", "")),
         "role": (request.session.get("role") if getattr(request, "session", None) else request.cookies.get("role", "guest")),
@@ -404,24 +411,35 @@ async def fg_create_get(request: Request, dep: None = Depends(require_roles("fg"
 async def fg_create_post(
     request: Request,
     dep: None = Depends(require_roles("fg","admin")),
+    lot_date: str = Form(...),
     fg_grade: str = Form(...),
-    lot_weight: str = Form(...),  # numeric string
+    lot_weight: str = Form(...),
     remarks: str = Form(""),
 ):
-    # 1) parse weight
+    try:
+        fg_lot_date = date.fromisoformat((lot_date or "").strip())
+    except Exception:
+        return RedirectResponse(f"/fg/create?err={quote_plus('FG lot date is invalid.')}&fg_grade={quote_plus(fg_grade)}&lot_date={quote_plus(lot_date or '')}", status_code=303)
+
+    today = date.today()
+    min_allowed_date = today - timedelta(days=4)
+    if fg_lot_date > today:
+        return RedirectResponse(f"/fg/create?err=Future+date+is+not+allowed.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
+    if fg_lot_date < min_allowed_date:
+        return RedirectResponse(f"/fg/create?err=Only+current+date+and+last+4+days+are+allowed+for+FG+lot+creation.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
+
     try:
         fg_weight = float(lot_weight or 0)
     except Exception:
-        return RedirectResponse("/fg/create?err=Lot+Weight+must+be+numeric.", status_code=303)
+        return RedirectResponse(f"/fg/create?err=Lot+Weight+must+be+numeric.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
     if fg_weight <= 0:
-        return RedirectResponse("/fg/create?err=Lot+Weight+must+be+%3E+0.", status_code=303)
+        return RedirectResponse(f"/fg/create?err=Lot+Weight+must+be+%3E+0.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
 
-    # 2) collect allocations from grinding
     form = await request.form()
     allocations: Dict[str, float] = {}
     total_alloc = 0.0
     for k, v in form.items():
-        if k.startswith("alloc_"):  # alloc_<grind_lot_no>
+        if k.startswith("alloc_"):
             lot_no = k.replace("alloc_", "")
             try:
                 qty = float(v or 0)
@@ -432,14 +450,12 @@ async def fg_create_post(
                 total_alloc += qty
 
     if total_alloc <= 0.0:
-        return RedirectResponse("/fg/create?err=Allocate+quantity+%3E+0+kg.", status_code=303)
+        return RedirectResponse(f"/fg/create?err=Allocate+quantity+%3E+0+kg.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
 
-    # must match
     if abs(fg_weight - total_alloc) > 0.01:
         msg = f"Lot Weight mismatch: allocated {total_alloc:.2f} kg, entered {fg_weight:.2f} kg."
-        return RedirectResponse(f"/fg/create?err={msg.replace(' ','+')}", status_code=303)
+        return RedirectResponse(f"/fg/create?err={msg.replace(' ','+')}&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
 
-    # 3) validate family lock
     family_needed = _fg_family_for_grade(fg_grade)
     avail_rows = fetch_fg_source_balance(fg_grade)
     amap = {r["lot_no"]: r for r in avail_rows}
@@ -447,13 +463,10 @@ async def fg_create_post(
     for lot_no, qty in allocations.items():
         r = amap.get(lot_no)
         if (r is None) or (qty > float(r.get("available_kg") or 0)):
-            return RedirectResponse(f"/fg/create?err=Source+lot+{lot_no}+not+found+or+insufficient+balance.",
-                                    status_code=303)
+            return RedirectResponse(f"/fg/create?err=Source+lot+{lot_no}+not+found+or+insufficient+balance.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
         if r.get("family") != family_needed:
-            return RedirectResponse("/fg/create?err=FG+grade+family+does+not+match+selected+source+family.",
-                                    status_code=303)
+            return RedirectResponse(f"/fg/create?err=FG+grade+family+does+not+match+selected+source+family.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
 
-    # 4) compute weighted base cost from grinding cost_per_kg
     wsum = sum(allocations[ln] * float(amap[ln].get("grind_cost_per_kg") or 0.0) for ln in allocations)
     base_cost = wsum / fg_weight if fg_weight else 0.0
     surcharge = _surcharge_for_grade(fg_grade)
@@ -464,9 +477,8 @@ async def fg_create_post(
         parent_tid = str(amap[ln].get("trace_id") or "").strip()
         parent_trace_ids.append(parent_tid if parent_tid else ln)
 
-    # 5) create FG lot_no (FG-YYYYMMDD-###)
     with engine.begin() as conn:
-        prefix = "FG-" + date.today().strftime("%Y%m%d") + "-"
+        prefix = "FG-" + fg_lot_date.strftime("%Y%m%d") + "-"
         last = conn.execute(text("""
             SELECT lot_no FROM fg_lots
             WHERE lot_no LIKE :pfx
@@ -486,7 +498,7 @@ async def fg_create_post(
                  :base_cost_per_kg, :surcharge_per_kg, :cost_per_kg,
                  :src_alloc_json, 'PENDING', :remarks, :trace_id, :job_card_no)
         """), {
-            "date": date.today(),
+            "date": fg_lot_date,
             "lot_no": lot_no,
             "family": family_needed,
             "fg_grade": fg_grade,

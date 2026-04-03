@@ -35,6 +35,7 @@
             <th>RM Type</th>
             <th class="right">Available (kg)</th>
             <th class="right">Remaining Cost (₹)</th>
+          {% if is_admin %}<th>Action</th>{% endif %}
           </tr>
         </thead>
         <tbody>
@@ -122,6 +123,17 @@
             <td class="right">{{ '%.2f' % total_price }}</td>
             <td class="right">{{ '%.1f' % (g.remaining_qty or 0) }}</td>
             <td class="right">{{ '%.2f' % remaining_cost }}</td>
+            {% if is_admin %}
+            <td>
+              {% if (g.remaining_qty or 0) == (g.qty or 0) %}
+              <form method="post" action="/grn/{{ g.id }}/delete" onsubmit="return confirm('Delete this GRN? This is allowed only if unused.')">
+                <button class="btn ghost" type="submit">Delete</button>
+              </form>
+              {% else %}
+              <span class="muted">Used</span>
+              {% endif %}
+            </td>
+            {% endif %}
           </tr>
         {% endfor %}
       </tbody>
