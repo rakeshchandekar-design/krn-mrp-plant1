@@ -20,7 +20,7 @@ from fastapi import File, UploadFile, Form, Request
 from starlette.staticfiles import StaticFiles
 
 import datetime as dt
-from sqlalchemy import text, func
+from sqlalchemy import text, func, or_
 from sqlalchemy.orm import joinedload
 
 # FastAPI
@@ -49,7 +49,7 @@ from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
 
 # SQLAlchemy
-from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text
+from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, func, text, or_
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
 from sqlalchemy.orm import joinedload  # eager load
 from sqlalchemy import func
@@ -4183,35 +4183,54 @@ def atom_page(
     if not role_allowed(request, {"admin", "atom"}):
         return RedirectResponse("/login", status_code=303)
 
-    # Only APPROVED heats
+    # Only APPROVED heats. Eager-load RM + GRN to avoid N+1 queries while resolving family badges.
     heats_all = (
         db.query(Heat)
+        .options(joinedload(Heat.rm_consumptions).joinedload(HeatRM.grn))
         .filter(Heat.qa_status == "APPROVED")
         .order_by(Heat.id.desc())
         .all()
     )
 
-    # Availability + grade
-    available_map = {h.id: heat_available(db, h) for h in heats_all}
+    # Availability + grade (batched for speed)
+    heat_ids = [h.id for h in heats_all]
+    used_map: Dict[int, float] = {}
+    if heat_ids:
+        used_rows = (
+            db.query(LotHeat.heat_id, func.coalesce(func.sum(LotHeat.qty), 0.0))
+            .filter(LotHeat.heat_id.in_(heat_ids))
+            .group_by(LotHeat.heat_id)
+            .all()
+        )
+        used_map = {int(hid): float(qty or 0.0) for hid, qty in used_rows}
+
+    available_map = {h.id: heat_available_fast(h, used_map) for h in heats_all}
     grades = {h.id: heat_grade(h) for h in heats_all}
 
     # Hide zero-available heats
     heats = [h for h in heats_all if (available_map.get(h.id) or 0.0) > 0.0001]
 
-    lots = db.query(Lot).order_by(Lot.id.desc()).all()
-
     # ----- KPIs & last-5-days for Atomization -----
     today = dt.date.today()
 
-    # production today = sum of lot weights created today
-    lots_with_dates = [(lot, lot_date_from_no(lot.lot_no) or today) for lot in lots]
-    prod_today = sum((lot.weight or 0.0) for lot, d in lots_with_dates if d == today)
+    # Query only recent lots needed for top KPIs instead of walking the whole history on every refresh.
+    recent_dates = [today - dt.timedelta(days=i) for i in range(0, 5)]
+    recent_tokens = [d.strftime("%Y%m%d") for d in recent_dates]
+    recent_filters = [Lot.lot_no.like(f"%-{tok}-%") for tok in recent_tokens]
+    recent_lots = db.query(Lot).filter(or_(*recent_filters)).all() if recent_filters else []
+    recent_qty_by_date = {d: 0.0 for d in recent_dates}
+    for lot in recent_lots:
+        d = lot_date_from_no(lot.lot_no)
+        if d in recent_qty_by_date:
+            recent_qty_by_date[d] += float(lot.weight or 0.0)
+
+    prod_today = recent_qty_by_date.get(today, 0.0)
     eff_today = (100.0 * prod_today / DAILY_CAPACITY_ATOM_KG) if DAILY_CAPACITY_ATOM_KG > 0 else 0.0
 
     last5 = []
     for i in range(4, -1, -1):
         d = today - dt.timedelta(days=i)
-        actual = sum((lot.weight or 0.0) for lot, dd in lots_with_dates if dd == d)
+        actual = recent_qty_by_date.get(d, 0.0)
         target = atom_day_target_kg(db, d)
         last5.append({"date": d.isoformat(), "actual": actual, "target": target})
 
@@ -4257,7 +4276,19 @@ def atom_page(
         s_date = dt.date.fromisoformat(s)
         e_date = dt.date.fromisoformat(e)
     except Exception:
-        s_date, e_date = today, today  # kept for future use
+        s_date, e_date = today, today
+    if e_date < s_date:
+        s_date, e_date = e_date, s_date
+
+    # Fetch only lots needed for the visible table whenever the requested date span is reasonable.
+    span_days = max((e_date - s_date).days, 0)
+    if span_days <= 31:
+        lot_tokens = [(s_date + dt.timedelta(days=i)).strftime("%Y%m%d") for i in range(span_days + 1)]
+        lot_filters = [Lot.lot_no.like(f"%-{tok}-%") for tok in lot_tokens]
+        lots = db.query(Lot).filter(or_(*lot_filters)).order_by(Lot.id.desc()).all() if lot_filters else []
+    else:
+        lots = db.query(Lot).order_by(Lot.id.desc()).all()
+        lots = [lot for lot in lots if s_date <= (lot_date_from_no(lot.lot_no) or today) <= e_date]
 
     # NEW: read error banner text (if redirected with ?err=...)
     err = request.query_params.get("err")
