@@ -124,15 +124,23 @@ def _tpl_auth(request: Request) -> dict:
 
 def _is_admin(request: Request) -> bool:
     s = getattr(request, "state", None)
-    if not s:
-        return False
-    if getattr(s, "is_admin", False):
+    if s:
+        if getattr(s, "is_admin", False):
+            return True
+        role = getattr(s, "role", None)
+        if isinstance(role, str) and role.lower() == "admin":
+            return True
+        roles = getattr(s, "roles", None)
+        if isinstance(roles, (list, set, tuple)) and "admin" in {str(x).lower() for x in roles}:
+            return True
+
+    sess = (getattr(request, "session", {}) or {})
+    sess_role = str(sess.get("role") or "").strip().lower()
+    if sess_role == "admin":
         return True
-    role = getattr(s, "role", None)
-    if isinstance(role, str) and role.lower() == "admin":
-        return True
-    roles = getattr(s, "roles", None)
-    return isinstance(roles, (list, set, tuple)) and "admin" in roles
+
+    cookie_role = str(getattr(request, "cookies", {}).get("role", "") or "").strip().lower()
+    return cookie_role == "admin"
 
 def _table_exists(conn, name: str) -> bool:
     try:
