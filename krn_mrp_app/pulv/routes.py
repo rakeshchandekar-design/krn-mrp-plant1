@@ -65,6 +65,25 @@ def _used_by_grn():
             pass
     return used
 
+
+def _used_by_anneal_lotno():
+    used = {}
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text("SELECT src_alloc_json FROM anneal_lots")).all()
+        for (raw,) in rows:
+            if not raw:
+                continue
+            try:
+                d = json.loads(raw)
+                for k, v in d.items():
+                    used[str(k)] = used.get(str(k), 0.0) + float(v or 0.0)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return used
+
 @router.get('/', response_class=HTMLResponse)
 def home(request: Request, dep: None = Depends(require_roles('admin','pulv','view'))):
     today = date.today()
@@ -194,10 +213,27 @@ async def create_post(request: Request, dep: None = Depends(require_roles('admin
     return RedirectResponse('/pulv/lots', status_code=303)
 
 @router.get('/lots', response_class=HTMLResponse)
-def lots(request: Request, dep: None = Depends(require_roles('admin','pulv','view'))):
+def lots(request: Request, dep: None = Depends(require_roles('admin','pulv','view')), from_date: str = None, to_date: str = None):
+    query = 'SELECT * FROM pulv_lots WHERE 1=1'
+    params = {}
+    if from_date:
+        query += ' AND date >= :from_date'; params['from_date'] = from_date
+    if to_date:
+        query += ' AND date <= :to_date'; params['to_date'] = to_date
+    query += ' ORDER BY date DESC, id DESC'
     with engine.begin() as conn:
-        rows = conn.execute(text('SELECT * FROM pulv_lots ORDER BY date DESC, id DESC')).mappings().all()
-    return templates.TemplateResponse('pulv_lot_list.html', {'request': request, 'role': current_role(request), 'rows': rows, 'is_admin': _is_admin(request)})
+        rows = [dict(r) for r in conn.execute(text(query), params).mappings().all()]
+    used_by_anneal = _used_by_anneal_lotno()
+    show_all_history = bool(from_date or to_date)
+    out = []
+    for r in rows:
+        prepared_qty = float(r.get('mag_output_qty_kg') or 0.0)
+        balance_qty = max(prepared_qty - float(used_by_anneal.get(str(r.get('lot_no') or ''), 0.0)), 0.0)
+        r['prepared_qty'] = prepared_qty
+        r['balance_qty'] = balance_qty
+        if show_all_history or balance_qty > 0.0001:
+            out.append(r)
+    return templates.TemplateResponse('pulv_lot_list.html', {'request': request, 'role': current_role(request), 'rows': out, 'is_admin': _is_admin(request), 'from_date': from_date, 'to_date': to_date, 'today': date.today().isoformat(), 'showing_all_history': show_all_history})
 
 @router.get('/qa/{lot_id}', response_class=HTMLResponse)
 def qa_get(lot_id: int, request: Request, dep: None = Depends(require_roles('admin','qa','pulv'))):

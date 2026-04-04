@@ -748,21 +748,42 @@ async def fg_lots(
     query += " ORDER BY date DESC, id DESC"
 
     with engine.begin() as conn:
-        rows = conn.execute(text(query), params).mappings().all()
+        rows = [dict(r) for r in conn.execute(text(query), params).mappings().all()]
+        dispatch_used: Dict[int, float] = {}
+        if _table_exists(conn, "dispatch_items"):
+            used_rows = conn.execute(text("""
+                SELECT fg_lot_id, COALESCE(SUM(qty_kg),0)::float AS used
+                FROM dispatch_items
+                GROUP BY fg_lot_id
+            """)).mappings().all()
+            dispatch_used = {int(r["fg_lot_id"]): float(r["used"] or 0.0) for r in used_rows if r.get("fg_lot_id") is not None}
 
-    total_weight = sum(float(r["weight_kg"] or 0.0) for r in rows)
+    show_all_history = bool(from_date or to_date)
+    calc_rows = []
+    for r in rows:
+        prepared_qty = float(r.get("weight_kg") or 0.0)
+        balance_qty = max(prepared_qty - float(dispatch_used.get(int(r.get("id") or 0), 0.0)), 0.0)
+        r["prepared_qty"] = prepared_qty
+        r["balance_qty"] = balance_qty
+        if show_all_history or balance_qty > 0.0001:
+            calc_rows.append(r)
+
+    rows = calc_rows
+    total_weight = sum(float(r["prepared_qty"] or 0.0) for r in rows)
+    total_balance = sum(float(r["balance_qty"] or 0.0) for r in rows)
     weighted_cost = (
-        sum((float(r["cost_per_kg"] or 0.0) * float(r["weight_kg"] or 0.0)) for r in rows) / total_weight
+        sum((float(r["cost_per_kg"] or 0.0) * float(r["prepared_qty"] or 0.0)) for r in rows) / total_weight
         if total_weight > 0 else 0.0
     )
 
     if csv:
         out = io.StringIO(); w = csv.writer(out)
-        w.writerow(["Date","Lot","Family","FG Grade","Weight (kg)","Base Cost/kg","Surcharge/kg","Final Cost/kg","QA","Remarks"])
+        w.writerow(["Date","Lot","Family","FG Grade","Prepared Qty (kg)","Balance Qty (kg)","Base Cost/kg","Surcharge/kg","Final Cost/kg","QA","Remarks"])
         for r in rows:
             w.writerow([
                 r["date"], r["lot_no"], r["family"], r["fg_grade"],
-                f"{float(r['weight_kg'] or 0):.0f}",
+                f"{float(r['prepared_qty'] or 0):.2f}",
+                f"{float(r['balance_qty'] or 0):.2f}",
                 f"{float(r['base_cost_per_kg'] or 0):.2f}",
                 f"{float(r['surcharge_per_kg'] or 0):.2f}",
                 f"{float(r['cost_per_kg'] or 0):.2f}",
@@ -775,8 +796,10 @@ async def fg_lots(
         "request": request,
         "lots": rows,
         "total_weight": total_weight,
+        "total_balance": total_balance,
         "weighted_cost": weighted_cost,
         "today": date.today().isoformat(),
+        "showing_all_history": show_all_history,
         "is_admin": _is_admin(request),
         "user": (request.session.get("username") if getattr(request, "session", None) else request.cookies.get("username", "")),
         "role": (request.session.get("role") if getattr(request, "session", None) else request.cookies.get("role", "guest")),

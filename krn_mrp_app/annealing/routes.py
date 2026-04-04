@@ -547,8 +547,20 @@ async def anneal_lots(
     query += " ORDER BY date DESC, id DESC"
 
     with engine.begin() as conn:
-        rows = conn.execute(text(query), params).mappings().all()
+        rows = [dict(r) for r in conn.execute(text(query), params).mappings().all()]
+        used_by_lotno: dict[str, float] = {}
+        if _table_exists(conn, "grinding_lots"):
+            for (alloc_json,) in conn.execute(text("SELECT src_alloc_json FROM grinding_lots")).all():
+                if not alloc_json:
+                    continue
+                try:
+                    data = json.loads(alloc_json)
+                    for lot_no, qty in data.items():
+                        used_by_lotno[str(lot_no)] = used_by_lotno.get(str(lot_no), 0.0) + float(qty or 0.0)
+                except Exception:
+                    pass
 
+    show_all_history = bool(from_date or to_date)
     # augment rows with anneal_cost_per_kg + total_value (no SQL changes)
     augmented = []
     for r in rows:
@@ -558,14 +570,20 @@ async def anneal_lots(
         tot_val = eff_cost * (r["weight_kg"] or 0)
 
         d = dict(r)
+        prepared_qty = float(d.get("weight_kg") or 0.0)
+        balance_qty = max(prepared_qty - float(used_by_lotno.get(str(d.get("lot_no") or ""), 0.0)), 0.0)
         d["anneal_cost_per_kg"] = eff_cost
         d["total_value"] = tot_val
-        augmented.append(d)
+        d["prepared_qty"] = prepared_qty
+        d["balance_qty"] = balance_qty
+        if show_all_history or balance_qty > 0.0001:
+            augmented.append(d)
 
-    visible_rows = [r for r in augmented if (r["weight_kg"] or 0) > 0]
-    total_weight = sum((r["weight_kg"] or 0) for r in visible_rows)
+    visible_rows = augmented
+    total_weight = sum((r["prepared_qty"] or 0) for r in visible_rows)
+    total_balance = sum((r["balance_qty"] or 0) for r in visible_rows)
     weighted_cost = (
-        sum((r["anneal_cost_per_kg"] or 0) * (r["weight_kg"] or 0) for r in visible_rows) / total_weight
+        sum((r["anneal_cost_per_kg"] or 0) * (r["prepared_qty"] or 0) for r in visible_rows) / total_weight
         if total_weight > 0 else 0.0
     )
 
@@ -579,11 +597,12 @@ async def anneal_lots(
         buf = io.StringIO()
         writer = csv.writer(buf)
         # CSV kept identical to your current version
-        writer.writerow(["Date","Lot","Grade","Weight (kg)","Ammonia (kg)","RAP Cost/kg","Anneal Cost/kg","QA"])
-        for r in rows:
+        writer.writerow(["Date","Lot","Grade","Prepared Qty (kg)","Balance Qty (kg)","Ammonia (kg)","RAP Cost/kg","Anneal Cost/kg","QA"])
+        for r in visible_rows:
             writer.writerow([
                 r["date"], r["lot_no"], r["grade"],
-                "%.0f" % (r["weight_kg"] or 0),
+                "%.2f" % (r["prepared_qty"] or 0),
+                "%.2f" % (r["balance_qty"] or 0),
                 "%.2f" % (r["ammonia_kg"] or 0),
                 "%.2f" % (r["rap_cost_per_kg"] or 0),
                 "%.2f" % ((r["cost_per_kg"] if r["cost_per_kg"] not in (None, 0) else (r["rap_cost_per_kg"] or 0) + ANNEAL_ADD_COST) or 0),
@@ -601,10 +620,12 @@ async def anneal_lots(
         "read_only": is_read_only(request),     # (optional but recommended)
         "lots": visible_rows,              # each row now has anneal_cost_per_kg & total_value
         "total_weight": total_weight,
+        "total_balance": total_balance,
         "weighted_cost": weighted_cost,    # uses effective anneal cost
         "from_date": from_date,
         "to_date": to_date,
         "today": date.today().isoformat(),
+        "showing_all_history": show_all_history,
         "is_admin": is_admin,
     })
 

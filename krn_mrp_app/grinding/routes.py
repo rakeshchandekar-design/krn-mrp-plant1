@@ -432,11 +432,26 @@ async def grind_lots(request: Request, dep: None = Depends(require_roles("admin"
     query += " ORDER BY date DESC, id DESC"
 
     with engine.begin() as conn:
-        rows = conn.execute(text(query), params).mappings().all()
+        rows = [dict(r) for r in conn.execute(text(query), params).mappings().all()]
+        main_used, _ov80_used, _ov40_used = _load_fg_allocations_used(conn)
 
-    total_weight = sum((r["weight_kg"] or 0) for r in rows)
+    show_all_history = bool(from_date or to_date)
+    calc_rows = []
+    for r in rows:
+        prepared_qty = float(r.get("weight_kg") or 0.0)
+        oversize_total_row = float(r.get("oversize_p80_kg") or 0.0) + float(r.get("oversize_p40_kg") or 0.0)
+        main_prepared_qty = max(prepared_qty - oversize_total_row, 0.0)
+        balance_qty = max(main_prepared_qty - float(main_used.get(str(r.get("lot_no") or ""), 0.0)), 0.0)
+        r["prepared_qty"] = prepared_qty
+        r["balance_qty"] = balance_qty
+        if show_all_history or balance_qty > 0.0001:
+            calc_rows.append(r)
+
+    rows = calc_rows
+    total_weight = sum((r["prepared_qty"] or 0) for r in rows)
+    total_balance = sum((r["balance_qty"] or 0) for r in rows)
     weighted_cost = (
-        sum((r["cost_per_kg"] or 0) * (r["weight_kg"] or 0) for r in rows) / total_weight if total_weight > 0 else 0.0
+        sum((r["cost_per_kg"] or 0) * (r["prepared_qty"] or 0) for r in rows) / total_weight if total_weight > 0 else 0.0
     )
     oversize_total = sum((r["oversize_p80_kg"] or 0) + (r["oversize_p40_kg"] or 0) for r in rows)
 
@@ -445,15 +460,16 @@ async def grind_lots(request: Request, dep: None = Depends(require_roles("admin"
     if csv:
         out = io.StringIO(); w = csv.writer(out)
         if is_admin:
-            w.writerow(["Date","Lot","Grade","Weight (kg)","+80 (kg)","+40 (kg)",
+            w.writerow(["Date","Lot","Grade","Prepared Qty (kg)","Balance Qty (kg)","+80 (kg)","+40 (kg)",
                         "Proc Cost/kg (₹)","Final Cost/kg (₹)","QA"])
         else:
-            w.writerow(["Date","Lot","Grade","Weight (kg)","+80 (kg)","+40 (kg)","QA"])
+            w.writerow(["Date","Lot","Grade","Prepared Qty (kg)","Balance Qty (kg)","+80 (kg)","+40 (kg)","QA"])
 
         for r in rows:
             base = [
                 r["date"], r["lot_no"], r["grade"],
-                f"{(r['weight_kg'] or 0):.0f}",
+                f"{(r['prepared_qty'] or 0):.2f}",
+                f"{(r['balance_qty'] or 0):.2f}",
                 f"{(r['oversize_p80_kg'] or 0):.2f}",
                 f"{(r['oversize_p40_kg'] or 0):.2f}",
             ]
@@ -473,8 +489,8 @@ async def grind_lots(request: Request, dep: None = Depends(require_roles("admin"
 
     return templates.TemplateResponse("grinding_lot_list.html", {
         "request": request, "lots": rows,
-        "total_weight": total_weight, "weighted_cost": weighted_cost,
-        "oversize_total": oversize_total,
+        "total_weight": total_weight, "total_balance": total_balance, "weighted_cost": weighted_cost,
+        "oversize_total": oversize_total, "showing_all_history": show_all_history,
         "from_date": from_date, "to_date": to_date,
         "today": date.today().isoformat(),
         "is_admin": _is_admin(request),

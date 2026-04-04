@@ -34,6 +34,7 @@
 </style>
 
 <h2>FG Lots</h2>
+{% if showing_all_history %}<div class="muted" style="margin-bottom:8px">Showing full lot history for selected date range, including zero balance lots.</div>{% endif %}
 <div class="fg-toolbar">
   <a class="btn" href="/fg/">← Back to FG</a>
   <form method="get" action="/fg/lots" class="fg-filter-form">
@@ -48,7 +49,7 @@
 
 <table class="table">
   <tr>
-    <th>Date</th><th>Lot</th><th>Family</th><th>FG Grade</th><th>Weight (kg)</th>
+    <th>Date</th><th>Lot</th><th>Family</th><th>FG Grade</th><th>Prepared (kg)</th><th>Balance (kg)</th>
     {% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
     {% if admin %}
       <th>Base ₹/kg</th><th>Surcharge ₹/kg</th><th>Final ₹/kg</th>
@@ -61,7 +62,7 @@
     <td>{{ x.lot_no }}</td>
     <td>{{ x.family }}</td>
     <td>{{ x.fg_grade }}</td>
-    <td>{{ '%.0f'|format(x.weight_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.prepared_qty or 0) }}</td><td>{% if (x.balance_qty or 0) <= 0 %}<span style="color:#b91c1c;font-weight:600">0</span>{% else %}{{ '%.2f'|format(x.balance_qty or 0) }}{% endif %}</td>
     {% if admin %}
       <td>{{ '%.2f'|format(x.base_cost_per_kg or 0) }}</td>
       <td>{{ '%.2f'|format(x.surcharge_per_kg or 0) }}</td>
@@ -78,6 +79,7 @@
   <tr class="table-info">
     <th colspan="4">TOTAL</th>
     <th>{{ '%.2f'|format(total_weight or 0) }}</th>
+    <th>{{ '%.2f'|format(total_balance or 0) }}</th>
     {% if admin %}<th colspan="2"></th><th>{{ '%.2f'|format(weighted_cost or 0) }}</th>{% endif %}
     <th colspan="3"></th>
   </tr>

@@ -17,10 +17,11 @@
     <a class="btn" href="/grind/lots?csv=1{% if from_date %}&from_date={{ from_date }}{% endif %}{% if to_date %}&to_date={{ to_date }}{% endif %}">Download CSV</a>
   </form>
 </div>
+{% if showing_all_history %}<div class="muted" style="margin-bottom:8px">Showing full lot history for selected date range, including zero balance lots.</div>{% endif %}
 
 <table class="table">
   <tr>
-    <th>Date</th><th>Lot</th><th>Grade</th><th>Weight (kg)</th>
+    <th>Date</th><th>Lot</th><th>Grade</th><th>Prepared (kg)</th><th>Balance (kg)</th>
     <th>+80 (kg)</th><th>+40 (kg)</th>
     {% if admin %}<th>Proc Cost/kg (₹)</th><th>Final Cost/kg (₹)</th>{% endif %}
     <th>QA</th><th>Remarks</th><th>Docs</th>{% if qa_access %}<th>Action</th>{% endif %}
@@ -30,12 +31,14 @@
     <td>{{ x.date }}</td>
     <td>{{ x.lot_no }}</td>
     <td>{{ x.grade }}</td>
-    <td>{{ '%.0f'|format(x.weight_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.prepared_qty or 0) }}</td>
+    <td>{% if (x.balance_qty or 0) <= 0 %}<span style="color:#b91c1c;font-weight:600">0</span>{% else %}{{ '%.2f'|format(x.balance_qty or 0) }}{% endif %}</td>
     <td>{{ '%.2f'|format(x.oversize_p80_kg or 0) }}</td>
     <td>{{ '%.2f'|format(x.oversize_p40_kg or 0) }}</td>
     {% if admin %}<td>{{ '%.2f'|format(x.process_cost_per_kg or 0) }}</td>{% endif %}
     {% if admin %}<td>{{ '%.2f'|format(x.cost_per_kg or 0) }}</td>{% endif %}
     <td>{{ x.qa_status or '' }}</td>
+    <td>{{ x.remarks or "" }}</td>
     <td>
       <a href="/grind/trace/{{ x.id }}">Trace</a> |
       <a href="/grind/pdf/{{ x.id }}" target="_blank">PDF</a> | <a href="/grind/jobcard/{{ x.id }}" target="_blank">Job Card</a>
@@ -46,13 +49,9 @@
   <tr class="table-info">
     <th colspan="3">TOTAL</th>
     <th>{{ '%.2f'|format(total_weight or 0) }}</th>
+    <th>{{ '%.2f'|format(total_balance or 0) }}</th>
     <th colspan="2">{{ '%.2f'|format(oversize_total or 0) }}</th>
-    <th></th>
-    {% if admin %}
-    <th>{{ '%.2f'|format(weighted_cost or 0) }}</th>
-    {% else %}
-    <th></th>
-    {% endif %}
+    {% if admin %}<th></th><th>{{ '%.2f'|format(weighted_cost or 0) }}</th>{% endif %}
     <th colspan="4"></th>
   </tr>
 </table>

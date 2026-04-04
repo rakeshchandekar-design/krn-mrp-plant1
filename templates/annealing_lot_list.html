@@ -3,6 +3,7 @@
 {% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
 {% set qa_access = request.state.role is defined and request.state.role|string in ['qa','admin'] %}
 <h2>Annealing Lots</h2>
+{% if showing_all_history %}<div class="muted" style="margin-bottom:8px">Showing full lot history for selected date range, including zero balance lots.</div>{% endif %}
 <div class="toolbar" style="margin-bottom:10px; gap:8px; display:flex; flex-wrap:wrap; align-items:center">
   <a class="btn" href="/anneal/">← Back to Annealing</a>
   <form method="get" action="/anneal/lots" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
@@ -21,7 +22,8 @@
     <th>Date</th>
     <th>Lot</th>
     <th>Grade</th>
-    <th>Weight (kg)</th>
+    <th>Prepared (kg)</th>
+    <th>Balance (kg)</th>
     <th>Ammonia (kg)</th>
     {% if admin %}<th>Anneal Cost/kg (₹)</th><th>Total Value (₹)</th>{% endif %}
     <th>QA</th>
@@ -31,15 +33,15 @@
   </tr>
   {% set totals = namespace(value_sum=0.0) %}
   {% for x in lots %}
-    {% if (x.weight_kg or 0) > 0 %}
-    {% set eff_cost = x.anneal_cost_per_kg if x.anneal_cost_per_kg is defined else (x.cost_per_kg or 0) %}
-    {% set tval = x.total_value if x.total_value is defined else ((eff_cost or 0) * (x.weight_kg or 0)) %}
+        {% set eff_cost = x.anneal_cost_per_kg if x.anneal_cost_per_kg is defined else (x.cost_per_kg or 0) %}
+    {% set tval = x.total_value if x.total_value is defined else ((eff_cost or 0) * (x.prepared_qty or 0)) %}
     {% set totals.value_sum = totals.value_sum + (tval or 0) %}
     <tr class="{% if x.grade and x.grade.startswith('KIP') %}bg-info-subtle{% elif x.grade and x.grade.startswith('KFS') %}bg-warning-subtle{% endif %}">
       <td>{{ x.date }}</td>
       <td>{{ x.lot_no }}</td>
       <td><span class="pill {% if x.grade and x.grade.startswith('KIP') %}pill-blue{% elif x.grade and x.grade.startswith('KFS') %}pill-orange{% endif %}">{{ x.grade }}</span></td>
-      <td>{{ '%.0f'|format(x.weight_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(x.prepared_qty or 0) }}</td>
+      <td>{% if (x.balance_qty or 0) <= 0 %}<span style="color:#b91c1c;font-weight:600">0</span>{% else %}{{ '%.2f'|format(x.balance_qty or 0) }}{% endif %}</td>
       <td>{{ '%.2f'|format(x.ammonia_kg or 0) }}</td>
       {% if admin %}<td>{{ '%.2f'|format(eff_cost or 0) }}</td><td>{{ '%.2f'|format(tval or 0) }}</td>{% endif %}
       <td>{{ x.qa_status or '' }}</td>
@@ -52,11 +54,11 @@
       </td>
       {% if qa_access %}<td><a class="btn btn-small" href="/anneal/qa/{{ x.id }}">QA</a></td>{% endif %}
     </tr>
-    {% endif %}
   {% endfor %}
   <tr class="table-info">
     <th colspan="3">TOTAL</th>
     <th>{{ '%.2f'|format(total_weight) }}</th>
+    <th>{{ '%.2f'|format(total_balance or 0) }}</th>
     <th></th>
     {% if admin %}<th>{{ '%.2f'|format(weighted_cost) }}</th><th>{{ '%.2f'|format(totals.value_sum) }}</th>{% endif %}
     <th></th><th></th><th></th>{% if qa_access %}<th></th>{% endif %}

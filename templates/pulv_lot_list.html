@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>Pulverization Lots</h2>
-<div class="toolbar"><a class="btn" href="/pulv">← Back</a></div>
+<div class="toolbar" style="margin-bottom:10px; gap:8px; display:flex; flex-wrap:wrap; align-items:center"><a class="btn" href="/pulv">← Back</a><form method="get" action="/pulv/lots" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap"><label>From</label><input type="date" name="from_date" value="{{ from_date or "" }}"><label>To</label><input type="date" name="to_date" value="{{ to_date or "" }}"><button class="btn" type="submit">Fetch</button><a class="btn" href="/pulv/lots?from_date={{ today }}&to_date={{ today }}">Today</a><a class="btn" href="/pulv/lots">Reset</a></form></div>{% if showing_all_history %}<div class="muted" style="margin-bottom:8px">Showing full lot history for selected date range, including zero balance lots.</div>{% endif %}
 <table class="table">
-  <tr><th>Date</th><th>Lot No</th><th>Grade</th><th>Input</th><th>Mag Out</th><th>Dust %</th><th>Non-Mag %</th><th>Cost/kg</th><th>QA</th><th>Action</th></tr>
+  <tr><th>Date</th><th>Lot No</th><th>Grade</th><th>Input</th><th>Prepared (kg)</th><th>Balance (kg)</th><th>Dust %</th><th>Non-Mag %</th><th>Cost/kg</th><th>QA</th><th>Action</th></tr>
   {% for r in rows %}
-    <tr><td>{{ r.date }}</td><td>{{ r.lot_no }}</td><td>{{ r.grade }}</td><td class="right">{{ (r.input_qty_kg|float)|round(1) }}</td><td class="right">{{ (r.mag_output_qty_kg|float)|round(1) }}</td><td class="right">{{ (r.dust_loss_pct|float)|round(2) }}</td><td class="right">{{ (r.non_mag_pct|float)|round(2) }}</td><td class="right">{{ (r.cost_per_kg|float)|round(2) }}</td><td>{{ r.qa_status }}</td><td><a class="btn" href="/pulv/qa/{{ r.id }}">QA</a></td></tr>
+    <tr><td>{{ r.date }}</td><td>{{ r.lot_no }}</td><td>{{ r.grade }}</td><td class="right">{{ (r.input_qty_kg|float)|round(1) }}</td><td class="right">{{ (r.prepared_qty|float)|round(1) }}</td><td class="right">{% if (r.balance_qty or 0) <= 0 %}<span style="color:#b91c1c;font-weight:600">0</span>{% else %}{{ (r.balance_qty|float)|round(1) }}{% endif %}</td><td class="right">{{ (r.dust_loss_pct|float)|round(2) }}</td><td class="right">{{ (r.non_mag_pct|float)|round(2) }}</td><td class="right">{{ (r.cost_per_kg|float)|round(2) }}</td><td>{{ r.qa_status }}</td><td><a class="btn" href="/pulv/qa/{{ r.id }}">QA</a></td></tr>
   {% endfor %}
 </table>
 {% endblock %}
