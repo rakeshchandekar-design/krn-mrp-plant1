@@ -59,6 +59,81 @@ def _table_exists(conn, table_name: str) -> bool:
     except Exception:
         return False
 
+def _load_fg_allocations_used(conn) -> tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+    """Split FG allocations into main grinding, +80 oversize and +40 oversize usage.
+    Ignore legacy / void / rejected FG rows so old bad data does not block valid grinding stock.
+    """
+    main_used: Dict[str, float] = {}
+    ov80_used: Dict[str, float] = {}
+    ov40_used: Dict[str, float] = {}
+    if not _table_exists(conn, "fg_lots"):
+        return main_used, ov80_used, ov40_used
+
+    cols = set()
+    try:
+        if str(engine.url).startswith("sqlite"):
+            cols = {str(r[1]).lower() for r in conn.execute(text("PRAGMA table_info(fg_lots)"))}
+        else:
+            cols = {str(r[0]).lower() for r in conn.execute(text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='fg_lots'
+            """)).all()}
+    except Exception:
+        cols = set()
+
+    select_cols = ["src_alloc_json"]
+    if "qa_status" in cols:
+        select_cols.append("qa_status")
+    if "status" in cols:
+        select_cols.append("status")
+    sql = f"SELECT {', '.join(select_cols)} FROM fg_lots"
+
+    active_qa_statuses = {"APPROVED", "PENDING", "HOLD"}
+    ignored_qa_statuses = {"REJECTED", "CANCELLED", "VOID", "DELETED"}
+    ignored_statuses = {"VOID", "CANCELLED", "DELETED"}
+
+    for row in conn.execute(text(sql)).mappings().all():
+        qa_status = str((row.get("qa_status") if "qa_status" in row else "") or "").strip().upper()
+        status = str((row.get("status") if "status" in row else "") or "").strip().upper()
+
+        if qa_status in ignored_qa_statuses:
+            continue
+        if status in ignored_statuses:
+            continue
+        if "qa_status" in row and qa_status and qa_status not in active_qa_statuses:
+            continue
+
+        try:
+            alloc = json.loads(row.get("src_alloc_json") or "{}")
+        except Exception:
+            alloc = {}
+
+        if not isinstance(alloc, dict):
+            continue
+
+        for raw_key, q in alloc.items():
+            try:
+                qty = float(q or 0.0)
+            except Exception:
+                qty = 0.0
+            if qty <= 0:
+                continue
+
+            key = str(raw_key or "").strip()
+            if not key:
+                continue
+            if key.startswith("OV80|"):
+                src = key.split("|", 1)[1] if "|" in key else key
+                ov80_used[src] = float(ov80_used.get(src, 0.0)) + qty
+            elif key.startswith("OV40|"):
+                src = key.split("|", 1)[1] if "|" in key else key
+                ov40_used[src] = float(ov40_used.get(src, 0.0)) + qty
+            else:
+                main_used[key] = float(main_used.get(key, 0.0)) + qty
+
+    return main_used, ov80_used, ov40_used
+
 def fetch_anneal_balance():
     """Fetch APPROVED Anneal lots and compute remaining available balance."""
     with engine.begin() as conn:
