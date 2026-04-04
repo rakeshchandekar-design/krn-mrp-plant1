@@ -97,11 +97,13 @@ AUTO_QA_FIELDS_PSD  = ["p212","p180","n180p150","n150p75","n75p45","n45"]
 
 def _family_from_grade_text(g: str) -> str:
     g = (g or "").strip().upper()
-    if g.startswith("KIPM") or g.startswith("KIP M"):
+    if not g:
+        return "KIP"
+    if g.startswith("KIPM") or g.startswith("KIP M") or g.startswith("KRM"):
         return "KIPM"
     if g.startswith("KSP"):
         return "KSP"
-    if g.startswith("KFS"):
+    if g.startswith("KFS") or "15/45" in g or "15/60" in g or g.endswith("FS"):
         return "KFS"
     if g.startswith("KIP"):
         return "KIP"
@@ -283,11 +285,51 @@ def fetch_fg_source_balance(fg_grade: str) -> List[Dict[str, Any]]:
         return sorted(rows, key=lambda r: (str(r.get("date") or ""), str(r.get("lot_no") or "")), reverse=True)
 
     rows = []
+    seen = set()
     for r in fetch_grind_balance():
         fam = (r.get("family") or "").strip().upper()
         grade_text = str(r.get("grade") or "")
         if fam == family_needed or _family_matches_grade(grade_text, family_needed):
             rows.append(r)
+            seen.add(str(r.get("lot_no") or ""))
+
+    # Extra-safe fallback for KFS family so approved KFS grinding lots are not missed due to old/inconsistent grade text.
+    if family_needed == "KFS":
+        with engine.begin() as conn:
+            db_rows = conn.execute(text("""
+                SELECT id, lot_no, date, grade,
+                       COALESCE(weight_kg,0)::float       AS weight_kg,
+                       COALESCE(cost_per_kg,0)::float     AS grind_cost_per_kg,
+                       COALESCE(oversize_p80_kg,0)::float AS p80,
+                       COALESCE(oversize_p40_kg,0)::float AS p40
+                FROM grinding_lots
+                WHERE UPPER(COALESCE(qa_status,''))='APPROVED'
+                  AND UPPER(COALESCE(grade,'')) LIKE 'KFS%'
+                ORDER BY date DESC, id DESC
+            """)).mappings().all()
+            main_used, _ov80_used, _ov40_used = _load_fg_allocations_used(conn)
+
+        for r in db_rows:
+            ln = str(r.get("lot_no") or "")
+            if not ln or ln in seen:
+                continue
+            main_qty = float(r.get("weight_kg") or 0.0) - float(r.get("p80") or 0.0) - float(r.get("p40") or 0.0)
+            if main_qty < 0:
+                main_qty = 0.0
+            avail = main_qty - float(main_used.get(ln, 0.0))
+            if avail > 0.0001:
+                rows.append({
+                    "source_type": "MAIN",
+                    "grind_id": r["id"],
+                    "lot_no": ln,
+                    "date": r["date"],
+                    "family": "KFS",
+                    "grade": r["grade"],
+                    "available_kg": avail,
+                    "grind_cost_per_kg": float(r.get("grind_cost_per_kg") or 0.0),
+                    "oversize_p80_kg": float(r.get("p80") or 0.0),
+                    "oversize_p40_kg": float(r.get("p40") or 0.0),
+                })
 
     return sorted(rows, key=lambda r: (str(r.get("date") or ""), str(r.get("lot_no") or "")), reverse=True)
 
