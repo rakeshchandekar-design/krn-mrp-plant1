@@ -196,6 +196,42 @@
     </script>
   </div>
 
+
+
+  <div class="card" style="margin-top:12px">
+    <h3>RAP Lots — View</h3>
+    <div class="toolbar" style="margin:8px 0 12px; gap:8px; display:flex; flex-wrap:wrap; align-items:center">
+      <form method="get" action="/rap" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+        <label>From</label><input type="date" name="start" value="{{ start or today }}">
+        <label>To</label><input type="date" name="end" value="{{ end or today }}">
+        <button class="btn" type="submit">Fetch</button>
+        <a class="btn" href="/rap?start={{ today }}&end={{ today }}">Today</a>
+        <a class="btn" href="/rap">Reset</a>
+      </form>
+    </div>
+    {% if showing_all_history %}<div class="muted" style="margin-bottom:8px">Showing full RAP history for selected date range, including zero balance lots.</div>{% endif %}
+    <table>
+      <thead>
+        <tr>
+          <th>Lot</th><th>Grade</th><th class="right">Prepared (kg)</th><th class="right">Balance (kg)</th>{% if role == 'admin' %}<th class="right">Cost/kg (₹)</th><th class="right">Balance Value (₹)</th>{% endif %}<th>Docs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows_view or [] %}
+          {% set lot = r.lot %}
+          <tr>
+            <td>{{ lot.lot_no }}</td>
+            <td>{% if (lot.grade or 'KRIP') == 'KRM' %}<span class="badge badge-krm">KRM</span>{% elif (lot.grade or 'KRIP') == 'KRFS' %}<span class="badge badge-krfs">KRFS</span>{% else %}<span class="badge badge-krip">KRIP</span>{% endif %}</td>
+            <td class="right">{{ '%.1f' % (r.prepared_qty or lot.weight or 0) }}</td>
+            <td class="right">{% if (r.balance_qty or 0) <= 0 %}<span style="color:#b91c1c;font-weight:600">0</span>{% else %}{{ '%.1f' % (r.balance_qty or 0) }}{% endif %}</td>
+            {% if role == 'admin' %}<td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td><td class="right">{{ '%.2f' % ((lot.unit_cost or 0) * (r.balance_qty or 0)) }}</td>{% endif %}
+            <td><a href="/lot/{{ lot.id }}/trace" target="_blank">Trace</a> | <a href="/lot/{{ lot.id }}/pdf" target="_blank">PDF</a> | <a href="/lot/{{ lot.id }}/qa" target="_blank">QA</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
   <!-- RAP Lots – Transfers to Plant 2 -->
   <div class="card">
     <h2 style="margin:0 0 8px 0;">RAP Lots – Transfers to Plant 2</h2>

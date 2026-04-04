@@ -221,7 +221,8 @@
         <tr>
           <th>Lot</th>
           <th>Grade</th>
-          <th class="right">Weight (kg)</th>
+          <th class="right">Prepared (kg)</th>
+          <th class="right">Balance (kg)</th>
           {% if role == 'admin' %}<th class="right">Cost/kg (₹)</th>{% endif %}
           <th>QA</th>
           <th>Trace</th>
@@ -242,7 +243,8 @@
                 <span class="badge badge-krip">KRIP</span>
               {% endif %}
             </td>
-            <td class="right">{{ '%.1f' % (lot.weight or 0) }}</td>
+            <td class="right">{{ '%.1f' % (lot.prepared_qty or lot.weight or 0) }}</td>
+            <td class="right">{% if (lot.balance_qty or 0) <= 0 %}<span style="color:#b91c1c;font-weight:600">0</span>{% else %}{{ '%.1f' % (lot.balance_qty or 0) }}{% endif %}</td>
             {% if role == 'admin' %}<td class="right">{{ '%.2f' % (lot.unit_cost or 0) }}</td>{% endif %}
             <td>{{ lot.qa_status or '' }}</td>
             <td><a class="btn btn-secondary" style="background:#e5e7eb;color:#111827;border:none" href="/traceability/lot/{{ lot.id }}">Trace</a></td>

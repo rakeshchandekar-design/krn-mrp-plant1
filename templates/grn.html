@@ -95,6 +95,7 @@
 
   <!-- GRN table -->
   <div class="card">
+    {% if report %}<div class="muted" style="margin-bottom:8px">Showing full GRN history for selected date range, including zero balance rows.</div>{% endif %}
     <table>
       <thead>
         <tr>
@@ -102,11 +103,12 @@
           <th>Date</th>
           <th>Supplier</th>
           <th>RM Type</th>
-          <th class="right">Qty (kg)</th>
+          <th class="right">Prepared Qty (kg)</th>
+          <th class="right">Balance Qty (kg)</th>
           <th class="right">Price (₹/kg)</th>
           <th class="right">Total Price (₹)</th>
-          <th class="right">Remaining (kg)</th>
-          <th class="right">Remaining Cost (₹)</th>
+          <th class="right">Balance Cost (₹)</th>
+          {% if is_admin %}<th>Action</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -119,9 +121,9 @@
             <td>{{ g.supplier }}</td>
             <td>{{ g.rm_type }}</td>
             <td class="right">{{ '%.1f' % (g.qty or 0) }}</td>
+            <td class="right">{% if (g.remaining_qty or 0) <= 0 %}<span style="color:#b91c1c;font-weight:600">0</span>{% else %}{{ '%.1f' % (g.remaining_qty or 0) }}{% endif %}</td>
             <td class="right">{{ '%.2f' % (g.price or 0) }}</td>
             <td class="right">{{ '%.2f' % total_price }}</td>
-            <td class="right">{{ '%.1f' % (g.remaining_qty or 0) }}</td>
             <td class="right">{{ '%.2f' % remaining_cost }}</td>
             {% if is_admin %}
             <td>

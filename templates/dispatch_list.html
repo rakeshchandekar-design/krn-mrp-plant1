@@ -5,6 +5,7 @@
 
 <div class="toolbar" style="margin:8px 0 12px; gap:8px; display:flex; flex-wrap:wrap">
   <a class="btn" href="/dispatch">← Back</a>
+  <a class="btn" href="/dispatch/create">Create Dispatch</a>
   <form method="get" action="/dispatch/orders" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
     <label>From</label><input type="date" name="from_date" value="{{ from_date or today }}">
     <label>To</label><input type="date" name="to_date" value="{{ to_date or today }}">

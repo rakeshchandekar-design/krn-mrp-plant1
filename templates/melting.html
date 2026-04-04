@@ -133,7 +133,7 @@
       </div>
     </div>
     <table>
-      <thead><tr><th>Heat</th><th>Type</th><th class="right">Output (kg)</th><th class="right">kWh/ton</th>{% if role == 'admin' %}<th class="right">Cost/kg (₹)</th>{% endif %}<th class="right">Yield %</th><th>QA</th><th>Trace</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Heat</th><th>Type</th><th class="right">Prepared (kg)</th><th class="right">Balance (kg)</th><th class="right">kWh/ton</th>{% if role == 'admin' %}<th class="right">Cost/kg (₹)</th>{% endif %}<th class="right">Yield %</th><th>QA</th><th>Trace</th><th>Actions</th></tr></thead>
       <tbody>
       {% for h in pending %}
         {% set g = heat_grades.get(h.id) %}
@@ -149,7 +149,8 @@
               <span class="badge badge-krip" style="color:#fff;background:#16a34a;">KRIP</span>
             {% endif %}
           </td>
-          <td class="right">{{ '%.1f' % (h.actual_output or 0) }}</td>
+          <td class="right">{{ '%.1f' % (h.prepared_qty or h.actual_output or 0) }}</td>
+          <td class="right">{% if (h.balance_qty or 0) <= 0 %}<span style="color:#b91c1c;font-weight:600">0</span>{% else %}{{ '%.1f' % (h.balance_qty or 0) }}{% endif %}</td>
           <td class="right">{{ '%.1f' % kwhpt }}</td>
           {% if role == 'admin' %}<td class="right">{{ '%.2f' % (h.unit_cost or 0) }}</td>{% endif %}
           <td class="right">{{ '%.1f' % ( ((h.actual_output or 0.0) / max((h.total_inputs or 0.0), 1e-9)) * 100.0 ) }}</td>
