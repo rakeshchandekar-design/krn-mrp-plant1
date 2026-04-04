@@ -205,6 +205,7 @@ async def dispatch_create_get(request: Request, dep: None = Depends(require_role
     return templates.TemplateResponse("dispatch_create.html", {
         "request": request,
         "rows": rows,
+        "customers": _dispatch_customers(True),
         "err": err,
         "is_admin": _is_admin(request),
         "today": date.today().isoformat(),

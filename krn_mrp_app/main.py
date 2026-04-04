@@ -3805,10 +3805,16 @@ def melting_page(
     rows = []
     for h in heats:
         avail = heat_available_fast(h, used_map)
+        prepared_qty = float(h.actual_output or 0.0)
+        balance_qty = max(float(avail or 0.0), 0.0)
+        setattr(h, "prepared_qty", prepared_qty)
+        setattr(h, "balance_qty", balance_qty)
         rows.append({
             "heat": h,
             "grade": heat_grade(h),
             "available": avail,
+            "prepared_qty": prepared_qty,
+            "balance_qty": balance_qty,
             "date": heat_date_from_no(h.heat_no) or dt.date.today(),
         })
 
@@ -3859,7 +3865,8 @@ def melting_page(
     except Exception:
         s_date, e_date = today, today
 
-    visible_heats = [r["heat"] for r in rows if s_date <= r["date"] <= e_date]
+    show_all_history = bool(start or end)
+    visible_heats = [r["heat"] for r in rows if s_date <= r["date"] <= e_date and (show_all_history or (r["balance_qty"] or 0.0) > 0.0001)]
     if all and int(all) == 1:
         visible_heats = [r["heat"] for r in rows if (r["available"] or 0.0) > 0.0]
 
@@ -3902,6 +3909,7 @@ def melting_page(
             "end": e,
             "power_target": POWER_TARGET_KWH_PER_TON,
             "trace_map": trace_map,
+            "showing_all_history": show_all_history,
 
             # ✅ new context for backdate selection
             "heat_date_max": today.isoformat(),
@@ -4297,6 +4305,17 @@ def atom_page(
         lots = db.query(Lot).order_by(Lot.id.desc()).all()
         lots = [lot for lot in lots if s_date <= (lot_date_from_no(lot.lot_no) or today) <= e_date]
 
+    show_all_history = bool(start or end)
+    visible_lots = []
+    for lot in lots:
+        prepared_qty = float(lot.weight or 0.0)
+        balance_qty = max(prepared_qty - float(rap_alloc_by_lot.get(int(lot.id), 0.0)), 0.0)
+        setattr(lot, "prepared_qty", prepared_qty)
+        setattr(lot, "balance_qty", balance_qty)
+        if show_all_history or balance_qty > 0.0001:
+            visible_lots.append(lot)
+    lots = visible_lots
+
     # NEW: read error banner text (if redirected with ?err=...)
     err = request.query_params.get("err")
 
@@ -4337,6 +4356,7 @@ def atom_page(
             "selected_lot_date": request.query_params.get("lot_date", dt.date.today().isoformat()),
             "heats": heats,
             "lots": lots,
+            "showing_all_history": show_all_history,
             "heat_grades": grades,
             "available_map": available_map,
             "start": s,
@@ -5560,7 +5580,7 @@ def atom_downtime_add(
 # RAP – Ready After Atomization (final)
 # -------------------------------------------------
 @app.get("/rap", response_class=HTMLResponse)
-def rap_page(request: Request, db: Session = Depends(get_db)):
+def rap_page(request: Request, start: Optional[str] = None, end: Optional[str] = None, db: Session = Depends(get_db)):
     if not role_allowed(request, {"admin", "rap"}):
         return RedirectResponse("/login", status_code=303)
     """
@@ -5621,13 +5641,39 @@ def rap_page(request: Request, db: Session = Depends(get_db)):
     today_iso = today.isoformat()
     min_date_iso = (today - dt.timedelta(days=3)).isoformat()
 
-    # ✅ Correct indentation here (only 4 spaces in, not 8)
+    show_all_history = bool(start or end)
+    s = start or today_iso
+    e = end or today_iso
+    try:
+        s_date = dt.date.fromisoformat(s)
+        e_date = dt.date.fromisoformat(e)
+    except Exception:
+        s_date = e_date = today
+        s = e = today_iso
+    if e_date < s_date:
+        s_date, e_date = e_date, s_date
+
+    rows_view = []
+    for r in rap_rows:
+        lot = r.lot
+        lot_dt = lot_date_from_no(lot.lot_no) or today
+        prepared_qty = float(lot.weight or 0.0)
+        balance_qty = float(r.available_qty or 0.0)
+        setattr(r, "prepared_qty", prepared_qty)
+        setattr(r, "balance_qty", balance_qty)
+        if s_date <= lot_dt <= e_date and (show_all_history or balance_qty > 0.0001):
+            rows_view.append(r)
+
     return templates.TemplateResponse(
         "rap.html",
         {
             "request": request,
             "role": current_role(request),
             "rows": rap_rows,
+            "rows_view": rows_view,
+            "showing_all_history": show_all_history,
+            "start": s,
+            "end": e,
             "kpi": kpi,
             "kpi_trends": kpi_trends,
             "today": today_iso,
