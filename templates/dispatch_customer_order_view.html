@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Customer Order — {{ head.order_no }}</h2>
+<div class="toolbar" style="margin:8px 0 12px; gap:8px; display:flex; flex-wrap:wrap;">
+  <a class="btn" href="/dispatch/customer-orders">← Back to Customer Orders</a>
+  {% if head.total_pending_kg > 0 %}<a class="btn" href="/dispatch/create?sales_order_id={{ head.id }}">Create Dispatch</a>{% endif %}
+</div>
+<p class="muted">Date: {{ head.order_date }} | Customer: {{ head.customer_name }} | Status: {{ head.status }} | Ordered: {{ '%.1f'|format(head.total_ordered_kg or 0) }} kg | Dispatched: {{ '%.1f'|format(head.total_dispatched_kg or 0) }} kg | Pending: {{ '%.1f'|format(head.total_pending_kg or 0) }} kg</p>
+<table class="table">
+  <tr><th>FG Grade</th><th>Ordered (kg)</th><th>Dispatched (kg)</th><th>Pending (kg)</th><th>Remarks</th></tr>
+  {% for it in items %}
+  <tr>
+    <td>{{ it.fg_grade }}</td>
+    <td>{{ '%.1f'|format(it.ordered_qty_kg or 0) }}</td>
+    <td>{{ '%.1f'|format(it.dispatched_qty_kg or 0) }}</td>
+    <td>{{ '%.1f'|format(it.pending_qty_kg or 0) }}</td>
+    <td>{{ it.remarks or '' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

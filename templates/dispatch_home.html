@@ -5,7 +5,8 @@
 
   <div class="actions-top">
     <a class="btn btn-primary" href="/dispatch/create">Create Dispatch</a>
-    <a class="btn" href="/dispatch/orders">View Orders</a>
+    <a class="btn" href="/dispatch/customer-orders">Customer Orders</a>
+    <a class="btn" href="/dispatch/orders">Dispatch History</a>
   </div>
 
   <div class="summary-cards">
@@ -16,9 +17,16 @@
         <tr><th>Total available (kg)</th><td>{{ '%.1f'|format(total_avail or 0) }}</td></tr>
       </table>
     </div>
-    <div class="card table-card" style="grid-column:span 2">
+    <div class="card table-card">
+      <h3>Open Customer Orders</h3>
+      <table class="table small">
+        <tr><th>Total open / partial</th><td>{{ open_orders|length }}</td></tr>
+        <tr><th>Total pending (kg)</th><td>{{ '%.1f'|format((open_orders|sum(attribute='total_pending_kg')) or 0) }}</td></tr>
+      </table>
+    </div>
+    <div class="card table-card">
       <h3>Dispatch Pool</h3>
-      <div class="compact-muted">Only approved FG lots with available balance should be used for dispatch creation. Use View Orders for dispatch history and line-by-line order status.</div>
+      <div class="compact-muted">Use Customer Orders to register customer demand first, then Create Dispatch against that order for execution and traceability.</div>
     </div>
   </div>
 
