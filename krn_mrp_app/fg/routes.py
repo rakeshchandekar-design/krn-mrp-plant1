@@ -377,6 +377,101 @@ def fetch_fg_source_balance(fg_grade: str) -> List[Dict[str, Any]]:
 
     return sorted(rows, key=lambda r: (str(r.get("date") or ""), str(r.get("lot_no") or "")), reverse=True)
 
+
+def fetch_fg_source_debug(fg_grade: str) -> List[Dict[str, Any]]:
+    """Admin-only diagnostic view to explain why a grinding lot is or is not eligible for FG."""
+    grade = (fg_grade or "").strip().upper()
+    family_needed = _fg_family_for_grade(fg_grade)
+    oversize_mode = "P80" if grade.endswith("40.29") else ("P40" if grade.endswith("20") else "MAIN")
+
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT id, lot_no, date, grade,
+                   COALESCE(weight_kg,0)::float       AS weight_kg,
+                   COALESCE(cost_per_kg,0)::float     AS grind_cost_per_kg,
+                   COALESCE(oversize_p80_kg,0)::float AS p80,
+                   COALESCE(oversize_p40_kg,0)::float AS p40,
+                   UPPER(COALESCE(qa_status,''))      AS qa_status
+            FROM grinding_lots
+            ORDER BY date DESC, id DESC
+        """)).mappings().all()
+        main_used, ov80_used, ov40_used = _load_fg_allocations_used(conn)
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        lot_no = str(r.get("lot_no") or "")
+        grade_text = str(r.get("grade") or "")
+        family = _family_from_grade_text(grade_text)
+        qa_status = str(r.get("qa_status") or "").strip().upper()
+        weight = float(r.get("weight_kg") or 0.0)
+        p80 = float(r.get("p80") or 0.0)
+        p40 = float(r.get("p40") or 0.0)
+        main_qty = max(0.0, weight - p80 - p40)
+        main_used_qty = float(main_used.get(lot_no, 0.0))
+        ov80_used_qty = float(ov80_used.get(lot_no, 0.0))
+        ov40_used_qty = float(ov40_used.get(lot_no, 0.0))
+        main_avail = max(0.0, main_qty - main_used_qty)
+        p80_avail = max(0.0, p80 - ov80_used_qty)
+        p40_avail = max(0.0, p40 - ov40_used_qty)
+
+        eligible = False
+        reason = ""
+        available_kg = 0.0
+        source_type = oversize_mode
+
+        if qa_status != "APPROVED":
+            reason = f"QA status is {qa_status or 'BLANK'}"
+        elif oversize_mode == "MAIN":
+            source_type = "MAIN"
+            available_kg = main_avail
+            if family != family_needed and not _family_matches_grade(grade_text, family_needed):
+                reason = f"Family mismatch: resolved {family or '-'} vs needed {family_needed or '-'}"
+            elif available_kg <= 0.0001:
+                reason = f"No main balance: net 0.0 (main {main_qty:.1f} - used {main_used_qty:.1f})"
+            else:
+                eligible = True
+                reason = "Eligible"
+        elif oversize_mode == "P80":
+            source_type = "OV80"
+            available_kg = p80_avail
+            if family != family_needed and not _family_matches_grade(grade_text, family_needed):
+                reason = f"Family mismatch: resolved {family or '-'} vs needed {family_needed or '-'}"
+            elif available_kg <= 0.0001:
+                reason = f"No +80 balance: net 0.0 ({p80:.1f} - used {ov80_used_qty:.1f})"
+            else:
+                eligible = True
+                reason = "Eligible"
+        else:
+            source_type = "OV40"
+            available_kg = p40_avail
+            if family != family_needed and not _family_matches_grade(grade_text, family_needed):
+                reason = f"Family mismatch: resolved {family or '-'} vs needed {family_needed or '-'}"
+            elif available_kg <= 0.0001:
+                reason = f"No +40 balance: net 0.0 ({p40:.1f} - used {ov40_used_qty:.1f})"
+            else:
+                eligible = True
+                reason = "Eligible"
+
+        out.append({
+            "lot_no": lot_no,
+            "date": r.get("date"),
+            "grade": grade_text,
+            "family": family,
+            "qa_status": qa_status,
+            "source_type": source_type,
+            "main_qty": main_qty,
+            "main_used_qty": main_used_qty,
+            "p80_qty": p80,
+            "p80_used_qty": ov80_used_qty,
+            "p40_qty": p40,
+            "p40_used_qty": ov40_used_qty,
+            "available_kg": available_kg,
+            "eligible": eligible,
+            "reason": reason,
+        })
+
+    return out
+
 def _fg_family_for_grade(fg_grade: str) -> str:
     return FG_FAMILY.get(fg_grade, "KIP")
 
@@ -494,12 +589,14 @@ async def fg_create_get(request: Request, dep: None = Depends(require_roles("fg"
     err = request.query_params.get("err", "")
     selected_fg_grade = request.query_params.get("fg_grade", "")
     rows = fetch_fg_source_balance(selected_fg_grade) if selected_fg_grade else []
+    debug_rows = fetch_fg_source_debug(selected_fg_grade) if selected_fg_grade and _is_admin(request) else []
     today = date.today()
     min_date = (today - timedelta(days=4)).isoformat()
     selected_lot_date = request.query_params.get("lot_date", today.isoformat())
     return templates.TemplateResponse("fg_create.html", {
         "request": request,
         "src_rows": rows,
+        "debug_rows": debug_rows,
         "selected_fg_grade": selected_fg_grade,
         "selected_lot_date": selected_lot_date,
         "grades": sorted(FG_SURCHARGE.keys()),

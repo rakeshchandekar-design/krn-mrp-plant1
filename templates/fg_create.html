@@ -44,6 +44,29 @@
     </tr>
   </table>
 
+  {% if is_admin and selected_fg_grade and debug_rows %}
+  <h3 style="margin-top:18px">FG Source Debug (Admin Only)</h3>
+  <div class="muted" style="margin-bottom:8px">This section shows why a grinding lot is eligible or hidden for the selected FG grade.</div>
+  <table class="table table-sm">
+    <tr>
+      <th>Lot No</th><th>Date</th><th>Grade</th><th>Family</th><th>QA</th><th>Mode</th><th>Avail (kg)</th><th>Status</th><th>Reason</th>
+    </tr>
+    {% for r in debug_rows %}
+    <tr {% if not r.eligible %}style="background:#fff7ed"{% endif %}>
+      <td>{{ r.lot_no }}</td>
+      <td>{{ r.date }}</td>
+      <td>{{ r.grade }}</td>
+      <td>{{ r.family }}</td>
+      <td>{{ r.qa_status }}</td>
+      <td>{{ r.source_type }}</td>
+      <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
+      <td>{% if r.eligible %}<span class="badge bg-success">Eligible</span>{% else %}<span class="badge" style="background:#f59e0b;color:#111827">Hidden</span>{% endif %}</td>
+      <td style="max-width:360px">{{ r.reason }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
   <div id="client_err" class="alert alert-danger" style="display:none;margin:10px 0"></div>
   <button id="submitBtn" class="btn btn-primary" type="submit" disabled>Create FG Lot</button>
 </form>
