@@ -4,55 +4,74 @@
   @media print { .no-print { display:none } }
   .right { text-align:right }
   .muted { color:#6b7280 }
-  .card { border:1px solid #e5e7eb; border-radius:8px; padding:10px; margin:10px 0 }
+  .card { border:1px solid #d9e0ea; border-radius:10px; padding:12px; margin:12px 0; background:#fff }
   table { border-collapse:collapse; width:100% }
-  th, td { border:1px solid #e5e7eb; padding:6px 8px; text-align:left }
+  th, td { border:1px solid #d9e0ea; padding:7px 9px; text-align:left }
+  th { background:#f6f8fb }
+  .brand-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .brand-head img{height:54px}
 </style>
 
-{% set admin = request.state.role is defined and request.state.role|string == 'admin' %}
-<h2>Certificate of Analysis — {{ header.lot_no }}</h2>
+<div class="brand-head">
+  <div>
+    <h2 style="margin:0;color:#0b2e59">KRN Alloys Pvt Ltd</h2>
+    <div class="muted">Certificate of Analysis</div>
+  </div>
+  <img src="/static/KRN_Logo.png" alt="KRN">
+</div>
+
+<h2 style="margin:0 0 10px 0;">{{ header.lot_no }}</h2>
 <p class="muted">
-  Date: {{ header.date }} | Family: {{ header.family }} | Grade: {{ header.fg_grade }} |
+  Date: {{ header.date }} |
+  Family: {{ header.family }} |
+  Grade: {{ header.fg_grade }} |
   Weight: {{ '%.0f'|format(header.weight_kg or 0) }} kg
 </p>
 
-{% if admin %}
 <div class="card">
-  <h3 style="margin:0 0 6px 0;">Cost Summary</h3>
-  <table style="width:auto">
-    <tr><th>Base Cost/kg</th><td class="right">₹{{ '%.2f'|format(header.base_cost_per_kg or 0) }}</td></tr>
-    <tr><th>Surcharge/kg</th><td class="right">₹{{ '%.2f'|format(header.surcharge_per_kg or 0) }}</td></tr>
-    <tr><th>Final Cost/kg</th><td class="right">₹{{ '%.2f'|format(header.cost_per_kg or 0) }}</td></tr>
-  </table>
-</div>
-{% endif %}
-
-<div class="card">
-  <h3 style="margin:0 0 6px 0;">Grinding Allocations</h3>
+  <h3 style="margin:0 0 8px 0;">Source Allocation</h3>
   <table>
-    <tr><th>Grinding Lot</th><th>Family</th><th class="right">Qty (kg)</th><th class="right">Cost/kg (₹)</th><th class="right">Value (₹)</th></tr>
+    <tr>
+      <th>Grinding Lot</th>
+      <th>Grade</th>
+      <th class="right">Qty (kg)</th>
+      <th class="right">Cost/kg (₹)</th>
+    </tr>
     {% for r in grind_rows %}
-      {% set row_val = (r.allocated_kg or 0) * (r.grind_cost_per_kg or 0) %}
-      <tr>
-        <td>{{ r.grind_lot_no }}</td>
-        <td>{{ r.grind_grade }}</td>
-        <td class="right">{{ '%.2f'|format(r.allocated_kg or 0) }}</td>
-        <td class="right">{{ '%.2f'|format(r.grind_cost_per_kg or 0) }}</td>
-        <td class="right">{{ admin and ('%.2f'|format(row_val)) or '-' }}</td>
-      </tr>
+    <tr>
+      <td>{{ r.grind_lot_no }}</td>
+      <td>{{ r.grind_grade }}</td>
+      <td class="right">{{ '%.2f'|format(r.allocated_kg or 0) }}</td>
+      <td class="right">{{ '%.2f'|format(r.grind_cost_per_kg or 0) }}</td>
+    </tr>
     {% endfor %}
   </table>
 </div>
 
 <div class="card">
-  <h3 style="margin:0 0 6px 0;">QA Parameters (Auto-derived)</h3>
-  <p class="muted">Parameters were auto-fetched from source Grinding QA by weighted average.</p>
-  <table style="width:auto">
+  <h3 style="margin:0 0 8px 0;">QA Parameters</h3>
+  <table>
     <tr><th>Parameter</th><th>Value</th></tr>
-    {% for k,v in ( ({}).items() ) %}{% endfor %}
-    {# values shown on QA form — CoA often lists chem/physical per your format. If you wish, embed names/values after storing on fg_qa_params; or render from /fg/qa latest snapshot #}
+    {% if qa and qa.params %}
+      {% for r in qa.params %}
+      <tr>
+        <td>{{ r.name }}</td>
+        <td>{{ r.value }}</td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="2">No QA parameters available</td></tr>
+    {% endif %}
   </table>
 </div>
 
-<p class="no-print"><button class="btn" onclick="window.print()">Print / Save as PDF</button></p>
+<div class="card">
+  <h3 style="margin:0 0 8px 0;">Traceability</h3>
+  <p><strong>FG Trace ID:</strong> {{ header.trace_id or header.lot_no }}</p>
+  <p class="muted">For complete upstream traceability till RM, open the full trace thread from the system using this Trace ID.</p>
+</div>
+
+<p class="no-print">
+  <button class="btn" onclick="window.print()">Print / Save as PDF</button>
+</p>
 {% endblock %}

@@ -196,8 +196,7 @@ def fetch_grind_balance() -> List[Dict[str, Any]]:
             main_qty = 0.0
         avail = main_qty - float(main_used.get(ln, 0.0))
         if avail > 0.0001:
-            g = (r["grade"] or "").strip().upper()
-            family = "KIPM" if g.startswith("KIPM") else ("KSP" if g.startswith("KSP") else ("KIP" if g.startswith("KIP") else ("KFS" if g.startswith("KFS") else "KIP")))
+            family = _family_from_grade_text(r.get("grade") or "")
             out.append({
                 "source_type": "MAIN",
                 "grind_id": r["id"],
@@ -264,14 +263,33 @@ def fetch_oversize_balance(kind: str, family_needed: str | None = None) -> List[
     return out
 
 
+def _family_matches_grade(value: str, family_needed: str) -> bool:
+    fam = (family_needed or "").strip().upper()
+    if not fam:
+        return True
+    return _family_from_grade_text(value) == fam
+
+
 def fetch_fg_source_balance(fg_grade: str) -> List[Dict[str, Any]]:
     grade = (fg_grade or "").strip().upper()
     family_needed = _fg_family_for_grade(fg_grade)
+
     if grade.endswith("40.29"):
-        return fetch_oversize_balance("P80", family_needed=family_needed)
+        rows = fetch_oversize_balance("P80", family_needed=family_needed)
+        return sorted(rows, key=lambda r: (str(r.get("date") or ""), str(r.get("lot_no") or "")), reverse=True)
+
     if grade.endswith("20"):
-        return fetch_oversize_balance("P40", family_needed=family_needed)
-    return [r for r in fetch_grind_balance() if r.get("family") == family_needed]
+        rows = fetch_oversize_balance("P40", family_needed=family_needed)
+        return sorted(rows, key=lambda r: (str(r.get("date") or ""), str(r.get("lot_no") or "")), reverse=True)
+
+    rows = []
+    for r in fetch_grind_balance():
+        fam = (r.get("family") or "").strip().upper()
+        grade_text = str(r.get("grade") or "")
+        if fam == family_needed or _family_matches_grade(grade_text, family_needed):
+            rows.append(r)
+
+    return sorted(rows, key=lambda r: (str(r.get("date") or ""), str(r.get("lot_no") or "")), reverse=True)
 
 def _fg_family_for_grade(fg_grade: str) -> str:
     return FG_FAMILY.get(fg_grade, "KIP")
@@ -578,7 +596,7 @@ def _fetch_fg_header(conn, lot_id: int) -> Optional[Dict[str, Any]]:
     row = conn.execute(text("""
         SELECT id, date, lot_no, family, fg_grade, weight_kg,
                base_cost_per_kg, surcharge_per_kg, cost_per_kg,
-               src_alloc_json, qa_status, remarks
+               src_alloc_json, qa_status, remarks, trace_id, job_card_no
         FROM fg_lots WHERE id=:id
     """), {"id": lot_id}).mappings().first()
     return dict(row) if row else None
@@ -586,33 +604,60 @@ def _fetch_fg_header(conn, lot_id: int) -> Optional[Dict[str, Any]]:
 def _fetch_grind_rows_for_alloc(conn, alloc_map: Dict[str, float]) -> List[Dict[str, Any]]:
     if not alloc_map:
         return []
-    lot_nos = list(alloc_map.keys())
-    rows = conn.execute(text("""
-        SELECT id, lot_no, grade, cost_per_kg
-        FROM grinding_lots
-        WHERE lot_no = ANY(:lot_nos)
-        ORDER BY id
-    """), {"lot_nos": lot_nos}).mappings().all()
-    out = []
-    for r in rows:
-        ln = r["lot_no"]
-        out.append({
-            "grind_id": r["id"], "grind_lot_no": ln, "grind_grade": r["grade"],
-            "grind_cost_per_kg": float(r["cost_per_kg"] or 0.0),
-            "allocated_kg": float(alloc_map.get(ln, 0.0)),
-        })
-    # include unmapped if any
-    known = {r["grind_lot_no"] for r in out}
-    for ln, q in alloc_map.items():
-        if ln not in known:
+
+    lot_nos = [str(k) for k in alloc_map.keys() if not str(k).startswith("OV80|") and not str(k).startswith("OV40|")]
+    out: List[Dict[str, Any]] = []
+    known = set()
+
+    if lot_nos:
+        rows = conn.execute(text("""
+            SELECT id, lot_no, grade, trace_id, cost_per_kg
+            FROM grinding_lots
+            WHERE lot_no = ANY(:lot_nos)
+            ORDER BY id
+        """), {"lot_nos": lot_nos}).mappings().all()
+
+        for r in rows:
+            ln = r["lot_no"]
+            known.add(ln)
             out.append({
-                "grind_id": None, "grind_lot_no": ln, "grind_grade": "",
-                "grind_cost_per_kg": 0.0, "allocated_kg": float(q or 0.0),
+                "grind_id": r["id"],
+                "grind_lot_no": ln,
+                "grind_grade": r["grade"],
+                "grind_trace_id": str(r.get("trace_id") or ""),
+                "grind_cost_per_kg": float(r["cost_per_kg"] or 0.0),
+                "allocated_kg": float(alloc_map.get(ln, 0.0)),
             })
+
+    for raw_key, q in alloc_map.items():
+        key = str(raw_key)
+        if key in known:
+            continue
+        if key.startswith("OV80|") or key.startswith("OV40|"):
+            parts = key.split("|", 1)
+            src_lot = parts[1] if len(parts) > 1 else key
+            out.append({
+                "grind_id": None,
+                "grind_lot_no": src_lot,
+                "grind_grade": "Oversize +80" if key.startswith("OV80|") else "Oversize +40",
+                "grind_trace_id": "",
+                "grind_cost_per_kg": 0.0,
+                "allocated_kg": float(q or 0.0),
+            })
+        else:
+            out.append({
+                "grind_id": None,
+                "grind_lot_no": key,
+                "grind_grade": "",
+                "grind_trace_id": "",
+                "grind_cost_per_kg": 0.0,
+                "allocated_kg": float(q or 0.0),
+            })
+
     return out
 
 @router.get("/trace/{fg_id}", response_class=HTMLResponse)
-async def fg_trace_view(request: Request, fg_id: int, dep: None = Depends(require_roles("admin","fg","view"))):
+async def fg_trace_view(request: Request, fg_id: int, dep: None = Depends(require_roles("admin","fg","view","qa"))):
     with engine.begin() as conn:
         header = _fetch_fg_header(conn, fg_id)
         if not header: raise HTTPException(status_code=404, detail="FG lot not found")
@@ -627,7 +672,7 @@ async def fg_trace_view(request: Request, fg_id: int, dep: None = Depends(requir
     })
 
 @router.get("/pdf/{fg_id}", response_class=HTMLResponse)
-async def fg_pdf_view(request: Request, fg_id: int, dep: None = Depends(require_roles("admin","fg","view"))):
+async def fg_pdf_view(request: Request, fg_id: int, dep: None = Depends(require_roles("admin","fg","view","qa"))):
     with engine.begin() as conn:
         header = _fetch_fg_header(conn, fg_id)
         if not header: raise HTTPException(status_code=404, detail="FG lot not found")
@@ -732,10 +777,27 @@ def _avg_from_grinding_for_fg(conn, fg_header: Dict[str, Any]) -> Dict[str, floa
 
 def _fetch_latest_fg_qa_full(conn, fg_id: int) -> Optional[Dict[str, Any]]:
     qa = _get_latest_fg_qa(conn, fg_id)
-    if not qa:
+    params: Dict[str, Any] = {}
+    header = {"decision": "PENDING", "remarks": ""}
+
+    if qa:
+        header = qa
+        params = _get_params_for_fg_qa(conn, qa["id"]) or {}
+
+    if not params:
+        fg_header = _fetch_fg_header(conn, fg_id)
+        if fg_header:
+            params = {k: f"{v:.4f}" for k, v in _avg_from_grinding_for_fg(conn, fg_header).items()}
+
+    param_rows = [
+        {"name": k, "value": v, "unit": "", "spec_min": "", "spec_max": ""}
+        for k, v in params.items()
+    ]
+
+    if not qa and not param_rows:
         return None
-    params = _get_params_for_fg_qa(conn, qa["id"])
-    return {"header": qa, "params": [{"name": k, "value": v, "unit": "", "spec_min": "", "spec_max": ""} for k, v in params.items()]}
+
+    return {"header": header, "params": param_rows}
 
 @router.get("/qa/{fg_id}", response_class=HTMLResponse)
 async def fg_qa_form(request: Request, fg_id: int, dep: None = Depends(require_roles("admin","qa","fg"))):
@@ -803,7 +865,7 @@ async def fg_qa_save(
 
 
 @router.get("/jobcard/{fg_id}", response_class=HTMLResponse)
-async def fg_jobcard(request: Request, fg_id: int, dep: None = Depends(require_roles("admin","fg","view"))):
+async def fg_jobcard(request: Request, fg_id: int, dep: None = Depends(require_roles("admin","fg","view","qa"))):
     with engine.begin() as conn:
         head = conn.execute(text("SELECT * FROM fg_lots WHERE id=:id"), {"id": fg_id}).mappings().first()
         if not head: raise HTTPException(404, "FG lot not found")
