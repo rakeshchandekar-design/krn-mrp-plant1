@@ -231,15 +231,38 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
             {"d5": today - timedelta(days=4)}
         ).mappings().all()
 
-        # live stock by grade (simple: sum of lot weights)
-        live_stock = conn.execute(
+        # Live stock must reflect CURRENT AVAILABLE BALANCE, not all historical anneal lots.
+        # Net available = approved anneal qty - grinding allocations already consumed.
+        used_by_lotno: dict[str, float] = {}
+        if _table_exists(conn, "grinding_lots"):
+            for (alloc_json,) in conn.execute(text("SELECT src_alloc_json FROM grinding_lots")).all():
+                if not alloc_json:
+                    continue
+                try:
+                    data = json.loads(alloc_json)
+                    for lot_no, qty in data.items():
+                        used_by_lotno[str(lot_no)] = used_by_lotno.get(str(lot_no), 0.0) + float(qty or 0.0)
+                except Exception:
+                    pass
+
+        live_bucket: dict[str, float] = {}
+        live_rows = conn.execute(
             text("""
-                SELECT grade, COALESCE(SUM(weight_kg),0) AS qty
+                SELECT lot_no, grade, COALESCE(weight_kg,0)::float AS weight_kg,
+                       COALESCE(qa_status,'') AS qa_status
                 FROM anneal_lots
-                GROUP BY grade
-                ORDER BY grade
+                WHERE UPPER(COALESCE(qa_status,''))='APPROVED'
+                ORDER BY id DESC
             """)
         ).mappings().all()
+        for r in live_rows:
+            lot_no = str(r.get("lot_no") or "")
+            avail = float(r.get("weight_kg") or 0.0) - float(used_by_lotno.get(lot_no, 0.0))
+            if avail <= 0.0001:
+                continue
+            grade = str(r.get("grade") or "").strip().upper() or ""
+            live_bucket[grade] = live_bucket.get(grade, 0.0) + avail
+        live_stock = [{"grade": g, "qty": q} for g, q in sorted(live_bucket.items())]
 
         # ammonia gas – yesterday and month-to-date
         nh3_yday = conn.execute(

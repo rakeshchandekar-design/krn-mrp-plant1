@@ -122,10 +122,30 @@ async def grind_home(request: Request, dep: None = Depends(require_roles("admin"
             FROM grinding_lots WHERE date >= :d5
             GROUP BY date ORDER BY date DESC
         """), {"d5": today - timedelta(days=4)}).mappings().all()
-        live_stock = conn.execute(text("""
-            SELECT grade, COALESCE(SUM(weight_kg),0) AS qty
-            FROM grinding_lots GROUP BY grade ORDER BY grade
+        # Live stock must reflect CURRENT AVAILABLE BALANCE, not all historical lots created.
+        # Net available = approved grinding main qty - valid FG allocations already consumed.
+        main_used, _ov80_used, _ov40_used = _load_fg_allocations_used(conn)
+        live_bucket: Dict[str, float] = {}
+        live_rows = conn.execute(text("""
+            SELECT lot_no, grade,
+                   COALESCE(weight_kg,0)::float AS weight_kg,
+                   COALESCE(oversize_p80_kg,0)::float AS p80,
+                   COALESCE(oversize_p40_kg,0)::float AS p40,
+                   COALESCE(qa_status,'') AS qa_status
+            FROM grinding_lots
+            WHERE UPPER(COALESCE(qa_status,''))='APPROVED'
+            ORDER BY id DESC
         """)).mappings().all()
+        for r in live_rows:
+            main_qty = float(r["weight_kg"] or 0.0) - float(r.get("p80") or 0.0) - float(r.get("p40") or 0.0)
+            if main_qty < 0:
+                main_qty = 0.0
+            avail = main_qty - float(main_used.get(str(r.get("lot_no") or ""), 0.0))
+            if avail <= 0.0001:
+                continue
+            grade = str(r.get("grade") or "").strip().upper() or "KIP"
+            live_bucket[grade] = float(live_bucket.get(grade, 0.0)) + avail
+        live_stock = [{"grade": g, "qty": q} for g, q in sorted(live_bucket.items())]
         oversize_monitor = conn.execute(text("""
             SELECT
               CASE
