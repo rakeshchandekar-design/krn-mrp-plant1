@@ -140,7 +140,15 @@
         {% set kwhpt = ( (h.power_kwh or 0) > 0 and (h.actual_output or 0) > 0 ) and ( (h.power_kwh / h.actual_output) * 1000 ) or 0 %}
         <tr>
           <td>{{ h.heat_no }}</td>
-          <td>{% if g == 'KRM' %}<span class="badge badge-krm">KRM (KRN)</span>{% elif g == 'KRFS' %}<span class="badge badge-krfs">KRFS (FeSi)</span>{% else %}<span class="badge badge-krip">KRIP</span>{% endif %}</td>
+          <td>
+            {% if g == 'KRM' %}
+              <span class="badge badge-krm" style="color:#fff;background:#f59e0b;">KRM (KRN)</span>
+            {% elif g == 'KRFS' %}
+              <span class="badge badge-krfs" style="color:#fff;background:#0ea5e9;">KRFS (FeSi)</span>
+            {% else %}
+              <span class="badge badge-krip" style="color:#fff;background:#16a34a;">KRIP</span>
+            {% endif %}
+          </td>
           <td class="right">{{ '%.1f' % (h.actual_output or 0) }}</td>
           <td class="right">{{ '%.1f' % kwhpt }}</td>
           {% if role == 'admin' %}<td class="right">{{ '%.2f' % (h.unit_cost or 0) }}</td>{% endif %}

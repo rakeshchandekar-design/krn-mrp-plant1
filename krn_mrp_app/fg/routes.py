@@ -146,20 +146,52 @@ def _table_exists(conn, name: str) -> bool:
         return False
 
 def _load_fg_allocations_used(conn) -> tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
-    """Split FG allocations into main grinding, +80 oversize and +40 oversize usage."""
+    """Split FG allocations into main grinding, +80 oversize and +40 oversize usage.
+    Ignore legacy / void / rejected FG rows so old bad data does not block valid grinding stock.
+    """
     main_used: Dict[str, float] = {}
     ov80_used: Dict[str, float] = {}
     ov40_used: Dict[str, float] = {}
     if not _table_exists(conn, "fg_lots"):
         return main_used, ov80_used, ov40_used
 
-    for (alloc_json,) in conn.execute(text("SELECT src_alloc_json FROM fg_lots")).all():
+    cols = set()
+    try:
+        if str(engine.url).startswith("sqlite"):
+            cols = {str(r[1]).lower() for r in conn.execute(text("PRAGMA table_info(fg_lots)"))}
+        else:
+            cols = {str(r[0]).lower() for r in conn.execute(text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='fg_lots'
+            """)).all()}
+    except Exception:
+        cols = set()
+
+    select_cols = ["src_alloc_json"]
+    if "qa_status" in cols:
+        select_cols.append("qa_status")
+    if "status" in cols:
+        select_cols.append("status")
+    sql = f"SELECT {', '.join(select_cols)} FROM fg_lots"
+
+    for row in conn.execute(text(sql)).mappings().all():
+        qa_status = str((row.get("qa_status") if "qa_status" in row else "") or "").strip().upper()
+        status = str((row.get("status") if "status" in row else "") or "").strip().upper()
+        if qa_status in {"REJECTED", "CANCELLED", "VOID", "DELETED"}:
+            continue
+        if status in {"VOID", "CANCELLED", "DELETED"}:
+            continue
+
+        alloc_json = row.get("src_alloc_json")
         if not alloc_json:
             continue
         try:
             d = json.loads(alloc_json)
             for key, qty in d.items():
                 q = float(qty or 0.0)
+                if q <= 0:
+                    continue
                 if key.startswith("OV80|"):
                     lot_no = key.split("|", 1)[1]
                     ov80_used[lot_no] = ov80_used.get(lot_no, 0.0) + q
