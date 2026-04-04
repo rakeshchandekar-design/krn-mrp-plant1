@@ -4249,7 +4249,9 @@ def atom_page(
     for lid, s in rap_pairs:
         rap_alloc_by_lot[int(lid)] = float(s or 0.0)
 
-    for lot in lots:
+    # Use a dedicated lot query for stock so table-range filtering below does not affect WIP totals.
+    stock_lots = db.query(Lot).order_by(Lot.id.desc()).all()
+    for lot in stock_lots:
         gross = float(lot.weight or 0.0)
         rap_taken = rap_alloc_by_lot.get(lot.id, 0.0)
         qty = max(gross - rap_taken, 0.0)
@@ -4257,9 +4259,11 @@ def atom_page(
             continue
         val = qty * float(lot.unit_cost or 0.0)
         if (lot.grade or "KRIP") == "KRFS":
-            stock["KRFS_qty"] += qty; stock["KRFS_val"] += val
+            stock["KRFS_qty"] += qty
+            stock["KRFS_val"] += val
         else:
-            stock["KRIP_qty"] += qty; stock["KRIP_val"] += val
+            stock["KRIP_qty"] += qty
+            stock["KRIP_val"] += val
 
     # NEW: lowercase keys for the template (fixes NameError)
     lots_stock = {
