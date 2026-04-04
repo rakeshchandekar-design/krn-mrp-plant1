@@ -175,12 +175,24 @@ def _load_fg_allocations_used(conn) -> tuple[Dict[str, float], Dict[str, float],
         select_cols.append("status")
     sql = f"SELECT {', '.join(select_cols)} FROM fg_lots"
 
+    active_qa_statuses = {"APPROVED", "PENDING", "HOLD"}
+    ignored_qa_statuses = {"REJECTED", "CANCELLED", "VOID", "DELETED"}
+    ignored_statuses = {"VOID", "CANCELLED", "DELETED"}
+
     for row in conn.execute(text(sql)).mappings().all():
         qa_status = str((row.get("qa_status") if "qa_status" in row else "") or "").strip().upper()
         status = str((row.get("status") if "status" in row else "") or "").strip().upper()
-        if qa_status in {"REJECTED", "CANCELLED", "VOID", "DELETED"}:
+
+        if qa_status in ignored_qa_statuses:
             continue
-        if status in {"VOID", "CANCELLED", "DELETED"}:
+        if status in ignored_statuses:
+            continue
+
+        # Older FG rows created during patch phases sometimes have blank/legacy QA status
+        # but still carry src_alloc_json. Those rows must not block valid grinding source lots.
+        if "qa_status" in row and qa_status and qa_status not in active_qa_statuses:
+            continue
+        if "qa_status" in row and not qa_status:
             continue
 
         alloc_json = row.get("src_alloc_json")
