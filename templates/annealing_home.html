@@ -12,15 +12,15 @@
 
   <div class="summary-cards">
     <div class="card table-card">
-      <h3>KPIs (Today)</h3>
+      <h3>KPIs (Yesterday)</h3>
       <table class="table small">
         <tr><th>Target (kg / 24h)</th><td>{{ target }}</td></tr>
-        <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
-        <tr><th>Efficiency Today (%)</th><td>{{ '%.1f'|format(eff_today or 0) }}</td></tr>
-        <tr><th>Ammonia Today (kg)</th><td>{{ '%.2f'|format(nh3_today or 0) }}</td></tr>
+        <tr><th>Produced Yesterday (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
+        <tr><th>Efficiency Yesterday (%)</th><td>{{ '%.1f'|format(eff_today or 0) }}</td></tr>
+        <tr><th>Ammonia Yesterday (kg)</th><td>{{ '%.2f'|format(nh3_today or 0) }}</td></tr>
         {% if admin %}
-          <tr><th>Avg Cost Today (₹/kg)</th><td>{{ '%.2f'|format(avg_cost_today or 0) }}</td></tr>
-          <tr><th>Weighted Cost Today (₹/kg)</th><td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td></tr>
+          <tr><th>Avg Cost Yesterday (₹/kg)</th><td>{{ '%.2f'|format(avg_cost_today or 0) }}</td></tr>
+          <tr><th>Weighted Cost Yesterday (₹/kg)</th><td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td></tr>
         {% endif %}
       </table>
     </div>

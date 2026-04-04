@@ -17,20 +17,28 @@
       <input type="date" name="date" value="{{ today }}" required>
     </div>
     <div>
+      <label>Customer Master</label>
+      <select name="customer_master" id="customer_master" onchange="fillCustomerFromMaster()">
+        <option value="">Select customer</option>
+        {% for c in customers or [] %}<option value="{{ c.customer_name }}" data-gstin="{{ c.customer_gstin or '' }}" data-contact="{{ c.contact or '' }}" data-address="{{ c.customer_address or '' }}">{{ c.customer_name }}</option>{% endfor %}
+      </select>
+      {% if is_admin %}<div style="margin-top:6px"><a class="btn" href="/dispatch/customers">Manage Customers</a></div>{% endif %}
+    </div>
+    <div>
       <label>Customer Name</label>
-      <input type="text" name="customer_name" required>
+      <input type="text" name="customer_name" id="customer_name" required>
     </div>
     <div>
       <label>Customer GSTIN</label>
-      <input type="text" name="customer_gstin">
+      <input type="text" name="customer_gstin" id="customer_gstin">
     </div>
     <div>
       <label>Contact</label>
-      <input type="text" name="contact">
+      <input type="text" name="contact" id="contact">
     </div>
     <div style="grid-column: 1 / -1;">
       <label>Customer Address</label>
-      <input type="text" name="customer_address" style="width:100%">
+      <input type="text" name="customer_address" id="customer_address" style="width:100%">
     </div>
     <div>
       <label>Transporter</label>
@@ -74,6 +82,17 @@
   </table>
 
   <button class="btn" type="submit">Save Dispatch</button>
+<script>
+function fillCustomerFromMaster(){
+  const sel=document.getElementById('customer_master');
+  const opt=sel && sel.options[sel.selectedIndex];
+  if(!opt) return;
+  document.getElementById('customer_name').value=opt.value||'';
+  document.getElementById('customer_gstin').value=opt.dataset.gstin||'';
+  document.getElementById('contact').value=opt.dataset.contact||'';
+  document.getElementById('customer_address').value=opt.dataset.address||'';
+}
+</script>
 </form>
 
 {% endblock %}

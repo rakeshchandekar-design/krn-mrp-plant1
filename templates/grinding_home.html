@@ -12,16 +12,16 @@
 
   <div class="summary-cards">
     <div class="card table-card">
-      <h3>KPIs (Today)</h3>
+      <h3>KPIs (Yesterday)</h3>
       <table class="table small">
-        <tr><th>Lots Today</th><td>{{ lots_today or 0 }}</td></tr>
-        <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
-        <tr><th>Oversize Today (kg)</th><td>{{ '%.0f'|format(oversize_today or 0) }}</td></tr>
+        <tr><th>Lots Yesterday</th><td>{{ lots_yday or 0 }}</td></tr>
+        <tr><th>Produced Yesterday (kg)</th><td>{{ '%.0f'|format(produced_yday or 0) }}</td></tr>
+        <tr><th>Oversize Yesterday (kg)</th><td>{{ '%.0f'|format(oversize_yday or 0) }}</td></tr>
         {% if admin %}
-          <tr><th>Avg Cost Today (₹/kg)</th><td>{{ '%.2f'|format(avg_cost_today or 0) }}</td></tr>
-          <tr><th>Weighted Cost Today (₹/kg)</th><td>{{ '%.2f'|format(weighted_cost_today or 0) }}</td></tr>
+          <tr><th>Avg Cost Yesterday (₹/kg)</th><td>{{ '%.2f'|format(avg_cost_yday or 0) }}</td></tr>
+          <tr><th>Weighted Cost Yesterday (₹/kg)</th><td>{{ '%.2f'|format(weighted_cost_yday or 0) }}</td></tr>
         {% endif %}
-      </table>
+      <tr><th>Utilization Yesterday (%)</th><td>{{ '%.1f'|format(utilization_yday or 0) }}</td></tr><tr><th>Utilization MTD (%)</th><td>{{ '%.1f'|format(utilization_mtd or 0) }}</td></tr></table>
     </div>
 
     <div class="card table-card">
@@ -55,8 +55,14 @@
       </table>
     </div>
     <div class="card table-card">
-      <h3>Operational Notes</h3>
-      <div class="compact-muted">Use this page for stage overview, then create lots or open detailed lot list for lot-wise action and QA.</div>
+      <h3>Oversize KPI — MTD</h3>
+      <table class="table small">
+        <tr><th>Family</th><th class="right">Oversize %</th><th class="right">Target %</th><th class="right">Gap</th></tr>
+        {% for r in oversize_kpis %}
+          <tr><td>{{ r.family }}</td><td class="right">{{ '%.2f'|format(r.actual_pct or 0) }}</td><td class="right">{{ '%.2f'|format(r.target_pct or 0) }}</td><td class="right">{{ '%.2f'|format(r.gap_pct or 0) }}</td></tr>
+        {% endfor %}
+      </table>
+      <div class="compact-muted">Target oversize for monitoring: KFS = 8.0%, all other families = 12.5%. System only monitors gap, it does not block entry on this target.</div>
     </div>
   </div>
 </div>

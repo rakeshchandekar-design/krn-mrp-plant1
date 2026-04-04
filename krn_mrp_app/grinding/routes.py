@@ -102,18 +102,21 @@ def fetch_anneal_balance():
 @router.get("/", response_class=HTMLResponse)
 async def grind_home(request: Request, dep: None = Depends(require_roles("admin", "grind", "view"))):
     today = date.today()
+    yday = today - timedelta(days=1)
+    month_start = today.replace(day=1)
     with engine.begin() as conn:
-        lots_today = conn.execute(text("SELECT COUNT(*) FROM grinding_lots WHERE date=:d"), {"d": today}).scalar() or 0
-        produced_today = conn.execute(text("SELECT COALESCE(SUM(weight_kg),0) FROM grinding_lots WHERE date=:d"), {"d": today}).scalar() or 0.0
-        oversize_today = conn.execute(text("""
+        lots_yday = conn.execute(text("SELECT COUNT(*) FROM grinding_lots WHERE date=:d"), {"d": yday}).scalar() or 0
+        produced_yday = conn.execute(text("SELECT COALESCE(SUM(weight_kg),0) FROM grinding_lots WHERE date=:d"), {"d": yday}).scalar() or 0.0
+        oversize_yday = conn.execute(text("""
             SELECT COALESCE(SUM(COALESCE(oversize_p80_kg,0)+COALESCE(oversize_p40_kg,0)),0)
             FROM grinding_lots WHERE date=:d
-        """), {"d": today}).scalar() or 0.0
-        avg_cost_today = conn.execute(text("SELECT COALESCE(AVG(cost_per_kg),0) FROM grinding_lots WHERE date=:d"), {"d": today}).scalar() or 0.0
-        weighted_cost_today = conn.execute(text("""
+        """), {"d": yday}).scalar() or 0.0
+        avg_cost_yday = conn.execute(text("SELECT COALESCE(AVG(cost_per_kg),0) FROM grinding_lots WHERE date=:d"), {"d": yday}).scalar() or 0.0
+        weighted_cost_yday = conn.execute(text("""
             SELECT COALESCE(SUM(cost_per_kg*weight_kg)/NULLIF(SUM(weight_kg),0),0)
             FROM grinding_lots WHERE date=:d
-        """), {"d": today}).scalar() or 0.0
+        """), {"d": yday}).scalar() or 0.0
+        produced_mtd = conn.execute(text("SELECT COALESCE(SUM(weight_kg),0) FROM grinding_lots WHERE date BETWEEN :a AND :b"), {"a": month_start, "b": today}).scalar() or 0.0
         last5 = conn.execute(text("""
             SELECT date, COALESCE(SUM(weight_kg),0) AS qty
             FROM grinding_lots WHERE date >= :d5
@@ -123,19 +126,47 @@ async def grind_home(request: Request, dep: None = Depends(require_roles("admin"
             SELECT grade, COALESCE(SUM(weight_kg),0) AS qty
             FROM grinding_lots GROUP BY grade ORDER BY grade
         """)).mappings().all()
+        oversize_monitor = conn.execute(text("""
+            SELECT
+              CASE
+                WHEN UPPER(COALESCE(grade,'')) LIKE 'KFS%%' THEN 'KFS'
+                WHEN UPPER(COALESCE(grade,'')) LIKE 'KSP%%' THEN 'KSP'
+                WHEN UPPER(COALESCE(grade,'')) LIKE 'KIPM%%' THEN 'KIPM'
+                ELSE 'KIP'
+              END AS family,
+              COALESCE(SUM(weight_kg),0)::float AS weight_kg,
+              COALESCE(SUM(COALESCE(oversize_p80_kg,0)+COALESCE(oversize_p40_kg,0)),0)::float AS oversize_kg
+            FROM grinding_lots
+            WHERE date BETWEEN :a AND :b
+            GROUP BY 1
+            ORDER BY 1
+        """), {"a": month_start, "b": today}).mappings().all()
 
-    utilization = round((produced_today / TARGET_KG_PER_DAY) * 100, 1) if TARGET_KG_PER_DAY else 0.0
+    utilization_yday = round((float(produced_yday or 0.0) / TARGET_KG_PER_DAY) * 100, 1) if TARGET_KG_PER_DAY else 0.0
+    days_inclusive = max((today - month_start).days + 1, 1)
+    utilization_mtd = round((float(produced_mtd or 0.0) / (TARGET_KG_PER_DAY * days_inclusive)) * 100, 1) if TARGET_KG_PER_DAY else 0.0
+    oversize_kpis = []
+    for r in oversize_monitor:
+        fam = str(r['family'] or 'KIP')
+        weight = float(r['weight_kg'] or 0.0)
+        oz = float(r['oversize_kg'] or 0.0)
+        actual_pct = (oz / weight * 100.0) if weight > 0 else 0.0
+        target_pct = 8.0 if fam == 'KFS' else 12.5
+        oversize_kpis.append({'family': fam, 'weight_kg': weight, 'oversize_kg': oz, 'actual_pct': actual_pct, 'target_pct': target_pct, 'gap_pct': actual_pct - target_pct})
 
     return templates.TemplateResponse("grinding_home.html", {
         "request": request,
-        "lots_today": lots_today,
-        "produced_today": produced_today,
-        "oversize_today": oversize_today,
-        "avg_cost_today": avg_cost_today,
-        "weighted_cost_today": weighted_cost_today,
-        "utilization": utilization,
+        "lots_yday": lots_yday,
+        "produced_yday": produced_yday,
+        "oversize_yday": oversize_yday,
+        "avg_cost_yday": avg_cost_yday,
+        "weighted_cost_yday": weighted_cost_yday,
+        "utilization_yday": utilization_yday,
+        "utilization_mtd": utilization_mtd,
+        "produced_mtd": produced_mtd,
         "last5": last5,
         "live_stock": live_stock,
+        "oversize_kpis": oversize_kpis,
         "is_admin": _is_admin(request),
         **_tpl_auth(request),
     })

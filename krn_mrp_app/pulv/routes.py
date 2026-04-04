@@ -68,19 +68,26 @@ def _used_by_grn():
 @router.get('/', response_class=HTMLResponse)
 def home(request: Request, dep: None = Depends(require_roles('admin','pulv','view'))):
     today = date.today()
+    yday = today - timedelta(days=1)
+    month_start = today.replace(day=1)
     with engine.begin() as conn:
-        lots_today = conn.execute(text("SELECT COUNT(*) FROM pulv_lots WHERE date=:d"), {'d': today}).scalar() or 0
-        produced_today = conn.execute(text("SELECT COALESCE(SUM(mag_output_qty_kg),0) FROM pulv_lots WHERE date=:d"), {'d': today}).scalar() or 0.0
-        avg_cost_today = conn.execute(text("SELECT COALESCE(SUM(mag_output_qty_kg*cost_per_kg)/NULLIF(SUM(mag_output_qty_kg),0),0) FROM pulv_lots WHERE date=:d"), {'d': today}).scalar() or 0.0
+        lots_yday = conn.execute(text("SELECT COUNT(*) FROM pulv_lots WHERE date=:d"), {'d': yday}).scalar() or 0
+        produced_yday = conn.execute(text("SELECT COALESCE(SUM(mag_output_qty_kg),0) FROM pulv_lots WHERE date=:d"), {'d': yday}).scalar() or 0.0
+        avg_cost_yday = conn.execute(text("SELECT COALESCE(SUM(mag_output_qty_kg*cost_per_kg)/NULLIF(SUM(mag_output_qty_kg),0),0) FROM pulv_lots WHERE date=:d"), {'d': yday}).scalar() or 0.0
+        produced_mtd = conn.execute(text("SELECT COALESCE(SUM(mag_output_qty_kg),0) FROM pulv_lots WHERE date BETWEEN :a AND :b"), {'a': month_start, 'b': today}).scalar() or 0.0
         last5 = conn.execute(text("SELECT date, COALESCE(SUM(mag_output_qty_kg),0) qty FROM pulv_lots WHERE date >= :d GROUP BY date ORDER BY date DESC"), {'d': today - timedelta(days=4)}).mappings().all()
         live_stock = conn.execute(text("SELECT grade, COALESCE(SUM(mag_output_qty_kg),0) qty FROM pulv_lots WHERE COALESCE(qa_status,'')='APPROVED' GROUP BY grade ORDER BY grade")).mappings().all()
-        dt_today = conn.execute(text("SELECT COALESCE(SUM(minutes),0) FROM pulv_downtime WHERE date=:d"), {'d': today}).scalar() or 0
+        dt_yday = conn.execute(text("SELECT COALESCE(SUM(minutes),0) FROM pulv_downtime WHERE date=:d"), {'d': yday}).scalar() or 0
         dt_top = conn.execute(text("SELECT date, area, reason, minutes FROM pulv_downtime ORDER BY date DESC, id DESC LIMIT 10")).mappings().all()
+    eff_yday = (float(produced_yday or 0.0) / 10000.0 * 100.0) if 10000.0 else 0.0
+    days_inclusive = max((today - month_start).days + 1, 1)
+    eff_mtd = (float(produced_mtd or 0.0) / (10000.0 * days_inclusive) * 100.0) if days_inclusive > 0 else 0.0
     return templates.TemplateResponse('pulv_home.html', {
         'request': request, 'role': current_role(request), 'is_admin': _is_admin(request),
-        'lots_today': lots_today, 'produced_today': produced_today,
-        'avg_cost_today': avg_cost_today, 'last5': last5, 'live_stock': live_stock,
-        'dt_today': int(dt_today or 0), 'dt_top': dt_top
+        'lots_yday': lots_yday, 'produced_yday': produced_yday,
+        'avg_cost_yday': avg_cost_yday, 'produced_mtd': produced_mtd, 'eff_yday': eff_yday, 'eff_mtd': eff_mtd,
+        'last5': last5, 'live_stock': live_stock,
+        'dt_yday': int(dt_yday or 0), 'dt_top': dt_top
     })
 
 @router.get('/create', response_class=HTMLResponse)
@@ -95,12 +102,23 @@ def create_get(request: Request, dep: None = Depends(require_roles('admin','pulv
             rows.append(x)
     return templates.TemplateResponse('pulv_create.html', {
         'request': request, 'role': current_role(request), 'is_admin': _is_admin(request),
-        'rows': rows, 'err': request.query_params.get('err','')
+        'rows': rows, 'err': request.query_params.get('err',''),
+        'today': date.today().isoformat(), 'min_date': (date.today()-timedelta(days=4)).isoformat(),
+        'lot_date': request.query_params.get('lot_date', date.today().isoformat())
     })
 
 @router.post('/create')
 async def create_post(request: Request, dep: None = Depends(require_roles('admin','pulv'))):
     form = await request.form()
+    lot_date_raw = str(form.get('lot_date') or '').strip()
+    try:
+        lot_date = date.fromisoformat(lot_date_raw) if lot_date_raw else date.today()
+    except Exception:
+        return RedirectResponse('/pulv/create?err=Invalid+lot+date&lot_date=' + lot_date_raw.replace(' ','+'), status_code=303)
+    if lot_date > date.today():
+        return RedirectResponse('/pulv/create?err=Future+date+is+not+allowed&lot_date=' + lot_date.isoformat(), status_code=303)
+    if lot_date < (date.today() - timedelta(days=4)):
+        return RedirectResponse('/pulv/create?err=Only+current+date+and+last+4+days+allowed&lot_date=' + lot_date.isoformat(), status_code=303)
     allocs = {}
     total = 0.0
     for k, v in form.items():
@@ -145,7 +163,7 @@ async def create_post(request: Request, dep: None = Depends(require_roles('admin
     cost_per_kg = (input_value + total * PULV_PROCESS_COST_PER_KG) / mag_output if mag_output > 0 else 0.0
 
     with engine.begin() as conn:
-        prefix = 'PULV-' + date.today().strftime('%Y%m%d') + '-'
+        prefix = 'PULV-' + lot_date.strftime('%Y%m%d') + '-'
         last = conn.execute(text("SELECT lot_no FROM pulv_lots WHERE lot_no LIKE :pfx ORDER BY lot_no DESC LIMIT 1"), {'pfx': f'{prefix}%'}).scalar()
         seq = int(last.split('-')[-1]) + 1 if last else 1
         lot_no = f'{prefix}{seq:03d}'
@@ -159,7 +177,7 @@ async def create_post(request: Request, dep: None = Depends(require_roles('admin
              :dust_loss_pct,:dust_loss_qty,:feed_qty_kg,:mag_output_qty_kg,:non_mag_qty_kg,:non_mag_pct,
              :cost_per_kg,'PENDING',:trace_id,:job_card_no)
         """), {
-            'date': date.today(), 'lot_no': lot_no, 'src_grn_json': json.dumps(allocs),
+            'date': lot_date, 'lot_no': lot_no, 'src_grn_json': json.dumps(allocs),
             'input_qty_kg': total,
             'input_cost_per_kg': (input_value / total if total > 0 else 0.0),
             'process_cost_per_kg': PULV_PROCESS_COST_PER_KG,

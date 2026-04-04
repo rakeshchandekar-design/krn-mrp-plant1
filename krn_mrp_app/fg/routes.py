@@ -283,16 +283,17 @@ def _surcharge_for_grade(fg_grade: str) -> float:
 @router.get("/", response_class=HTMLResponse)
 async def fg_home(request: Request, dep: None = Depends(require_roles("admin","fg","view"))):
     today = date.today()
+    yday = today - timedelta(days=1)
     with engine.begin() as conn:
-        lots_today = conn.execute(text("SELECT COUNT(*) FROM fg_lots WHERE date=:d"), {"d": today}).scalar() or 0
-        produced_today = conn.execute(text("SELECT COALESCE(SUM(weight_kg),0) FROM fg_lots WHERE date=:d"),
-                                      {"d": today}).scalar() or 0.0
-        avg_cost_today = conn.execute(text("SELECT COALESCE(AVG(cost_per_kg),0) FROM fg_lots WHERE date=:d"),
-                                      {"d": today}).scalar() or 0.0
-        weighted_cost_today = conn.execute(text("""
+        lots_yday = conn.execute(text("SELECT COUNT(*) FROM fg_lots WHERE date=:d"), {"d": yday}).scalar() or 0
+        produced_yday = conn.execute(text("SELECT COALESCE(SUM(weight_kg),0) FROM fg_lots WHERE date=:d"),
+                                      {"d": yday}).scalar() or 0.0
+        avg_cost_yday = conn.execute(text("SELECT COALESCE(AVG(cost_per_kg),0) FROM fg_lots WHERE date=:d"),
+                                      {"d": yday}).scalar() or 0.0
+        weighted_cost_yday = conn.execute(text("""
             SELECT COALESCE(SUM(cost_per_kg*weight_kg)/NULLIF(SUM(weight_kg),0),0)
             FROM fg_lots WHERE date=:d
-        """), {"d": today}).scalar() or 0.0
+        """), {"d": yday}).scalar() or 0.0
         last5 = conn.execute(text("""
             SELECT date, COALESCE(SUM(weight_kg),0) AS qty
             FROM fg_lots WHERE date >= :d5
@@ -370,13 +371,14 @@ async def fg_home(request: Request, dep: None = Depends(require_roles("admin","f
 
     return templates.TemplateResponse("fg_home.html", {
         "request": request,
-        "lots_today": lots_today,
-        "produced_today": produced_today,
-        "avg_cost_today": avg_cost_today,
-        "weighted_cost_today": weighted_cost_today,
+        "lots_yday": lots_yday,
+        "produced_yday": produced_yday,
+        "avg_cost_yday": avg_cost_yday,
+        "weighted_cost_yday": weighted_cost_yday,
         "last5": last5,
         "live_stock": live_stock,
         "byproduct_stock": byproduct_stock,
+        "byproduct_totals": {"p80_qty": sum(float(r.get("p80_qty") or 0.0) for r in byproduct_stock), "p40_qty": sum(float(r.get("p40_qty") or 0.0) for r in byproduct_stock), "value": sum(float(r.get("value") or 0.0) for r in byproduct_stock)},
         "is_admin": _is_admin(request),
         "user": (request.session.get("username") if getattr(request, "session", None) else request.cookies.get("username", "")),
         "role": (request.session.get("role") if getattr(request, "session", None) else request.cookies.get("role", "guest")),

@@ -12,6 +12,24 @@ from krn_mrp_app.deps import engine, require_roles
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
 
+with engine.begin() as conn:
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS dispatch_customers (
+            id SERIAL PRIMARY KEY,
+            customer_name TEXT NOT NULL UNIQUE,
+            customer_gstin TEXT,
+            contact TEXT,
+            customer_address TEXT,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE
+        )
+    """))
+
+def _dispatch_customers(active_only: bool = True):
+    with engine.begin() as conn:
+        sql = "SELECT * FROM dispatch_customers" + (" WHERE COALESCE(is_active,TRUE)=TRUE" if active_only else "") + " ORDER BY customer_name"
+        return [dict(r) for r in conn.execute(text(sql)).mappings().all()]
+
+
 # ---------- Helpers: mirror style of other modules ----------
 def _tpl_auth(request: Request) -> dict:
     sess = (getattr(request, "session", {}) or {})
@@ -136,6 +154,34 @@ def _fg_latest_coa_for_lot(fg_lot_id: int):
             payload["params"].insert(1, {"name":"Compressibility","value":f"{float(grqa['compressibility']):.2f}","unit":"","spec_min":"","spec_max":""})
         return payload
 
+@router.get("/customers", response_class=HTMLResponse)
+async def dispatch_customers_get(request: Request, dep: None = Depends(require_roles("admin"))):
+    return templates.TemplateResponse("dispatch_customers.html", {"request": request, "rows": _dispatch_customers(False), "is_admin": _is_admin(request), **_tpl_auth(request)})
+
+@router.post("/customers")
+async def dispatch_customers_post(request: Request, dep: None = Depends(require_roles("admin"))):
+    form = await request.form()
+    name = (form.get("customer_name") or '').strip()
+    if not name:
+        return RedirectResponse('/dispatch/customers', status_code=303)
+    payload = {
+        'customer_name': name,
+        'customer_gstin': (form.get('customer_gstin') or '').strip(),
+        'contact': (form.get('contact') or '').strip(),
+        'customer_address': (form.get('customer_address') or '').strip(),
+    }
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO dispatch_customers(customer_name, customer_gstin, contact, customer_address, is_active)
+            VALUES (:customer_name,:customer_gstin,:contact,:customer_address,TRUE)
+            ON CONFLICT (customer_name) DO UPDATE SET
+                customer_gstin=EXCLUDED.customer_gstin,
+                contact=EXCLUDED.contact,
+                customer_address=EXCLUDED.customer_address,
+                is_active=TRUE
+        """), payload)
+    return RedirectResponse('/dispatch/customers', status_code=303)
+
 # ---------------- HOME ----------------
 @router.get("/", response_class=HTMLResponse)
 async def dispatch_home(request: Request, dep: None = Depends(require_roles("admin","dispatch","store","view"))):
@@ -147,6 +193,7 @@ async def dispatch_home(request: Request, dep: None = Depends(require_roles("adm
         "total_avail": total_avail,
         "is_admin": _is_admin(request),
         "today": date.today().isoformat(),
+        "customers": _dispatch_customers(True),
         **_tpl_auth(request),
     })
 
@@ -170,7 +217,7 @@ async def dispatch_create_post(
 ):
     form = await request.form()
     # Header fields
-    customer_name = (form.get("customer_name") or "").strip()
+    customer_name = (form.get("customer_name") or form.get("customer_master") or "").strip()
     if not customer_name:
         return RedirectResponse("/dispatch/create?err=Customer+Name+is+required", status_code=303)
     order_date = form.get("date") or date.today().isoformat()

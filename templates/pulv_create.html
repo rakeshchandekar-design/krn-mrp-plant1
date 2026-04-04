@@ -4,6 +4,8 @@
 <div class="toolbar"><a class="btn" href="/pulv">← Back</a></div>
 {% if err %}<div class="alert alert-danger">{{ err }}</div>{% endif %}
 <form method="post">
+  <label>Lot Date</label>
+  <input type="date" name="lot_date" value="{{ lot_date }}" min="{{ min_date }}" max="{{ today }}" required>
   <label>Measured Magnetic Output Qty (kg)</label>
   <input type="number" name="mag_output_qty_kg" step="0.01" min="0.01" required>
   <table class="table">

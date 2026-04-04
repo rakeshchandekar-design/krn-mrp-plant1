@@ -8,12 +8,12 @@
     <a class="btn" href="/pulv/downtime">Downtime Log</a>
   </div>
   <div class="summary-cards">
-    <div class="card table-card"><h3>Today</h3><table class="table small"><tr><th>Lots</th><td class="right">{{ lots_today }}</td></tr><tr><th>Output</th><td class="right">{{ (produced_today|float)|round(0) }} kg</td></tr><tr><th>Avg Cost/kg</th><td class="right">₹ {{ (avg_cost_today|float)|round(2) }}</td></tr></table></div>
+    <div class="card table-card"><h3>KPIs (Yesterday)</h3><table class="table small"><tr><th>Lots</th><td class="right">{{ lots_yday }}</td></tr><tr><th>Output</th><td class="right">{{ (produced_yday|float)|round(0) }} kg</td></tr><tr><th>Efficiency</th><td class="right">{{ (eff_yday|float)|round(1) }}%</td></tr><tr><th>MTD Efficiency</th><td class="right">{{ (eff_mtd|float)|round(1) }}%</td></tr><tr><th>Avg Cost/kg</th><td class="right">₹ {{ (avg_cost_yday|float)|round(2) }}</td></tr></table></div>
     <div class="card table-card"><h3>Last 5 Days</h3><table class="table small"><tr><th>Date</th><th class="right">Qty</th></tr>{% for r in last5 %}<tr><td>{{ r.date }}</td><td class="right">{{ (r.qty|float)|round(0) }}</td></tr>{% endfor %}</table></div>
     <div class="card table-card"><h3>Approved Stock</h3><table class="table small"><tr><th>Grade</th><th class="right">Qty</th></tr>{% for r in live_stock %}<tr><td>{{ r.grade }}</td><td class="right">{{ (r.qty|float)|round(0) }}</td></tr>{% endfor %}</table></div>
   </div>
   <div class="grid-2">
-    <div class="card table-card"><h3>Downtime</h3><table class="table small"><tr><th>Today (min)</th><td class="right">{{ dt_today }}</td></tr></table><div class="compact-muted">Capture Production / Maintenance / Power / Other loss minutes.</div></div>
+    <div class="card table-card"><h3>Downtime</h3><table class="table small"><tr><th>Yesterday (min)</th><td class="right">{{ dt_yday }}</td></tr><tr><th>MTD Output</th><td class="right">{{ (produced_mtd|float)|round(0) }} kg</td></tr></table><div class="compact-muted">Capture Production / Maintenance / Power / Other loss minutes.</div></div>
     <div class="card table-card"><h3>Route Controls</h3><div class="compact-muted">Sponge route starts from DRI GRN, then Pulverization, then Annealing. QR and trace_id are maintained for backward trace.</div></div>
   </div>
 </div>

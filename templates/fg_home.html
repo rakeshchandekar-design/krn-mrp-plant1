@@ -10,11 +10,11 @@
 
   <div class="summary-cards">
     <div class="card table-card">
-      <h3>KPIs (Today)</h3>
+      <h3>KPIs (Yesterday)</h3>
       <table class="table small">
-        <tr><th>Lots Today</th><td>{{ lots_today }}</td></tr>
-        <tr><th>Produced Today (kg)</th><td>{{ '%.0f'|format(produced_today or 0) }}</td></tr>
-        <tr><th>Capacity (kg)</th><td>{{ '%.0f'|format(cap or 0) }}</td></tr>
+        <tr><th>Lots Yesterday</th><td>{{ lots_yday }}</td></tr>
+        <tr><th>Produced Yesterday (kg)</th><td>{{ '%.0f'|format(produced_yday or 0) }}</td></tr>
+        <tr><th>Capacity (kg)</th><td>{{ '%.0f'|format(cap or 0) }}</td></tr><tr><th>Avg Cost Yesterday (₹/kg)</th><td>{{ '%.2f'|format(avg_cost_yday or 0) }}</td></tr>
       </table>
     </div>
     <div class="card table-card">
@@ -65,7 +65,7 @@
             <td>{% if is_admin %}₹ {{ '%.2f'|format(s.value or 0) }}{% else %}—{% endif %}</td>
           </tr>
         {% endfor %}
-      </table>
+      <tr style="font-weight:700"><td>Total</td><td>{{ '%.0f'|format((byproduct_totals.p80_qty if byproduct_totals else 0) or 0) }}</td><td>{{ '%.0f'|format((byproduct_totals.p40_qty if byproduct_totals else 0) or 0) }}</td><td>{% if is_admin %}₹ {{ '%.2f'|format((byproduct_totals.value if byproduct_totals else 0) or 0) }}{% else %}—{% endif %}</td></tr></table>
       <div class="compact-muted">Oversize is byproduct. Only converted grades like 40.29 and 20 should appear in FG.</div>
     </div>
     <div class="card table-card">

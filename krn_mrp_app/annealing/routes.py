@@ -179,6 +179,7 @@ def _is_admin(request: Request) -> bool:
 @router.get("/", response_class=HTMLResponse)
 async def anneal_home(request: Request, dep: None = Depends(require_roles("admin","anneal","view"))):
     today = date.today()
+    yday = today - timedelta(days=1)
     first_of_month = today.replace(day=1)
     yday = today - timedelta(days=1)
 
@@ -189,7 +190,7 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
         ).scalar() or 0
 
         nh3_today = conn.execute(
-            text("SELECT COALESCE(SUM(ammonia_kg),0) FROM anneal_lots WHERE date=:d"), {"d": today}
+            text("SELECT COALESCE(SUM(ammonia_kg),0) FROM anneal_lots WHERE date=:d"), {"d": yday}
         ).scalar() or 0.0
 
         produced_today = conn.execute(
@@ -198,7 +199,7 @@ async def anneal_home(request: Request, dep: None = Depends(require_roles("admin
 
         # --- NEW: adjust daily target by today's downtime (minutes) ---
         down_mins_today = conn.execute(
-            text("SELECT COALESCE(SUM(minutes),0) FROM anneal_downtime WHERE date=:d"), {"d": today}
+            text("SELECT COALESCE(SUM(minutes),0) FROM anneal_downtime WHERE date=:d"), {"d": yday}
         ).scalar() or 0
         minutes_avail = max(1440 - int(down_mins_today), 0)
         target_today = TARGET_KG_PER_DAY * (minutes_avail / 1440.0)

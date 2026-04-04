@@ -203,6 +203,12 @@ def migrate_schema(engine):
                 else:
                     conn.execute(text(f"ALTER TABLE lot ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION DEFAULT 0"))
 
+        if not _table_has_column(conn, "lot", "oversize_kg"):
+            if str(engine.url).startswith("sqlite"):
+                conn.execute(text("ALTER TABLE lot ADD COLUMN oversize_kg REAL DEFAULT 0"))
+            else:
+                conn.execute(text("ALTER TABLE lot ADD COLUMN IF NOT EXISTS oversize_kg DOUBLE PRECISION DEFAULT 0"))
+
         # LotHeat qty for partial allocation
         if not _table_has_column(conn, "lot_heat", "qty"):
             if str(engine.url).startswith("sqlite"):
@@ -4224,8 +4230,9 @@ def atom_page(
         if d in recent_qty_by_date:
             recent_qty_by_date[d] += float(lot.weight or 0.0)
 
-    prod_today = recent_qty_by_date.get(today, 0.0)
-    eff_today = (100.0 * prod_today / DAILY_CAPACITY_ATOM_KG) if DAILY_CAPACITY_ATOM_KG > 0 else 0.0
+    yday = today - dt.timedelta(days=1)
+    prod_yday = recent_qty_by_date.get(yday, 0.0)
+    eff_today = (100.0 * prod_yday / DAILY_CAPACITY_ATOM_KG) if DAILY_CAPACITY_ATOM_KG > 0 else 0.0
 
     last5 = []
     for i in range(4, -1, -1):
@@ -4234,11 +4241,8 @@ def atom_page(
         target = atom_day_target_kg(db, d)
         last5.append({"date": d.isoformat(), "actual": actual, "target": target})
 
-    # Live stock of lots (WIP) = ALL atomization lots (any QA) - RAP allocations (only approved lots allocate)
-    stock = {"KRIP_qty": 0.0, "KRIP_val": 0.0, "KRFS_qty": 0.0, "KRFS_val": 0.0}
-
-    # Preload RAP allocations per lot id (for speed)
-    # We only ever create RAP entries for APPROVED lots, but we subtract allocs from total WIP as requested.
+    # Live stock of lots (WIP) = ALL atomization lots (any QA) - RAP allocations.
+    # Show all grades family-wise without disturbing current flow.
     rap_alloc_by_lot: Dict[int, float] = {}
     rap_pairs = (
         db.query(RAPLot.lot_id, func.coalesce(func.sum(RAPAlloc.qty), 0.0))
@@ -4246,32 +4250,31 @@ def atom_page(
           .group_by(RAPLot.lot_id)
           .all()
     )
-    for lid, s in rap_pairs:
-        rap_alloc_by_lot[int(lid)] = float(s or 0.0)
+    for lid, s1 in rap_pairs:
+        rap_alloc_by_lot[int(lid)] = float(s1 or 0.0)
 
-    # Use a dedicated lot query for stock so table-range filtering below does not affect WIP totals.
-    stock_lots = db.query(Lot).order_by(Lot.id.desc()).all()
-    for lot in stock_lots:
-        gross = float(lot.weight or 0.0)
-        rap_taken = rap_alloc_by_lot.get(lot.id, 0.0)
+    stock_bucket: Dict[str, Dict[str, float]] = {}
+    stock_rows = db.execute(text("""
+        SELECT id, lot_no, COALESCE(grade,'KRIP') AS grade,
+               COALESCE(weight,0)::double precision AS weight_kg,
+               COALESCE(unit_cost,0)::double precision AS unit_cost,
+               COALESCE(oversize_kg,0)::double precision AS oversize_kg
+        FROM lot
+        ORDER BY id DESC
+    """)).mappings().all()
+    for lot in stock_rows:
+        gross = float(lot["weight_kg"] or 0.0)
+        rap_taken = rap_alloc_by_lot.get(int(lot["id"]), 0.0)
         qty = max(gross - rap_taken, 0.0)
         if qty <= 0:
             continue
-        val = qty * float(lot.unit_cost or 0.0)
-        if (lot.grade or "KRIP") == "KRFS":
-            stock["KRFS_qty"] += qty
-            stock["KRFS_val"] += val
-        else:
-            stock["KRIP_qty"] += qty
-            stock["KRIP_val"] += val
-
-    # NEW: lowercase keys for the template (fixes NameError)
-    lots_stock = {
-        "krip_qty": stock.get("KRIP_qty", 0.0),
-        "krip_val": stock.get("KRIP_val", 0.0),
-        "krfs_qty": stock.get("KRFS_qty", 0.0),
-        "krfs_val": stock.get("KRFS_val", 0.0),
-    }
+        grade = str(lot.get("grade") or "KRIP").strip().upper() or "KRIP"
+        row = stock_bucket.setdefault(grade, {"grade": grade, "qty": 0.0, "value": 0.0})
+        row["qty"] += qty
+        row["value"] += qty * float(lot["unit_cost"] or 0.0)
+    lots_stock_rows = sorted(stock_bucket.values(), key=lambda x: x["grade"])
+    lots_stock_total_qty = sum(float(r["qty"] or 0.0) for r in lots_stock_rows)
+    lots_stock_total_val = sum(float(r["value"] or 0.0) for r in lots_stock_rows)
 
     # Date range defaults for the toolbar above Lots table
     s = start or today.isoformat()
@@ -4301,14 +4304,26 @@ def atom_page(
 
     today = dt.date.today()
     month_start = today.replace(day=1)
-    month_end = (month_start + dt.timedelta(days=32)).replace(day=1)
+    month_end = today
 
     try:
-        atom_bal = _get_atomization_balance(db, month_start, month_end)
-        # add a convenience field for % conversion if you want it:
-        tot_feed = (atom_bal.feed_kg or 0.0)
-        tot_prod = (atom_bal.produced_kg or 0.0)
-        atom_bal.conv_pct = (100.0 * tot_prod / tot_feed) if tot_feed > 0 else 0.0
+        atom_rows = db.execute(text("""
+            SELECT lot_no,
+                   COALESCE(weight,0)::double precision AS produced_kg,
+                   COALESCE(oversize_kg,0)::double precision AS oversize_kg
+            FROM lot
+            ORDER BY id DESC
+        """)).mappings().all()
+        feed_kg = produced_kg = oversize_kg = 0.0
+        for r in atom_rows:
+            d = lot_date_from_no(r.get("lot_no") or "")
+            if not d or d < month_start or d > month_end:
+                continue
+            produced_kg += float(r.get("produced_kg") or 0.0)
+            oversize_kg += float(r.get("oversize_kg") or 0.0)
+        feed_kg = produced_kg + oversize_kg
+        conv_pct = (100.0 * produced_kg / feed_kg) if feed_kg > 0 else 0.0
+        atom_bal = SimpleNamespace(feed_kg=feed_kg, produced_kg=produced_kg, oversize_kg=oversize_kg, conv_pct=conv_pct)
     except Exception:
         atom_bal = SimpleNamespace(feed_kg=0.0, produced_kg=0.0, oversize_kg=0.0, conv_pct=0.0)
 
@@ -4318,17 +4333,20 @@ def atom_page(
             "request": request,
             "role": current_role(request),
             "today_iso": dt.date.today().isoformat(),  # caps date inputs (max)
+            "min_lot_date": (dt.date.today() - dt.timedelta(days=4)).isoformat(),
+            "selected_lot_date": request.query_params.get("lot_date", dt.date.today().isoformat()),
             "heats": heats,
             "lots": lots,
             "heat_grades": grades,
             "available_map": available_map,
             "start": s,
             "end": e,
-            "atom_eff_today": eff_today,
+            "atom_eff_yday": eff_today,
             "atom_last5": last5,
             "atom_capacity": DAILY_CAPACITY_ATOM_KG,
-            "atom_stock": stock,
-            "lots_stock": lots_stock,
+            "lots_stock_rows": lots_stock_rows,
+            "lots_stock_total_qty": lots_stock_total_qty,
+            "lots_stock_total_val": lots_stock_total_val,
             "atom_bal": atom_bal,
             "error_msg": err,   # <-- DO NOT MISS THIS
         }
@@ -4342,10 +4360,22 @@ def _redir_err(msg: str) -> RedirectResponse:
 async def atom_new(
     request: Request,
     lot_weight: float = Form(3000.0),
+    lot_date: str = Form(...),
     db: Session = Depends(get_db)
 ):
     try:
         form = await request.form()
+
+        try:
+            atom_lot_date = dt.date.fromisoformat((lot_date or '').strip())
+        except Exception:
+            return _alert_redirect('Atomization lot date is invalid.', '/atomization?lot_date=' + quote((lot_date or '').strip()))
+        today_d = dt.date.today()
+        min_allowed = today_d - dt.timedelta(days=4)
+        if atom_lot_date > today_d:
+            return _alert_redirect('Future date is not allowed.', '/atomization?lot_date=' + atom_lot_date.isoformat())
+        if atom_lot_date < min_allowed:
+            return _alert_redirect('Only current date and last 4 days are allowed for Atomization lot creation.', '/atomization?lot_date=' + atom_lot_date.isoformat())
 
         # ---- Parse allocations from form ----
         allocs: Dict[int, float] = {}
@@ -4392,12 +4422,16 @@ async def atom_new(
         grade = next(iter(grade_set)) if grade_set else "KRIP"
 
         # ---- Create lot number ----
-        today = dt.date.today().strftime("%Y%m%d")
-        seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"K%{today}%")).scalar() or 0) + 1
-        lot_no = f"{grade}-{today}-{seq:03d}"
+        lot_date_token = atom_lot_date.strftime("%Y%m%d")
+        seq = (db.query(func.count(Lot.id)).filter(Lot.lot_no.like(f"{grade}-{lot_date_token}-%")).scalar() or 0) + 1
+        lot_no = f"{grade}-{lot_date_token}-{seq:03d}"
 
         # ---- Create lot ----
         lot = Lot(lot_no=lot_no, weight=float(lot_weight or 0.0), grade=grade, trace_id=lot_no, job_card_no=_next_job_card("LOT", (db.query(func.count(Lot.id)).scalar() or 0)))
+        try:
+            lot.created_at = dt.datetime.combine(atom_lot_date, dt.datetime.min.time())
+        except Exception:
+            pass
         db.add(lot)
         db.flush()
 
@@ -4413,6 +4447,11 @@ async def atom_new(
         avg_heat_unit_cost = (weighted_cost / total_alloc) if total_alloc > 1e-9 else 0.0
         lot.unit_cost = avg_heat_unit_cost + ATOMIZATION_COST_PER_KG
         lot.total_cost = lot.unit_cost * (lot.weight or 0.0)
+
+        try:
+            db.execute(text("UPDATE lot SET oversize_kg=:oz WHERE id=:id"), {"oz": float(form.get('oversize_kg') or 0.0), "id": lot.id})
+        except Exception:
+            pass
 
         # ---- Chemistry average (unchanged) ----
         sums = {k: 0.0 for k in ["c", "si", "s", "p", "cu", "ni", "mn", "fe"]}

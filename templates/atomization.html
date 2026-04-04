@@ -14,10 +14,10 @@
   <!-- Top row: KPIs (left) + Last 5 days (right) -->
   <div class="grid-2">
     <div class="card">
-      <h2 style="margin:0 0 8px 0">KPIs (Today)</h2>
+      <h2 style="margin:0 0 8px 0">KPIs (Yesterday)</h2>
 
       <div class="card" style="margin-bottom:8px">
-        <h3 style="margin:0 0 6px">Production Efficiency (Today)</h3>
+        <h3 style="margin:0 0 6px">Production Efficiency (Yesterday)</h3>
         <table>
           <thead>
             <tr>
@@ -28,9 +28,9 @@
           </thead>
           <tbody>
             <tr>
-              <td class="right">{{ '%.0f' % ((atom_eff_today or 0) * (atom_capacity or 6000) / 100.0) }}</td>
+              <td class="right">{{ '%.0f' % ((atom_eff_yday or 0) * (atom_capacity or 6000) / 100.0) }}</td>
               <td class="right">{{ '%.0f' % (atom_capacity or 6000) }}</td>
-              <td class="right">{{ '%.1f' % (atom_eff_today or 0) }}</td>
+              <td class="right">{{ '%.1f' % (atom_eff_yday or 0) }}</td>
             </tr>
           </tbody>
         </table>
@@ -77,22 +77,19 @@
           <tr><th>Grade</th><th class="right">Qty (kg)</th><th class="right">Value (₹)</th></tr>
         </thead>
         <tbody>
+          {% for r in lots_stock_rows or [] %}
           <tr>
-            <td>KRIP</td>
-            <td class="right">{{ '%.1f' % ((lots_stock.krip_qty or 0)) }}</td>
-            <td class="right">{{ '%.2f' % ((lots_stock.krip_val or 0)) }}</td>
+            <td>{{ r.grade }}</td>
+            <td class="right">{{ '%.1f' % (r.qty or 0) }}</td>
+            <td class="right">{{ '%.2f' % (r.value or 0) }}</td>
           </tr>
-          <tr>
-            <td>KRFS</td>
-            <td class="right">{{ '%.1f' % ((lots_stock.krfs_qty or 0)) }}</td>
-            <td class="right">{{ '%.2f' % ((lots_stock.krfs_val or 0)) }}</td>
-          </tr>
+          {% endfor %}
         </tbody>
         <tfoot>
           <tr>
             <th>Total</th>
-            <th class="right">{{ '%.1f' % (((lots_stock.krip_qty or 0)+(lots_stock.krfs_qty or 0))) }}</th>
-            <th class="right">{{ '%.2f' % (((lots_stock.krip_val or 0)+(lots_stock.krfs_val or 0))) }}</th>
+            <th class="right">{{ '%.1f' % (lots_stock_total_qty or 0) }}</th>
+            <th class="right">{{ '%.2f' % (lots_stock_total_val or 0) }}</th>
           </tr>
         </tfoot>
       </table>
@@ -122,6 +119,10 @@
 
     <form class="blue-ui" method="post" action="/atomization/new">
       <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:6px 0">
+        <div>
+          <label>Lot Date</label>
+          <input type="date" name="lot_date" value="{{ selected_lot_date }}" min="{{ min_lot_date }}" max="{{ today_iso }}" required>
+        </div>
         <div>
           <label>Lot Weight (kg)</label>
           <input id="lot_weight" name="lot_weight" type="number" step="0.1" min="1" value="3000">
