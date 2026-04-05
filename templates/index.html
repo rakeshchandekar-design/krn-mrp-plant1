@@ -267,10 +267,10 @@
       </div>
 
       <!-- Dispatch -->
-      {% set allow = role in ['admin','dispatch','store','view'] %}
+      {% set allow = role in ['admin','dispatch','store','view','sales'] %}
       <div class="card">
         <h3><span class="icon">🚚</span>Dispatch</h3>
-        <div class="sub">Admin, Dispatch, Store, View</div>
+        <div class="sub">Admin, Dispatch, Store, View, Sales</div>
         <div class="foot">
           {% if allow %}
             <a class="open" href="/dispatch">Open</a>

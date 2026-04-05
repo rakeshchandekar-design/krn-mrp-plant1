@@ -4,7 +4,7 @@
 {% set can_dispatch_execute = _role_name in ['admin','dispatch','store'] %}
 {% set can_sales_orders = _role_name in ['admin','dispatch','store','sales','view'] %}
 <div class="module-shell">
-  <h1 class="module-title">Dispatch — Available FG Lots</h1>
+  <h1 class="module-title">Dispatch — Available Lots (FG + RAP)</h1>
 
   <div class="actions-top">
     {% if can_dispatch_execute %}<a class="btn btn-primary" href="/dispatch/create">Create Dispatch</a>{% endif %}
@@ -36,15 +36,16 @@
   <div class="card table-card">
     <table class="table">
       <tr>
-        <th>Date</th><th>FG Lot</th><th>Family</th><th>FG Grade</th>
+        <th>Source</th><th>Date</th><th>Lot</th><th>Family</th><th>Grade</th>
         <th>Available (kg)</th>
         {% if is_admin %}<th>Cost/kg (₹)</th>{% endif %}
         <th>Remarks</th>
       </tr>
       {% for r in rows %}
       <tr>
-        <td>{{ r.date }}</td>
-        <td>{{ r.fg_lot_no }}</td>
+        <td>{{ r.source_stage }}</td>
+        <td>{{ r.date or '' }}</td>
+        <td>{{ r.source_lot_no or r.fg_lot_no }}</td>
         <td>{{ r.family }}</td>
         <td>{{ r.fg_grade }}</td>
         <td>{{ '%.1f'|format(r.available_kg or 0) }}</td>
@@ -53,7 +54,7 @@
       </tr>
       {% endfor %}
       <tr class="table-info">
-        <th colspan="4">TOTAL Available</th>
+        <th colspan="5">TOTAL Available</th>
         <th>{{ '%.1f'|format(total_avail or 0) }}</th>
         {% if is_admin %}<th></th>{% endif %}
         <th></th>

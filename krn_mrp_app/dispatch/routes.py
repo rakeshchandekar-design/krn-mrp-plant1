@@ -63,6 +63,17 @@ with engine.begin() as conn:
     except Exception:
         pass
 
+    # Allow main Dispatch to also handle semi-finished RAP dispatch rows
+    for _ddl in [
+        "ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS source_stage TEXT DEFAULT 'FG'",
+        "ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS rap_lot_id INT",
+        "ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS source_lot_no TEXT",
+    ]:
+        try:
+            conn.execute(text(_ddl))
+        except Exception:
+            pass
+
 
 def _dispatch_customers(active_only: bool = True):
     with engine.begin() as conn:
@@ -80,8 +91,8 @@ def _dispatch_grade_options() -> List[str]:
     except Exception:
         pass
 
-    # Also include any live/historic grades already created in FG and in sales orders
     with engine.begin() as conn:
+        # Also include any live/historic grades already created in FG and in sales orders
         fg_rows = conn.execute(text("""
             SELECT DISTINCT COALESCE(fg_grade,'') AS fg_grade
             FROM fg_lots
@@ -92,22 +103,36 @@ def _dispatch_grade_options() -> List[str]:
             FROM dispatch_sales_order_items
             WHERE COALESCE(fg_grade,'') <> ''
         """)).mappings().all()
+        # Include RAP semi-finished grades that can also move through Dispatch
+        rap_rows = []
+        try:
+            rap_rows = conn.execute(text("""
+                SELECT DISTINCT COALESCE(l.grade,'') AS fg_grade
+                FROM rap_lot rl
+                JOIN lot l ON l.id = rl.lot_id
+                WHERE COALESCE(l.grade,'') <> ''
+            """)).mappings().all()
+        except Exception:
+            rap_rows = []
 
     grades.update(str(r.get('fg_grade') or '').strip() for r in fg_rows if str(r.get('fg_grade') or '').strip())
     grades.update(str(r.get('fg_grade') or '').strip() for r in so_rows if str(r.get('fg_grade') or '').strip())
+    grades.update(str(r.get('fg_grade') or '').strip() for r in rap_rows if str(r.get('fg_grade') or '').strip())
 
     def _sort_key(g: str):
         g2 = (g or '').upper()
-        if g2.startswith('KIP M') or g2.startswith('KIPM'):
+        if g2.startswith('KIP M') or g2.startswith('KIPM') or g2 == 'KRM':
             bucket = 1
-        elif g2.startswith('KIP') or g2.startswith('KIPH'):
+        elif g2 in ('KRIP','KRFS','KRM'):
             bucket = 2
-        elif g2.startswith('KSP'):
+        elif g2.startswith('KIP') or g2.startswith('KIPH'):
             bucket = 3
-        elif g2.startswith('KFS'):
+        elif g2.startswith('KSP'):
             bucket = 4
-        elif g2.startswith('PREMIX'):
+        elif g2.startswith('KFS'):
             bucket = 5
+        elif g2.startswith('PREMIX'):
+            bucket = 6
         else:
             bucket = 9
         return (bucket, g2)
@@ -145,6 +170,7 @@ def _fg_available_rows():
         used_by_fg = dict(conn.execute(text("""
             SELECT fg_lot_id, COALESCE(SUM(qty_kg),0) AS used
             FROM dispatch_items
+            WHERE COALESCE(source_stage,'FG')='FG'
             GROUP BY fg_lot_id
         """)).all() or [])
     out = []
@@ -153,22 +179,88 @@ def _fg_available_rows():
         avail = float(r["weight_kg"] or 0.0) - used
         if avail > 0.0001:
             out.append({
+                "source_stage": "FG",
+                "source_key": f"FG:{r['id']}",
                 "fg_lot_id": r["id"],
+                "rap_lot_id": None,
                 "fg_lot_no": r["lot_no"],
+                "source_lot_no": r["lot_no"],
                 "date": r["date"],
                 "family": r["family"],
                 "fg_grade": r["fg_grade"],
                 "available_kg": avail,
                 "cost_per_kg": float(r["cost_per_kg"] or 0.0),
-                "remarks": r.get("remarks",""),
+                "remarks": r.get("remarks","") or '',
+                "sort_seq": int(r['id'] or 0),
             })
     return out
+
+
+def _rap_available_rows():
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT rl.id AS rap_lot_id, l.id AS base_lot_id, l.lot_no,
+                   COALESCE(l.grade,'') AS grade, COALESCE(l.unit_cost,0)::float AS cost_per_kg,
+                   COALESCE(rl.available_qty,0)::float AS available_qty, COALESCE(rl.status,'') AS rap_status,
+                   COALESCE(l.qa_status,'') AS qa_status
+            FROM rap_lot rl
+            JOIN lot l ON l.id = rl.lot_id
+            ORDER BY rl.id ASC
+        """)).mappings().all()
+        used_by_rap = dict(conn.execute(text("""
+            SELECT rap_lot_id, COALESCE(SUM(qty_kg),0) AS used
+            FROM dispatch_items
+            WHERE COALESCE(source_stage,'FG')='RAP'
+            GROUP BY rap_lot_id
+        """)).all() or [])
+    out = []
+    for r in rows:
+        if str(r.get('qa_status') or '').upper() != 'APPROVED':
+            continue
+        grade = str(r.get('grade') or '').strip().upper()
+        if not grade:
+            continue
+        used = float(used_by_rap.get(r['rap_lot_id'], 0.0))
+        avail = float(r.get('available_qty') or 0.0) - used
+        if avail <= 0.0001:
+            continue
+        family = grade if grade in ('KRIP','KRFS','KRM','KRSP') else grade
+        out.append({
+            "source_stage": "RAP",
+            "source_key": f"RAP:{r['rap_lot_id']}",
+            "fg_lot_id": None,
+            "rap_lot_id": r['rap_lot_id'],
+            "base_lot_id": r.get('base_lot_id'),
+            "fg_lot_no": r['lot_no'],
+            "source_lot_no": r['lot_no'],
+            "date": None,
+            "family": family,
+            "fg_grade": grade,
+            "available_kg": avail,
+            "cost_per_kg": float(r.get('cost_per_kg') or 0.0),
+            "remarks": 'RAP Semi-Finished Dispatch',
+            "sort_seq": int(r['rap_lot_id'] or 0),
+        })
+    return out
+
+
+def _dispatch_available_rows():
+    return _fg_available_rows() + _rap_available_rows()
 
 
 def _fetch_order(order_id: int):
     with engine.begin() as conn:
         head = conn.execute(text("SELECT * FROM dispatch_orders WHERE id=:id"), {"id": order_id}).mappings().first()
-        items = conn.execute(text("SELECT * FROM dispatch_items WHERE dispatch_id=:id ORDER BY id"), {"id": order_id}).mappings().all()
+        items = conn.execute(text("""
+            SELECT di.*,
+                   COALESCE(di.source_stage,'FG') AS source_stage,
+                   COALESCE(di.source_lot_no, di.fg_lot_no, '') AS source_lot_no,
+                   rl.lot_id AS rap_base_lot_id
+            FROM dispatch_items di
+            LEFT JOIN rap_lot rl ON rl.id = di.rap_lot_id
+            WHERE di.dispatch_id=:id
+            ORDER BY di.id
+        """), {"id": order_id}).mappings().all()
     return (dict(head) if head else None, [dict(i) for i in items])
 
 
@@ -347,10 +439,10 @@ def _fifo_dispatch_allocate(rows: List[Dict[str, Any]], requested_by_grade: Dict
         grouped.setdefault(str(r.get('fg_grade') or '').strip(), []).append(r)
     for grade, qty_need in requested_by_grade.items():
         remaining = float(qty_need or 0.0)
-        eligible = sorted(grouped.get(grade, []), key=lambda r: (str(r.get('date') or ''), str(r.get('fg_lot_no') or '')) )
+        eligible = sorted(grouped.get(grade, []), key=lambda r: (str(r.get('date') or ''), int(r.get('sort_seq') or 0), str(r.get('source_lot_no') or '')))
         total_avail = sum(float(r.get('available_kg') or 0.0) for r in eligible)
         if total_avail + 1e-6 < remaining:
-            raise ValueError(f'Insufficient FIFO FG balance for {grade}. Pending {remaining:.1f} kg, available {total_avail:.1f} kg.')
+            raise ValueError(f'Insufficient FIFO dispatch balance for {grade}. Pending {remaining:.1f} kg, available {total_avail:.1f} kg.')
         for src in eligible:
             if remaining <= 1e-6:
                 break
@@ -359,8 +451,11 @@ def _fifo_dispatch_allocate(rows: List[Dict[str, Any]], requested_by_grade: Dict
                 continue
             take = min(avail, remaining)
             out.append({
-                'fg_lot_id': src['fg_lot_id'],
-                'fg_lot_no': src['fg_lot_no'],
+                'source_stage': src.get('source_stage') or 'FG',
+                'fg_lot_id': src.get('fg_lot_id'),
+                'rap_lot_id': src.get('rap_lot_id'),
+                'fg_lot_no': src.get('fg_lot_no') or src.get('source_lot_no'),
+                'source_lot_no': src.get('source_lot_no') or src.get('fg_lot_no'),
                 'fg_grade': src['fg_grade'],
                 'qty_kg': take,
                 'cost_per_kg': float(src.get('cost_per_kg') or 0.0),
@@ -368,6 +463,7 @@ def _fifo_dispatch_allocate(rows: List[Dict[str, Any]], requested_by_grade: Dict
             })
             remaining -= take
     return out
+
 
 def _sales_order_pending_by_grade(items: List[Dict[str, Any]]) -> Dict[str, float]:
     out: Dict[str, float] = {}
@@ -508,7 +604,7 @@ async def dispatch_customer_order_view(request: Request, order_id: int, dep: Non
 # ---------------- HOME ----------------
 @router.get('/', response_class=HTMLResponse)
 async def dispatch_home(request: Request, dep: None = Depends(require_roles('admin','dispatch','store','view','sales'))):
-    rows = _fg_available_rows()
+    rows = _dispatch_available_rows()
     total_avail = sum(float(r['available_kg'] or 0.0) for r in rows)
     open_orders = _sales_orders('open')
     return templates.TemplateResponse('dispatch_home.html', {
@@ -526,7 +622,7 @@ async def dispatch_home(request: Request, dep: None = Depends(require_roles('adm
 # ---------------- CREATE ----------------
 @router.get('/create', response_class=HTMLResponse)
 async def dispatch_create_get(request: Request, dep: None = Depends(require_roles('admin','dispatch','store'))):
-    rows = _fg_available_rows()
+    rows = _dispatch_available_rows()
     err = request.query_params.get('err','')
     sales_order_id_raw = request.query_params.get('sales_order_id','').strip()
     selected_sales_order = None
@@ -561,7 +657,7 @@ async def dispatch_create_post(request: Request, dep: None = Depends(require_rol
     sales_order_id_raw = (form.get('sales_order_id') or '').strip()
     sales_order_id = int(sales_order_id_raw) if sales_order_id_raw.isdigit() else None
 
-    payload_rows = _fg_available_rows()
+    payload_rows = _dispatch_available_rows()
     requested_by_grade: Dict[str, float] = {}
     for k, v in form.items():
         if not k.startswith('q_'):
@@ -639,9 +735,9 @@ async def dispatch_create_post(request: Request, dep: None = Depends(require_rol
         }).mappings().first()['id']
 
         conn.execute(text("""
-            INSERT INTO dispatch_items(dispatch_id, fg_lot_id, fg_lot_no, fg_grade, qty_kg, cost_per_kg, value)
-            VALUES (:did, :fid, :fno, :g, :q, :c, :v)
-        """), [{'did': head_id, 'fid': it['fg_lot_id'], 'fno': it['fg_lot_no'], 'g': it['fg_grade'], 'q': it['qty_kg'], 'c': it['cost_per_kg'], 'v': it['value']} for it in items])
+            INSERT INTO dispatch_items(dispatch_id, fg_lot_id, rap_lot_id, source_stage, source_lot_no, fg_lot_no, fg_grade, qty_kg, cost_per_kg, value)
+            VALUES (:did, :fid, :rid, :ss, :sno, :fno, :g, :q, :c, :v)
+        """), [{'did': head_id, 'fid': it.get('fg_lot_id'), 'rid': it.get('rap_lot_id'), 'ss': it.get('source_stage') or 'FG', 'sno': it.get('source_lot_no') or it.get('fg_lot_no'), 'fno': it['fg_lot_no'], 'g': it['fg_grade'], 'q': it['qty_kg'], 'c': it['cost_per_kg'], 'v': it['value']} for it in items])
 
         if sales_order_id:
             _apply_dispatch_to_sales_order(conn, sales_order_id, items)

@@ -34,11 +34,11 @@
     </div>
     <h4>Order Lines</h4>
     <table class="table">
-      <tr><th>#</th><th>FG Grade</th><th>Order Qty (kg)</th><th>Remarks</th></tr>
+      <tr><th>#</th><th>Dispatch Grade</th><th>Order Qty (kg)</th><th>Remarks</th></tr>
       {% for i in range(1,7) %}
       <tr>
         <td>{{ i }}</td>
-        <td><select name="fg_grade_{{ i }}"><option value="">Select FG grade</option>{% for g in grades or [] %}<option value="{{ g }}">{{ g }}</option>{% endfor %}</select></td>
+        <td><select name="fg_grade_{{ i }}"><option value="">Select dispatch grade</option>{% for g in grades or [] %}<option value="{{ g }}">{{ g }}</option>{% endfor %}</select></td>
         <td><input type="number" step="0.01" min="0" name="qty_{{ i }}"></td>
         <td><input type="text" name="line_remarks_{{ i }}"></td>
       </tr>
