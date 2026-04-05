@@ -106,6 +106,42 @@ with engine.begin() as conn:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS mrp_planned_order_header (
+            id SERIAL PRIMARY KEY,
+            plan_label TEXT,
+            source_run_id INT,
+            created_by TEXT,
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS mrp_planned_order_lines (
+            id SERIAL PRIMARY KEY,
+            plan_id INT NOT NULL,
+            dispatch_grade TEXT,
+            source_stage TEXT,
+            source_family TEXT,
+            source_grade TEXT,
+            shortage_qty_kg DOUBLE PRECISION DEFAULT 0,
+            planned_fg_qty_kg DOUBLE PRECISION DEFAULT 0,
+            planned_grinding_qty_kg DOUBLE PRECISION DEFAULT 0,
+            planned_anneal_qty_kg DOUBLE PRECISION DEFAULT 0,
+            planned_rap_qty_kg DOUBLE PRECISION DEFAULT 0,
+            planned_atom_qty_kg DOUBLE PRECISION DEFAULT 0,
+            planned_melt_qty_kg DOUBLE PRECISION DEFAULT 0,
+            planned_capacity_days DOUBLE PRECISION,
+            route_steps TEXT,
+            next_action_stage TEXT,
+            next_action_qty_kg DOUBLE PRECISION DEFAULT 0,
+            linked_run_line_count INT DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
 
     # seed grade master using current dispatch/FG logic
     seed_grades = [
@@ -622,6 +658,7 @@ async def mrp_home(request: Request, dep: None = Depends(require_roles('admin','
         'recipes': int(_scalar("SELECT COUNT(*) FROM mrp_recipe_master WHERE COALESCE(is_active,TRUE)=TRUE") or 0),
         'yields': int(_scalar("SELECT COUNT(*) FROM mrp_yield_master WHERE COALESCE(is_active,TRUE)=TRUE") or 0),
         'runs': int(_scalar("SELECT COUNT(*) FROM mrp_run_header") or 0),
+        'plans': int(_scalar("SELECT COUNT(*) FROM mrp_planned_order_header") or 0),
     }
     dispatchable = _rows("""
         SELECT grade_code, grade_family, stage_type
@@ -642,12 +679,15 @@ async def mrp_home(request: Request, dep: None = Depends(require_roles('admin','
             FROM mrp_run_lines WHERE run_id=:id
         """, {'id': latest_run['id']})
         latest_summary = latest_summary[0] if latest_summary else None
+    latest_plan = _rows("SELECT id, plan_label, source_run_id, created_by, status, created_at FROM mrp_planned_order_header ORDER BY id DESC LIMIT 1")
+    latest_plan = latest_plan[0] if latest_plan else None
     return templates.TemplateResponse('mrp_home.html', {
         'request': request,
         'counts': counts,
         'dispatchable': dispatchable,
         'latest_run': latest_run,
         'latest_summary': latest_summary,
+        'latest_plan': latest_plan,
         'is_admin': _is_admin(request),
         **_tpl_auth(request),
     })
@@ -870,3 +910,186 @@ async def mrp_run_now(request: Request, dep: None = Depends(require_roles('admin
         lines, _summary, _suggestions = _build_mrp_lines(conn)
         run_id = _store_mrp_run(conn, (getattr(request, 'session', {}) or {}).get('username', '') or 'system', lines)
     return RedirectResponse(f'/mrp/run?run_id={run_id}', status_code=303)
+
+
+
+def _group_suggestions_from_lines(lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    bucket: Dict[tuple, Dict[str, Any]] = {}
+    for ln in lines or []:
+        key = (ln.get('dispatch_grade'), ln.get('source_stage'), ln.get('source_family'), ln.get('source_grade'))
+        b = bucket.setdefault(key, {
+            'dispatch_grade': ln.get('dispatch_grade'),
+            'source_stage': ln.get('source_stage'),
+            'source_family': ln.get('source_family'),
+            'source_grade': ln.get('source_grade'),
+            'shortage_qty_kg': 0.0,
+            'suggested_fg_qty_kg': 0.0,
+            'suggested_grinding_qty_kg': 0.0,
+            'suggested_anneal_qty_kg': 0.0,
+            'suggested_rap_qty_kg': 0.0,
+            'suggested_atom_qty_kg': 0.0,
+            'suggested_melt_qty_kg': 0.0,
+            'planned_capacity_days': 0.0,
+            'route_steps': ln.get('route_steps') or '',
+            'linked_run_line_count': 0,
+        })
+        for k in ['shortage_qty_kg','suggested_fg_qty_kg','suggested_grinding_qty_kg','suggested_anneal_qty_kg','suggested_rap_qty_kg','suggested_atom_qty_kg','suggested_melt_qty_kg']:
+            b[k] += float(ln.get(k) or 0.0)
+        b['planned_capacity_days'] += float(ln.get('planned_capacity_days') or 0.0)
+        b['linked_run_line_count'] += 1
+    out = list(bucket.values())
+    out.sort(key=lambda x: (-float(x.get('shortage_qty_kg') or 0.0), str(x.get('dispatch_grade') or '')))
+    return out
+
+
+def _next_action_stage(s: Dict[str, Any]) -> tuple[str, float]:
+    stage_order = [
+        ('FG', float(s.get('suggested_fg_qty_kg') or 0.0)),
+        ('GRINDING', float(s.get('suggested_grinding_qty_kg') or 0.0)),
+        ('ANNEALING', float(s.get('suggested_anneal_qty_kg') or 0.0)),
+        ('RAP', float(s.get('suggested_rap_qty_kg') or 0.0)),
+        ('ATOMIZATION', float(s.get('suggested_atom_qty_kg') or 0.0)),
+        ('MELTING', float(s.get('suggested_melt_qty_kg') or 0.0)),
+    ]
+    for stg, qty in stage_order:
+        if qty > 0.0001:
+            return stg, round(qty, 2)
+    return str(s.get('source_stage') or 'DISPATCH'), round(float(s.get('shortage_qty_kg') or 0.0), 2)
+
+
+def _store_planned_orders(conn, source_run_id: int, created_by: str, suggestions: List[Dict[str, Any]]) -> int:
+    head = conn.execute(text("""
+        INSERT INTO mrp_planned_order_header(plan_label, source_run_id, created_by, status, notes)
+        VALUES (:lbl, :run_id, :by, 'OPEN', :notes)
+        RETURNING id
+    """), {
+        'lbl': datetime.now().strftime('PLAN-%Y%m%d-%H%M%S'),
+        'run_id': source_run_id,
+        'by': created_by,
+        'notes': 'Created from MRP Run suggestions'
+    }).mappings().first()
+    plan_id = int(head['id'])
+    rows = []
+    for s in suggestions or []:
+        if float(s.get('shortage_qty_kg') or 0.0) <= 0.0001:
+            continue
+        next_stage, next_qty = _next_action_stage(s)
+        rows.append({
+            'plan_id': plan_id,
+            'dispatch_grade': s.get('dispatch_grade'),
+            'source_stage': s.get('source_stage'),
+            'source_family': s.get('source_family'),
+            'source_grade': s.get('source_grade'),
+            'shortage_qty_kg': float(s.get('shortage_qty_kg') or 0.0),
+            'planned_fg_qty_kg': float(s.get('suggested_fg_qty_kg') or 0.0),
+            'planned_grinding_qty_kg': float(s.get('suggested_grinding_qty_kg') or 0.0),
+            'planned_anneal_qty_kg': float(s.get('suggested_anneal_qty_kg') or 0.0),
+            'planned_rap_qty_kg': float(s.get('suggested_rap_qty_kg') or 0.0),
+            'planned_atom_qty_kg': float(s.get('suggested_atom_qty_kg') or 0.0),
+            'planned_melt_qty_kg': float(s.get('suggested_melt_qty_kg') or 0.0),
+            'planned_capacity_days': (float(s.get('planned_capacity_days') or 0.0) or None),
+            'route_steps': s.get('route_steps') or '',
+            'next_action_stage': next_stage,
+            'next_action_qty_kg': next_qty,
+            'linked_run_line_count': int(s.get('linked_run_line_count') or 0),
+            'status': 'OPEN',
+            'notes': ''
+        })
+    if rows:
+        conn.execute(text("""
+            INSERT INTO mrp_planned_order_lines(
+                plan_id, dispatch_grade, source_stage, source_family, source_grade,
+                shortage_qty_kg, planned_fg_qty_kg, planned_grinding_qty_kg, planned_anneal_qty_kg,
+                planned_rap_qty_kg, planned_atom_qty_kg, planned_melt_qty_kg, planned_capacity_days,
+                route_steps, next_action_stage, next_action_qty_kg, linked_run_line_count, status, notes
+            ) VALUES (
+                :plan_id, :dispatch_grade, :source_stage, :source_family, :source_grade,
+                :shortage_qty_kg, :planned_fg_qty_kg, :planned_grinding_qty_kg, :planned_anneal_qty_kg,
+                :planned_rap_qty_kg, :planned_atom_qty_kg, :planned_melt_qty_kg, :planned_capacity_days,
+                :route_steps, :next_action_stage, :next_action_qty_kg, :linked_run_line_count, :status, :notes
+            )
+        """), rows)
+    return plan_id
+
+
+def _fetch_plan(plan_id: int) -> tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    with engine.begin() as conn:
+        head = conn.execute(text("SELECT * FROM mrp_planned_order_header WHERE id=:id"), {'id': plan_id}).mappings().first()
+        lines = conn.execute(text("SELECT * FROM mrp_planned_order_lines WHERE plan_id=:id ORDER BY next_action_stage, dispatch_grade, id"), {'id': plan_id}).mappings().all()
+    return (dict(head) if head else None, [dict(r) for r in lines])
+
+
+@router.post('/planned-orders/from-run/{run_id}')
+async def mrp_create_plan_from_run(run_id: int, request: Request, dep: None = Depends(require_roles('admin','sales'))):
+    head, lines = _fetch_run(run_id)
+    if not head:
+        return RedirectResponse('/mrp/run?err=MRP+run+not+found', status_code=303)
+    suggestions = _group_suggestions_from_lines(lines)
+    if not suggestions:
+        return RedirectResponse(f'/mrp/run?run_id={run_id}&err=No+shortage+suggestions+available+to+plan', status_code=303)
+    with engine.begin() as conn:
+        plan_id = _store_planned_orders(conn, run_id, (getattr(request, 'session', {}) or {}).get('username', '') or 'system', suggestions)
+    return RedirectResponse(f'/mrp/planned-orders/{plan_id}', status_code=303)
+
+
+@router.get('/planned-orders', response_class=HTMLResponse)
+async def mrp_planned_orders(request: Request, dep: None = Depends(require_roles('admin','sales','view'))):
+    rows = _rows("""
+        SELECT h.*,
+               COALESCE(cnt.line_count,0)::int AS line_count,
+               COALESCE(cnt.open_count,0)::int AS open_count,
+               COALESCE(cnt.total_shortage_kg,0)::float AS total_shortage_kg,
+               COALESCE(cnt.total_next_action_qty_kg,0)::float AS total_next_action_qty_kg
+        FROM mrp_planned_order_header h
+        LEFT JOIN (
+            SELECT plan_id,
+                   COUNT(*) AS line_count,
+                   SUM(CASE WHEN COALESCE(status,'OPEN') IN ('OPEN','RELEASED') THEN 1 ELSE 0 END) AS open_count,
+                   SUM(COALESCE(shortage_qty_kg,0)) AS total_shortage_kg,
+                   SUM(COALESCE(next_action_qty_kg,0)) AS total_next_action_qty_kg
+            FROM mrp_planned_order_lines
+            GROUP BY plan_id
+        ) cnt ON cnt.plan_id = h.id
+        ORDER BY h.id DESC
+    """)
+    return templates.TemplateResponse('mrp_planned_orders.html', {
+        'request': request,
+        'rows': rows,
+        'is_admin': _is_admin(request),
+        **_tpl_auth(request),
+    })
+
+
+@router.get('/planned-orders/{plan_id}', response_class=HTMLResponse)
+async def mrp_planned_order_view(request: Request, plan_id: int, dep: None = Depends(require_roles('admin','sales','view'))):
+    head, lines = _fetch_plan(plan_id)
+    if not head:
+        return RedirectResponse('/mrp/planned-orders?err=Planned+order+not+found', status_code=303)
+    summary = {
+        'line_count': len(lines),
+        'open_count': sum(1 for x in lines if str(x.get('status') or 'OPEN') in ('OPEN','RELEASED')),
+        'total_shortage_kg': round(sum(float(x.get('shortage_qty_kg') or 0.0) for x in lines), 2),
+        'total_next_action_qty_kg': round(sum(float(x.get('next_action_qty_kg') or 0.0) for x in lines), 2),
+    }
+    return templates.TemplateResponse('mrp_planned_order_view.html', {
+        'request': request,
+        'plan': head,
+        'lines': lines,
+        'summary': summary,
+        'is_admin': _is_admin(request),
+        **_tpl_auth(request),
+    })
+
+
+@router.post('/planned-orders/{plan_id}/status')
+async def mrp_planned_order_status(plan_id: int, status: str = Form(...), dep: None = Depends(require_roles('admin'))):
+    st = str(status or '').strip().upper()
+    if st not in {'OPEN','RELEASED','CLOSED','CANCELLED'}:
+        st = 'OPEN'
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE mrp_planned_order_header SET status=:st WHERE id=:id"), {'st': st, 'id': plan_id})
+        if st in {'CLOSED','CANCELLED'}:
+            conn.execute(text("UPDATE mrp_planned_order_lines SET status=:st WHERE plan_id=:id AND COALESCE(status,'OPEN') <> 'CLOSED'"), {'st': st, 'id': plan_id})
+        elif st == 'RELEASED':
+            conn.execute(text("UPDATE mrp_planned_order_lines SET status='RELEASED' WHERE plan_id=:id AND COALESCE(status,'OPEN')='OPEN'"), {'id': plan_id})
+    return RedirectResponse(f'/mrp/planned-orders/{plan_id}', status_code=303)

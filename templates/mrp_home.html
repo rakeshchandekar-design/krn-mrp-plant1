@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% block title %}MRP Foundation{% endblock %}
 {% block content %}
-<h2>MRP Foundation - Step 1</h2>
+<h2>MRP Foundation / Planning - Steps 1 to 4</h2>
 <div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
   <a class="btn" href="/mrp/grades">Grade Master</a>
   <a class="btn" href="/mrp/recipes">Process Recipe Master</a>
   <a class="btn" href="/mrp/yields">Yield Master</a>
   <a class="btn" href="/mrp/run">MRP Run / Shortage Engine</a>
+  <a class="btn" href="/mrp/planned-orders">Planned Orders</a>
 </div>
 <div class="grid" style="display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:14px;margin-bottom:18px">
   <div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff;margin-bottom:14px">
@@ -44,6 +45,12 @@
     <div style="font-size:28px;font-weight:800">{{ counts.runs }}</div>
     {% if latest_run %}<div class="small" style="margin-top:8px">Latest: {{ latest_run.run_label or ('MRP-' ~ latest_run.id) }}</div>{% endif %}
   </div>
+  <div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff">
+    <h3 style="margin:0 0 6px 0">Planned Orders</h3>
+    <div class="small">Actionable production buckets</div>
+    <div style="font-size:28px;font-weight:800">{{ counts.plans }}</div>
+    {% if latest_plan %}<div class="small" style="margin-top:8px">Latest: {{ latest_plan.plan_label or ('PLAN-' ~ latest_plan.id) }}</div>{% endif %}
+  </div>
 </div>
 <div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff;margin-bottom:14px">
   <h3 style="margin-top:0">What is live now</h3>
@@ -53,8 +60,9 @@
     <li>Yield master for stage-wise planning assumptions</li>
     <li>Dispatch customer-order grade dropdown now reads active dispatchable grade master first</li>
   </ul>
-  <p class="small">Step 2 is now live: Sales Order reservation and ATP against these masters.</p>
-  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="/dispatch/customer-orders">Customer Orders</a><a class="btn" href="/dispatch/atp">ATP / Reservations</a><a class="btn" href="/mrp/run">MRP Run / Shortage Engine</a></div>
+  <p class="small">Step 2 is live: Sales Order reservation and ATP. Step 3 is live: MRP Run / Shortage Engine. Step 4 is live: Planned Orders created from MRP suggestions.</p>
+  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="/dispatch/customer-orders">Customer Orders</a><a class="btn" href="/dispatch/atp">ATP / Reservations</a><a class="btn" href="/mrp/run">MRP Run / Shortage Engine</a>
+  <a class="btn" href="/mrp/planned-orders">Planned Orders</a></div>
 </div>
 <div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff">
   <h3 style="margin-top:0">Dispatchable Grades (sample)</h3>

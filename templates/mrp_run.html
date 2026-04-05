@@ -4,10 +4,13 @@
 <h2>MRP Run / Shortage Engine - Step 3</h2>
 <div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
   <a class="btn" href="/mrp">← Back to MRP</a>
+  <a class="btn" href="/mrp/planned-orders">Planned Orders</a>
   <form method="post" action="/mrp/run" style="display:inline">
     <button class="btn" type="submit">Run MRP Now</button>
   </form>
 </div>
+
+{% if request.query_params.get("err") %}<div class="card" style="padding:12px;border:1px solid #fecaca;background:#fef2f2;color:#991b1b;border-radius:12px;margin-bottom:12px">{{ request.query_params.get("err") }}</div>{% endif %}
 
 {% if run %}
 <div class="grid" style="display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:12px;margin-bottom:16px">
@@ -17,6 +20,14 @@
   <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Pending Qty (kg)</div><div style="font-size:24px;font-weight:800">{{ '%.2f'|format(summary.total_pending_kg or 0) }}</div></div>
   <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Net Shortage (kg)</div><div style="font-size:24px;font-weight:800;color:#b42318">{{ '%.2f'|format(summary.total_shortage_kg or 0) }}</div></div>
 </div>
+
+{% if run and suggestions %}
+<div class="toolbar" style="margin-bottom:12px">
+  <form method="post" action="/mrp/planned-orders/from-run/{{ run.id }}">
+    <button class="btn" type="submit">Convert This Run to Planned Orders</button>
+  </form>
+</div>
+{% endif %}
 
 <div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff;margin-bottom:16px">
   <h3 style="margin-top:0">Production / Replenishment Suggestions</h3>

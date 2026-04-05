@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Planned Orders{% endblock %}
+{% block content %}
+<h2>Planned Orders - Step 4</h2>
+<div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+  <a class="btn" href="/mrp">← Back to MRP</a>
+  <a class="btn" href="/mrp/run">MRP Run</a>
+</div>
+<table class="table">
+  <tr>
+    <th>Plan</th><th>Source Run</th><th>Status</th><th>Created By</th><th>Created At</th><th>Lines</th><th>Open Lines</th><th>Total Shortage (kg)</th><th>Next Action Qty (kg)</th><th>Action</th>
+  </tr>
+  {% for x in rows %}
+  <tr>
+    <td>{{ x.plan_label or ('PLAN-' ~ x.id) }}</td>
+    <td>{% if x.source_run_id %}<a href="/mrp/run?run_id={{ x.source_run_id }}">Run {{ x.source_run_id }}</a>{% else %}-{% endif %}</td>
+    <td>{{ x.status }}</td>
+    <td>{{ x.created_by or '' }}</td>
+    <td>{{ x.created_at }}</td>
+    <td>{{ x.line_count or 0 }}</td>
+    <td>{{ x.open_count or 0 }}</td>
+    <td>{{ '%.2f'|format(x.total_shortage_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.total_next_action_qty_kg or 0) }}</td>
+    <td><a class="btn btn-small" href="/mrp/planned-orders/{{ x.id }}">View</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

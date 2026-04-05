@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Planned Order{% endblock %}
+{% block content %}
+<h2>Planned Order - Step 4</h2>
+<div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+  <a class="btn" href="/mrp/planned-orders">← Back to Planned Orders</a>
+  {% if plan.source_run_id %}<a class="btn" href="/mrp/run?run_id={{ plan.source_run_id }}">Open Source MRP Run</a>{% endif %}
+  {% if is_admin %}
+  <form method="post" action="/mrp/planned-orders/{{ plan.id }}/status" style="display:flex;gap:8px;align-items:center">
+    <select name="status">
+      <option value="OPEN" {% if (plan.status or '') == 'OPEN' %}selected{% endif %}>OPEN</option>
+      <option value="RELEASED" {% if (plan.status or '') == 'RELEASED' %}selected{% endif %}>RELEASED</option>
+      <option value="CLOSED" {% if (plan.status or '') == 'CLOSED' %}selected{% endif %}>CLOSED</option>
+      <option value="CANCELLED" {% if (plan.status or '') == 'CANCELLED' %}selected{% endif %}>CANCELLED</option>
+    </select>
+    <button class="btn" type="submit">Update Status</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="grid" style="display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px;margin-bottom:16px">
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Plan</div><div style="font-weight:800">{{ plan.plan_label or ('PLAN-' ~ plan.id) }}</div></div>
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Status</div><div style="font-size:24px;font-weight:800">{{ plan.status }}</div></div>
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Lines</div><div style="font-size:24px;font-weight:800">{{ summary.line_count }}</div></div>
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Total Next Action Qty (kg)</div><div style="font-size:24px;font-weight:800">{{ '%.2f'|format(summary.total_next_action_qty_kg or 0) }}</div></div>
+</div>
+
+<table class="table">
+  <tr>
+    <th>Dispatch Grade</th><th>Source Stage</th><th>Family</th><th>Shortage (kg)</th><th>FG Need</th><th>Grinding Need</th><th>Anneal Need</th><th>RAP Need</th><th>Atom Need</th><th>Melt Need</th><th>Next Action</th><th>Next Qty</th><th>Plan Days</th><th>Status</th><th>Route</th>
+  </tr>
+  {% for x in lines %}
+  <tr>
+    <td>{{ x.dispatch_grade }}</td>
+    <td>{{ x.source_stage }}</td>
+    <td>{{ x.source_family or '' }}</td>
+    <td>{{ '%.2f'|format(x.shortage_qty_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.planned_fg_qty_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.planned_grinding_qty_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.planned_anneal_qty_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.planned_rap_qty_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.planned_atom_qty_kg or 0) }}</td>
+    <td>{{ '%.2f'|format(x.planned_melt_qty_kg or 0) }}</td>
+    <td><strong>{{ x.next_action_stage or '-' }}</strong></td>
+    <td>{{ '%.2f'|format(x.next_action_qty_kg or 0) }}</td>
+    <td>{% if x.planned_capacity_days %}{{ '%.2f'|format(x.planned_capacity_days) }}{% else %}-{% endif %}</td>
+    <td>{{ x.status }}</td>
+    <td>{{ x.route_steps or '' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
