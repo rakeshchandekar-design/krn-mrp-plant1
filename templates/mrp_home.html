@@ -6,9 +6,24 @@
   <a class="btn" href="/mrp/grades">Grade Master</a>
   <a class="btn" href="/mrp/recipes">Process Recipe Master</a>
   <a class="btn" href="/mrp/yields">Yield Master</a>
+  <a class="btn" href="/mrp/run">MRP Run / Shortage Engine</a>
 </div>
-<div class="grid" style="display:grid;grid-template-columns:repeat(3,minmax(240px,1fr));gap:14px;margin-bottom:18px">
-  <div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff">
+<div class="grid" style="display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:14px;margin-bottom:18px">
+  <div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff;margin-bottom:14px">
+  <h3 style="margin-top:0">Latest MRP Snapshot</h3>
+  {% if latest_run and latest_summary %}
+  <div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap">
+    <div><strong>Run:</strong> {{ latest_run.run_label or ('MRP-' ~ latest_run.id) }}</div>
+    <div><strong>Open Lines:</strong> {{ latest_summary.open_lines }}</div>
+    <div><strong>Shortage Lines:</strong> {{ latest_summary.shortage_lines }}</div>
+    <div><strong>Pending:</strong> {{ '%.2f'|format(latest_summary.total_pending_kg or 0) }} kg</div>
+    <div><strong>Shortage:</strong> {{ '%.2f'|format(latest_summary.total_shortage_kg or 0) }} kg</div>
+  </div>
+  {% else %}
+  <div class="small">No MRP run generated yet.</div>
+  {% endif %}
+</div>
+<div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff">
     <h3 style="margin:0 0 6px 0">Grade Master</h3>
     <div class="small">Active records</div>
     <div style="font-size:28px;font-weight:800">{{ counts.grades }}</div>
@@ -23,6 +38,12 @@
     <div class="small">Planning assumptions</div>
     <div style="font-size:28px;font-weight:800">{{ counts.yields }}</div>
   </div>
+  <div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff">
+    <h3 style="margin:0 0 6px 0">MRP Runs</h3>
+    <div class="small">Latest planning snapshot</div>
+    <div style="font-size:28px;font-weight:800">{{ counts.runs }}</div>
+    {% if latest_run %}<div class="small" style="margin-top:8px">Latest: {{ latest_run.run_label or ('MRP-' ~ latest_run.id) }}</div>{% endif %}
+  </div>
 </div>
 <div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff;margin-bottom:14px">
   <h3 style="margin-top:0">What is live now</h3>
@@ -33,7 +54,7 @@
     <li>Dispatch customer-order grade dropdown now reads active dispatchable grade master first</li>
   </ul>
   <p class="small">Step 2 is now live: Sales Order reservation and ATP against these masters.</p>
-  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="/dispatch/customer-orders">Customer Orders</a><a class="btn" href="/dispatch/atp">ATP / Reservations</a></div>
+  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="/dispatch/customer-orders">Customer Orders</a><a class="btn" href="/dispatch/atp">ATP / Reservations</a><a class="btn" href="/mrp/run">MRP Run / Shortage Engine</a></div>
 </div>
 <div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff">
   <h3 style="margin-top:0">Dispatchable Grades (sample)</h3>

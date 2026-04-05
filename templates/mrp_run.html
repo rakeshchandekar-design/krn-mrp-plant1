@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}MRP Run{% endblock %}
+{% block content %}
+<h2>MRP Run / Shortage Engine - Step 3</h2>
+<div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+  <a class="btn" href="/mrp">← Back to MRP</a>
+  <form method="post" action="/mrp/run" style="display:inline">
+    <button class="btn" type="submit">Run MRP Now</button>
+  </form>
+</div>
+
+{% if run %}
+<div class="grid" style="display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:12px;margin-bottom:16px">
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Run Label</div><div style="font-weight:800">{{ run.run_label or ('MRP-' ~ run.id) }}</div></div>
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Open Lines</div><div style="font-size:24px;font-weight:800">{{ summary.open_lines }}</div></div>
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Shortage Lines</div><div style="font-size:24px;font-weight:800;color:#b42318">{{ summary.shortage_lines }}</div></div>
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Pending Qty (kg)</div><div style="font-size:24px;font-weight:800">{{ '%.2f'|format(summary.total_pending_kg or 0) }}</div></div>
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Net Shortage (kg)</div><div style="font-size:24px;font-weight:800;color:#b42318">{{ '%.2f'|format(summary.total_shortage_kg or 0) }}</div></div>
+</div>
+
+<div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff;margin-bottom:16px">
+  <h3 style="margin-top:0">Production / Replenishment Suggestions</h3>
+  <table class="table">
+    <tr>
+      <th>Dispatch Grade</th><th>Source Stage</th><th>Family</th>
+      <th>Shortage (kg)</th><th>FG Need</th><th>Grinding Need</th><th>Anneal Need</th><th>RAP Need</th><th>Atom Need</th><th>Melt Need</th><th>Plan Days</th><th>Route</th>
+    </tr>
+    {% for s in suggestions %}
+    <tr>
+      <td>{{ s.dispatch_grade }}</td>
+      <td>{{ s.source_stage }}</td>
+      <td>{{ s.source_family or '' }}</td>
+      <td>{{ '%.2f'|format(s.shortage_qty_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(s.suggested_fg_qty_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(s.suggested_grinding_qty_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(s.suggested_anneal_qty_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(s.suggested_rap_qty_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(s.suggested_atom_qty_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(s.suggested_melt_qty_kg or 0) }}</td>
+      <td>{% if s.planned_capacity_days %}{{ '%.2f'|format(s.planned_capacity_days) }}{% else %}-{% endif %}</td>
+      <td>{{ s.route_steps or '' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff">
+  <h3 style="margin-top:0">Demand vs Stock Detail</h3>
+  <table class="table">
+    <tr>
+      <th>Order</th><th>Customer</th><th>Due Date</th><th>Priority</th><th>Grade</th>
+      <th>Ordered</th><th>Dispatched</th><th>Reserved</th><th>Pending</th>
+      <th>Gross Stock</th><th>Available</th><th>Source Stock</th><th>Shortage</th><th>ATP</th><th>Suggested Action</th>
+    </tr>
+    {% for x in lines %}
+    <tr class="{% if (x.shortage_qty_kg or 0) > 0 %}bg-danger-subtle{% elif (x.atp_status or '') == 'READY' %}bg-success-subtle{% endif %}">
+      <td>{{ x.order_no }}</td>
+      <td>{{ x.customer_name }}</td>
+      <td>{{ x.due_date or '' }}</td>
+      <td>{{ x.priority or '' }}</td>
+      <td>{{ x.dispatch_grade }}</td>
+      <td>{{ '%.2f'|format(x.ordered_qty_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(x.dispatched_qty_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(x.reserved_qty_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(x.pending_qty_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(x.gross_stock_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(x.available_stock_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(x.source_stage_stock_kg or 0) }}</td>
+      <td>{{ '%.2f'|format(x.shortage_qty_kg or 0) }}</td>
+      <td>{{ x.atp_status }}</td>
+      <td>{{ x.suggested_action }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<div class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff">
+  <p>No MRP run available yet.</p>
+  <form method="post" action="/mrp/run">
+    <button class="btn" type="submit">Run MRP Now</button>
+  </form>
+</div>
+{% endif %}
+
+<style>
+.bg-success-subtle{background:#ecfdf3}
+.bg-danger-subtle{background:#fef3f2}
+</style>
+{% endblock %}
