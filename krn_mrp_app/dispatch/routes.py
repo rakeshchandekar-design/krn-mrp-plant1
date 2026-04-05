@@ -115,6 +115,20 @@ with engine.begin() as conn:
             pass
 
 
+
+def _table_exists(conn, table_name: str) -> bool:
+    """Check if a table exists (works for SQLite & Postgres)."""
+    try:
+        if str(conn.engine.url).startswith("sqlite"):
+            return bool(
+                conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name=:t"), {"t": table_name}).fetchone()
+            )
+        return bool(
+            conn.execute(text("SELECT to_regclass('public.'||:t)"), {"t": table_name}).scalar()
+        )
+    except Exception:
+        return False
+
 def _dispatch_customers(active_only: bool = True):
     with engine.begin() as conn:
         sql = "SELECT * FROM dispatch_customers" + (" WHERE COALESCE(is_active,TRUE)=TRUE" if active_only else "") + " ORDER BY customer_name"
