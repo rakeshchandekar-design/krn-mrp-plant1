@@ -93,6 +93,21 @@ def fetch_plant2_balance():
             })
     return out
 
+def _fifo_allocate_rows(rows: List[Dict[str, Any]], required_qty: float, key_field: str = "lot_no", avail_field: str = "available_kg") -> Dict[str, float]:
+    remaining = float(required_qty or 0.0)
+    out: Dict[str, float] = {}
+    ordered = sorted(rows, key=lambda r: (str(r.get(key_field) or ""), str(r.get("grade") or "")))
+    for r in ordered:
+        if remaining <= 1e-6:
+            break
+        avail = float(r.get(avail_field) or 0.0)
+        if avail <= 1e-6:
+            continue
+        take = min(avail, remaining)
+        out[str(r.get(key_field))] = take
+        remaining -= take
+    return out
+
 def plant2_available_rows(conn):
     """
     Returns rows: lot_no, grade, cost_per_kg, available_kg
@@ -362,8 +377,7 @@ async def anneal_create_post(
     if lot_date < min_allowed_date:
         return RedirectResponse(url=f"/anneal/create?err={quote_plus('Only current date and last 4 days are allowed for Annealing lot creation.')}&lot_date={lot_date.isoformat()}", status_code=303)
 
-    allocations: dict[str, float] = {}
-    total_alloc = 0.0
+    requested_markers: dict[str, float] = {}
     for k, v in form.items():
         if k.startswith("alloc_"):
             rap_lot_no = k.replace("alloc_", "")
@@ -372,12 +386,7 @@ async def anneal_create_post(
             except Exception:
                 qty = 0.0
             if qty > 0:
-                allocations[rap_lot_no] = qty
-                total_alloc += qty
-
-    if total_alloc <= 0:
-        msg = "Allocate quantity > 0 kg."
-        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
+                requested_markers[rap_lot_no] = qty
 
     lw_raw = form.get("lot_weight")
     try:
@@ -387,10 +396,6 @@ async def anneal_create_post(
 
     if lot_weight <= 0:
         return RedirectResponse(url=f"/anneal/create?err=Lot%20Weight%20must%20be%20%3E%200.&lot_date={lot_date.isoformat()}", status_code=303)
-
-    if abs(lot_weight - total_alloc) > 0.01:
-        msg = f"Lot Weight mismatch: allocated {total_alloc:.2f} kg, entered {lot_weight:.2f} kg."
-        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
 
     try:
         ammonia_kg = float(form.get("ammonia_kg") or 0)
@@ -416,19 +421,23 @@ async def anneal_create_post(
 
     avail_rows = fetch_plant2_balance()
     avail_map = {r["lot_no"]: r for r in avail_rows}
+    if not requested_markers:
+        msg = "FIFO Auto Mode: mark any one RAP lot from required family; system will allocate oldest Plant-2 lots first."
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
 
-    for lot_no, qty in allocations.items():
-        r = avail_map.get(lot_no)
-        if (r is None) or (qty > float(r.get("available_kg") or 0)):
-            msg = f"Selected RAP lot {lot_no} not found or insufficient Plant-2 balance."
-            return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
-
-    fam = {avail_map[lot]["grade"] for lot in allocations.keys()}
-    if len(fam) > 1:
+    fam = {avail_map[lot]["grade"] for lot in requested_markers.keys() if lot in avail_map}
+    if len(fam) > 1 or not fam:
         msg = "Only one grade family allowed per anneal lot (KRIP or KRFS or KRM or KRSP)."
         return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
 
     rap_grade = next(iter(fam))
+    eligible_rows = [r for r in avail_rows if str(r.get("grade") or "") == rap_grade]
+    total_alloc = sum(float(r.get("available_kg") or 0.0) for r in eligible_rows)
+    if total_alloc + 1e-6 < lot_weight:
+        msg = f"Insufficient FIFO Plant-2 balance for {rap_grade}."
+        return RedirectResponse(url=f"/anneal/create?err={quote_plus(msg)}&lot_date={lot_date.isoformat()}", status_code=303)
+    allocations = _fifo_allocate_rows(eligible_rows, lot_weight, key_field="lot_no", avail_field="available_kg")
+
     out_grade = JOBWORK_ANNEAL_GRADE if rap_grade == JOBWORK_RAP_GRADE else (SPONGE_ANNEAL_GRADE if rap_grade == SPONGE_PULV_GRADE else ("KIP" if rap_grade == "KRIP" else "KFS"))
 
     rap_cost_wsum = sum(

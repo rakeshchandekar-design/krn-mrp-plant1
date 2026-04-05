@@ -69,6 +69,22 @@ def _load_fg_allocations_used(conn) -> tuple[Dict[str, float], Dict[str, float],
     if not _table_exists(conn, "fg_lots"):
         return main_used, ov80_used, ov40_used
 
+
+def _fifo_allocate_rows(rows: List[Dict[str, Any]], required_qty: float, key_field: str = "lot_no", avail_field: str = "available_kg") -> Dict[str, float]:
+    remaining = float(required_qty or 0.0)
+    out: Dict[str, float] = {}
+    ordered = sorted(rows, key=lambda r: (str(r.get("date") or ""), str(r.get(key_field) or "")))
+    for r in ordered:
+        if remaining <= 1e-6:
+            break
+        avail = float(r.get(avail_field) or 0.0)
+        if avail <= 1e-6:
+            continue
+        take = min(avail, remaining)
+        out[str(r.get(key_field))] = take
+        remaining -= take
+    return out
+
     cols = set()
     try:
         if str(engine.url).startswith("sqlite"):
@@ -133,6 +149,22 @@ def _load_fg_allocations_used(conn) -> tuple[Dict[str, float], Dict[str, float],
                 main_used[key] = float(main_used.get(key, 0.0)) + qty
 
     return main_used, ov80_used, ov40_used
+
+
+def _fifo_allocate_rows(rows: List[Dict[str, Any]], required_qty: float, key_field: str = "lot_no", avail_field: str = "available_kg") -> Dict[str, float]:
+    remaining = float(required_qty or 0.0)
+    out: Dict[str, float] = {}
+    ordered = sorted(rows, key=lambda r: (str(r.get("date") or ""), str(r.get(key_field) or "")))
+    for r in ordered:
+        if remaining <= 1e-6:
+            break
+        avail = float(r.get(avail_field) or 0.0)
+        if avail <= 1e-6:
+            continue
+        take = min(avail, remaining)
+        out[str(r.get(key_field))] = take
+        remaining -= take
+    return out
 
 def fetch_anneal_balance():
     """Fetch APPROVED Anneal lots and compute remaining available balance."""
@@ -306,7 +338,7 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
             status_code=303,
         )
 
-    allocations, total_alloc = {}, 0.0
+    requested_markers = {}
     for k, v in form.items():
         if k.startswith("alloc_"):
             lot_no = k.replace("alloc_", "")
@@ -315,11 +347,7 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
             except Exception:
                 qty = 0.0
             if qty > 0:
-                allocations[lot_no] = qty
-                total_alloc += qty
-
-    if total_alloc <= 0:
-        return RedirectResponse(f"/grind/create?err=Allocate+quantity+%3E+0+kg.&lot_date={lot_date.isoformat()}", status_code=303)
+                requested_markers[lot_no] = qty
 
     try:
         lot_weight = float(form.get("lot_weight") or 0)
@@ -327,10 +355,6 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
         return RedirectResponse(f"/grind/create?err=Lot+Weight+must+be+a+number.&lot_date={lot_date.isoformat()}", status_code=303)
     if lot_weight <= 0:
         return RedirectResponse(f"/grind/create?err=Lot+Weight+must+be+%3E+0.&lot_date={lot_date.isoformat()}", status_code=303)
-
-    if abs(lot_weight - total_alloc) > 0.01:
-        msg = f"Lot Weight mismatch: allocated {total_alloc:.2f} kg, entered {lot_weight:.2f} kg."
-        return RedirectResponse(f"/grind/create?err={msg.replace(' ','+')}&lot_date={lot_date.isoformat()}", status_code=303)
 
     try:
         p80 = float(form.get("oversize_p80") or 0)
@@ -355,20 +379,32 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
 
     avail_rows = fetch_anneal_balance()
     amap = {r["lot_no"]: r for r in avail_rows}
+    if not requested_markers:
+        return RedirectResponse(f"/grind/create?err=FIFO+Auto+Mode%3A+mark+any+one+anneal+lot+from+required+family%2C+system+will+allocate+oldest+approved+lots+first.&lot_date={lot_date.isoformat()}", status_code=303)
+
     grades = set()
-    for lot_no, qty in allocations.items():
+    for lot_no in requested_markers.keys():
         r = amap.get(lot_no)
-        if (r is None) or (qty > float(r.get("available_kg") or 0)):
-            return RedirectResponse(
-                f"/grind/create?err=Anneal+lot+{lot_no}+not+found+or+insufficient+balance.&lot_date={lot_date.isoformat()}",
-                status_code=303
-            )
+        if r is None:
+            return RedirectResponse(f"/grind/create?err=Anneal+lot+{lot_no}+not+found.&lot_date={lot_date.isoformat()}", status_code=303)
         grades.add((r.get("grade") or "").strip().upper())
 
     fam = {"KIPM" if g.startswith("KIPM") else ("KSP" if g.startswith("KSP") else ("KIP" if g.startswith("KIP") else ("KFS" if g.startswith("KFS") else g))) for g in grades}
     if len(fam) > 1:
         return RedirectResponse(f"/grind/create?err=Only+one+family+(KIP,+KIPM,+KSP+or+KFS)+per+grind+lot.&lot_date={lot_date.isoformat()}", status_code=303)
     out_grade = list(fam)[0] or ""
+
+    eligible_rows = []
+    for r in avail_rows:
+        g = (r.get("grade") or "").strip().upper()
+        fam_g = "KIPM" if g.startswith("KIPM") else ("KSP" if g.startswith("KSP") else ("KIP" if g.startswith("KIP") else ("KFS" if g.startswith("KFS") else g)))
+        if fam_g == out_grade:
+            eligible_rows.append(r)
+    total_alloc = sum(float(r.get("available_kg") or 0.0) for r in eligible_rows)
+    if total_alloc + 1e-6 < lot_weight:
+        return RedirectResponse(f"/grind/create?err=Insufficient+FIFO+anneal+balance+for+{out_grade}.&lot_date={lot_date.isoformat()}", status_code=303)
+    allocations = _fifo_allocate_rows(eligible_rows, lot_weight, key_field="lot_no", avail_field="available_kg")
+    total_alloc = sum(allocations.values())
 
     wsum = sum(allocations[ln] * float(amap[ln].get("anneal_cost_per_kg") or 0.0) for ln in allocations)
     input_cost = wsum / lot_weight if lot_weight else 0.0

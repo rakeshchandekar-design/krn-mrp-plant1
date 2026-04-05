@@ -225,6 +225,22 @@ def _load_fg_allocations_used(conn) -> tuple[Dict[str, float], Dict[str, float],
     return main_used, ov80_used, ov40_used
 
 
+def _fifo_allocate_rows(rows: List[Dict[str, Any]], required_qty: float, key_field: str = "lot_no", avail_field: str = "available_kg") -> Dict[str, float]:
+    remaining = float(required_qty or 0.0)
+    out: Dict[str, float] = {}
+    ordered = sorted(rows, key=lambda r: (str(r.get("date") or ""), str(r.get(key_field) or "")))
+    for r in ordered:
+        if remaining <= 1e-6:
+            break
+        avail = float(r.get(avail_field) or 0.0)
+        if avail <= 1e-6:
+            continue
+        take = min(avail, remaining)
+        out[str(r.get(key_field))] = take
+        remaining -= take
+    return out
+
+
 def fetch_grind_balance() -> List[Dict[str, Any]]:
     """Approved grinding stock available for normal FG grades."""
     with engine.begin() as conn:
@@ -647,36 +663,16 @@ async def fg_create_post(
         return RedirectResponse(f"/fg/create?err=Lot+Weight+must+be+%3E+0.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
 
     form = await request.form()
-    allocations: Dict[str, float] = {}
-    total_alloc = 0.0
-    for k, v in form.items():
-        if k.startswith("alloc_"):
-            lot_no = k.replace("alloc_", "")
-            try:
-                qty = float(v or 0)
-            except Exception:
-                qty = 0.0
-            if qty > 0:
-                allocations[lot_no] = qty
-                total_alloc += qty
-
-    if total_alloc <= 0.0:
-        return RedirectResponse(f"/fg/create?err=Allocate+quantity+%3E+0+kg.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
-
-    if abs(fg_weight - total_alloc) > 0.01:
-        msg = f"Lot Weight mismatch: allocated {total_alloc:.2f} kg, entered {fg_weight:.2f} kg."
-        return RedirectResponse(f"/fg/create?err={msg.replace(' ','+')}&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
-
     family_needed = _fg_family_for_grade(fg_grade)
     avail_rows = fetch_fg_source_balance(fg_grade)
     amap = {r["lot_no"]: r for r in avail_rows}
+    total_alloc = sum(float(r.get("available_kg") or 0.0) for r in avail_rows)
+    if total_alloc <= 0.0:
+        return RedirectResponse(f"/fg/create?err=No+eligible+FIFO+source+balance+available.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
+    if total_alloc + 1e-6 < fg_weight:
+        return RedirectResponse(f"/fg/create?err=Insufficient+FIFO+source+balance+for+requested+FG+lot+weight.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
 
-    for lot_no, qty in allocations.items():
-        r = amap.get(lot_no)
-        if (r is None) or (qty > float(r.get("available_kg") or 0)):
-            return RedirectResponse(f"/fg/create?err=Source+lot+{lot_no}+not+found+or+insufficient+balance.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
-        if r.get("family") != family_needed:
-            return RedirectResponse(f"/fg/create?err=FG+grade+family+does+not+match+selected+source+family.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
+    allocations = _fifo_allocate_rows(avail_rows, fg_weight, key_field="lot_no", avail_field="available_kg")
 
     wsum = sum(allocations[ln] * float(amap[ln].get("grind_cost_per_kg") or 0.0) for ln in allocations)
     base_cost = wsum / fg_weight if fg_weight else 0.0

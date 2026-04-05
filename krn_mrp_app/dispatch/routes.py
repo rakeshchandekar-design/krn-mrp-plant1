@@ -306,6 +306,35 @@ def _apply_dispatch_to_sales_order(conn, sales_order_id: int, dispatch_items: Li
     _update_sales_order_status(conn, sales_order_id)
 
 
+def _fifo_dispatch_allocate(rows: List[Dict[str, Any]], requested_by_grade: Dict[str, float]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        grouped.setdefault(str(r.get('fg_grade') or '').strip(), []).append(r)
+    for grade, qty_need in requested_by_grade.items():
+        remaining = float(qty_need or 0.0)
+        eligible = sorted(grouped.get(grade, []), key=lambda r: (str(r.get('date') or ''), str(r.get('fg_lot_no') or '')) )
+        total_avail = sum(float(r.get('available_kg') or 0.0) for r in eligible)
+        if total_avail + 1e-6 < remaining:
+            raise ValueError(f'Insufficient FIFO FG balance for {grade}. Pending {remaining:.1f} kg, available {total_avail:.1f} kg.')
+        for src in eligible:
+            if remaining <= 1e-6:
+                break
+            avail = float(src.get('available_kg') or 0.0)
+            if avail <= 1e-6:
+                continue
+            take = min(avail, remaining)
+            out.append({
+                'fg_lot_id': src['fg_lot_id'],
+                'fg_lot_no': src['fg_lot_no'],
+                'fg_grade': src['fg_grade'],
+                'qty_kg': take,
+                'cost_per_kg': float(src.get('cost_per_kg') or 0.0),
+                'value': float(src.get('cost_per_kg') or 0.0) * take,
+            })
+            remaining -= take
+    return out
+
 def _sales_order_pending_by_grade(items: List[Dict[str, Any]]) -> Dict[str, float]:
     out: Dict[str, float] = {}
     for it in items:
@@ -347,7 +376,7 @@ async def dispatch_customers_post(request: Request, dep: None = Depends(require_
 
 # ---------------- CUSTOMER ORDERS ----------------
 @router.get('/customer-orders', response_class=HTMLResponse)
-async def dispatch_customer_orders_get(request: Request, dep: None = Depends(require_roles('admin','dispatch','store','view'))):
+async def dispatch_customer_orders_get(request: Request, dep: None = Depends(require_roles('admin','dispatch','store','view','sales'))):
     customers = _dispatch_customers(True)
     grades = _dispatch_grade_options()
     rows = _sales_orders('all')
@@ -364,7 +393,7 @@ async def dispatch_customer_orders_get(request: Request, dep: None = Depends(req
 
 
 @router.post('/customer-orders')
-async def dispatch_customer_orders_post(request: Request, dep: None = Depends(require_roles('admin','dispatch','store'))):
+async def dispatch_customer_orders_post(request: Request, dep: None = Depends(require_roles('admin','dispatch','store','sales'))):
     form = await request.form()
     customer_name = (form.get('customer_name') or form.get('customer_master') or '').strip()
     if not customer_name:
@@ -429,7 +458,7 @@ async def dispatch_customer_orders_post(request: Request, dep: None = Depends(re
 
 
 @router.get('/customer-orders/view/{order_id}', response_class=HTMLResponse)
-async def dispatch_customer_order_view(request: Request, order_id: int, dep: None = Depends(require_roles('admin','dispatch','store','view'))):
+async def dispatch_customer_order_view(request: Request, order_id: int, dep: None = Depends(require_roles('admin','dispatch','store','view','sales'))):
     head, items = _fetch_sales_order(order_id)
     if not head:
         raise HTTPException(status_code=404, detail='Customer order not found')
@@ -444,7 +473,7 @@ async def dispatch_customer_order_view(request: Request, order_id: int, dep: Non
 
 # ---------------- HOME ----------------
 @router.get('/', response_class=HTMLResponse)
-async def dispatch_home(request: Request, dep: None = Depends(require_roles('admin','dispatch','store','view'))):
+async def dispatch_home(request: Request, dep: None = Depends(require_roles('admin','dispatch','store','view','sales'))):
     rows = _fg_available_rows()
     total_avail = sum(float(r['available_kg'] or 0.0) for r in rows)
     open_orders = _sales_orders('open')
@@ -499,11 +528,10 @@ async def dispatch_create_post(request: Request, dep: None = Depends(require_rol
     sales_order_id = int(sales_order_id_raw) if sales_order_id_raw.isdigit() else None
 
     payload_rows = _fg_available_rows()
-    by_id = {r['fg_lot_id']: r for r in payload_rows}
-
-    items: list[dict] = []
+    requested_by_grade: Dict[str, float] = {}
     for k, v in form.items():
-        if not k.startswith('q_'): continue
+        if not k.startswith('q_'):
+            continue
         try:
             fg_id = int(k.split('_',1)[1])
         except Exception:
@@ -512,26 +540,12 @@ async def dispatch_create_post(request: Request, dep: None = Depends(require_rol
             qty = float(v or 0.0)
         except Exception:
             qty = 0.0
-        if qty <= 0: continue
-        src = by_id.get(fg_id)
+        if qty <= 0:
+            continue
+        src = next((r for r in payload_rows if int(r.get('fg_lot_id') or 0) == fg_id), None)
         if not src:
             return RedirectResponse('/dispatch/create?err=Invalid+FG+lot+selected', status_code=303)
-        if qty > float(src['available_kg'] or 0.0) + 1e-6:
-            return RedirectResponse(f"/dispatch/create?err=Qty+exceeds+available+for+{src['fg_lot_no']}", status_code=303)
-        items.append({
-            'fg_lot_id': fg_id,
-            'fg_lot_no': src['fg_lot_no'],
-            'fg_grade': src['fg_grade'],
-            'qty_kg': qty,
-            'cost_per_kg': float(src['cost_per_kg'] or 0.0),
-            'value': float(src['cost_per_kg'] or 0.0) * qty,
-        })
-
-    if not items:
-        q = f'?err=Add+at+least+one+line+with+Qty+%3E+0'
-        if sales_order_id:
-            q += f'&sales_order_id={sales_order_id}'
-        return RedirectResponse('/dispatch/create' + q, status_code=303)
+        requested_by_grade[src['fg_grade']] = requested_by_grade.get(src['fg_grade'], 0.0) + qty
 
     selected_sales_order = None
     selected_sales_order_items: List[Dict[str, Any]] = []
@@ -540,13 +554,21 @@ async def dispatch_create_post(request: Request, dep: None = Depends(require_rol
         if not selected_sales_order:
             return RedirectResponse('/dispatch/create?err=Selected+customer+order+not+found', status_code=303)
         pending_by_grade = _sales_order_pending_by_grade(selected_sales_order_items)
-        dispatch_by_grade: Dict[str, float] = {}
-        for it in items:
-            dispatch_by_grade[it['fg_grade']] = dispatch_by_grade.get(it['fg_grade'], 0.0) + float(it['qty_kg'] or 0.0)
-        for grade, qty in dispatch_by_grade.items():
-            allowed = float(pending_by_grade.get(grade, 0.0))
-            if qty > allowed + 1e-6:
-                return RedirectResponse(f"/dispatch/create?err=Dispatch+qty+for+{grade}+exceeds+pending+customer+order+qty.&sales_order_id={sales_order_id}", status_code=303)
+        requested_by_grade = {g:q for g,q in pending_by_grade.items() if q > 0.0001}
+
+    if not requested_by_grade:
+        q = f'?err=Add+at+least+one+line+with+Qty+%3E+0'
+        if sales_order_id:
+            q += f'&sales_order_id={sales_order_id}'
+        return RedirectResponse('/dispatch/create' + q, status_code=303)
+
+    try:
+        items: list[dict] = _fifo_dispatch_allocate(payload_rows, requested_by_grade)
+    except ValueError as e:
+        q = f'?err={str(e).replace(" ", "+")}'
+        if sales_order_id:
+            q += f'&sales_order_id={sales_order_id}'
+        return RedirectResponse('/dispatch/create' + q, status_code=303)
 
     with engine.begin() as conn:
         prefix = 'DSP-' + date.today().strftime('%Y%m%d') + '-'
@@ -595,7 +617,7 @@ async def dispatch_create_post(request: Request, dep: None = Depends(require_rol
 
 # ---------------- LIST + CSV ----------------
 @router.get('/orders', response_class=HTMLResponse)
-async def dispatch_orders(request: Request, dep: None = Depends(require_roles('admin','dispatch','store','view')), from_date: Optional[str] = None, to_date: Optional[str] = None, csv_export: int = 0):
+async def dispatch_orders(request: Request, dep: None = Depends(require_roles('admin','dispatch','store','view','sales')), from_date: Optional[str] = None, to_date: Optional[str] = None, csv_export: int = 0):
     today = date.today().isoformat()
     s = from_date or today
     e = to_date or today
@@ -624,7 +646,7 @@ async def dispatch_orders(request: Request, dep: None = Depends(require_roles('a
 
 # ---------------- VIEW + PDF ----------------
 @router.get('/view/{order_id}', response_class=HTMLResponse)
-async def dispatch_view(request: Request, order_id: int, dep: None = Depends(require_roles('admin','dispatch','store','view'))):
+async def dispatch_view(request: Request, order_id: int, dep: None = Depends(require_roles('admin','dispatch','store','view','sales'))):
     head, items = _fetch_order(order_id)
     if not head:
         raise HTTPException(status_code=404, detail='Dispatch order not found')
@@ -642,7 +664,7 @@ async def dispatch_view(request: Request, order_id: int, dep: None = Depends(req
 
 
 @router.get('/pdf/{order_id}', response_class=HTMLResponse)
-async def dispatch_pdf(request: Request, order_id: int, dep: None = Depends(require_roles('admin','dispatch','store','view'))):
+async def dispatch_pdf(request: Request, order_id: int, dep: None = Depends(require_roles('admin','dispatch','store','view','sales'))):
     head, items = _fetch_order(order_id)
     if not head:
         raise HTTPException(status_code=404, detail='Dispatch order not found')

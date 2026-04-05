@@ -3,6 +3,7 @@
 <h2>Create Pulverization Lot</h2>
 <div class="toolbar"><a class="btn" href="/pulv">← Back</a></div>
 {% if err %}<div class="alert alert-danger">{{ err }}</div>{% endif %}
+<div class="compact-muted" style="margin:6px 0 10px">FIFO Auto Mode is enabled. System allocates oldest eligible stock first. Manual source selection is used only as a family/grade marker where required.</div>
 <form method="post">
   <label>Lot Date</label>
   <input type="date" name="lot_date" value="{{ lot_date }}" min="{{ min_date }}" max="{{ today }}" required>

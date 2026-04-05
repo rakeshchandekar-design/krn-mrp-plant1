@@ -1684,6 +1684,7 @@ USER_DB = {
     "fg":      {"password": os.getenv("KRN_FG_PASSWORD",      "fg@2025"),      "role": "fg"},
     "qa":      {"password": os.getenv("KRN_QA_PASSWORD",      "qa@2025"),      "role": "qa"},
     "krn":     {"password": os.getenv("KRN_VIEW_PASSWORD",    "krn"),          "role": "view"},
+    "sales":   {"password": os.getenv("KRN_SALES_PASSWORD",   "sales@2025"),   "role": "sales"},
 }
 
 def current_username(request: Request) -> str:
@@ -4397,49 +4398,58 @@ async def atom_new(
         if atom_lot_date < min_allowed:
             return _alert_redirect('Only current date and last 4 days are allowed for Atomization lot creation.', '/atomization?lot_date=' + atom_lot_date.isoformat())
 
-        # ---- Parse allocations from form ----
-        allocs: Dict[int, float] = {}
+        # ---- FIFO AUTO MODE ----
+        # User selections are used only to indicate the desired heat family.
+        marker_ids: Dict[int, float] = {}
         for key, val in form.items():
             if key.startswith("alloc_"):
                 try:
                     hid = int(key.split("_", 1)[1])
                     qty = float(val or 0)
                     if qty > 0:
-                        allocs[hid] = qty
+                        marker_ids[hid] = qty
                 except Exception:
                     pass
 
-        if not allocs:
-            return _alert_redirect("Enter allocation for at least one heat.")
+        if not marker_ids:
+            return _alert_redirect("FIFO Auto Mode: mark any one heat from the required family; system will allocate oldest approved heats first.")
 
-        # ---- Fetch heats that were allocated ----
-        heats = db.query(Heat).filter(Heat.id.in_(allocs.keys())).all()
-        if not heats:
+        marked_heats = db.query(Heat).filter(Heat.id.in_(marker_ids.keys())).all()
+        if not marked_heats:
             return _alert_redirect("Selected heats not found.")
 
-        # ---- Same-family rule (no KRIP & KRFS mixing) ----
-        grades = {heat_grade(h) for h in heats}
-        if len(grades) > 1:
+        grade_set = {heat_grade(h) for h in marked_heats}
+        if len(grade_set) > 1:
             return _alert_redirect("Mixing heat families in the same lot is not allowed.")
-
-        # ---- Per-heat available check ----
-        for h in heats:
-            avail = heat_available(db, h)
-            take = allocs.get(h.id, 0.0)
-            if take > avail + 1e-6:
-                return _alert_redirect(f"Over-allocation from heat {h.heat_no}. Available {avail:.1f} kg.")
-
-        # ---- Total must equal lot weight (tiny tolerance) ----
-        total_alloc = sum(allocs.values())
-        tol = 0.05  # ~50 g to avoid float rounding issues
-        if abs(total_alloc - float(lot_weight or 0.0)) > tol:
-            return _alert_redirect(
-                f"Allocated total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg)."
-            )
-
-        # ---- Determine lot grade (KRM / KRFS / KRIP) ----
-        grade_set = {heat_grade(h) for h in heats}
         grade = next(iter(grade_set)) if grade_set else "KRIP"
+
+        candidate_heats = [
+            h for h in db.query(Heat).order_by(Heat.id.asc()).all()
+            if (str(getattr(h, 'qa_status', '') or '').upper() == 'APPROVED') and heat_grade(h) == grade and heat_available(db, h) > 0.0001
+        ]
+        total_avail = sum(float(heat_available(db, h) or 0.0) for h in candidate_heats)
+        if total_avail + 1e-6 < float(lot_weight or 0.0):
+            return _alert_redirect(f"Insufficient FIFO heat balance for {grade}. Available {total_avail:.1f} kg.")
+
+        allocs: Dict[int, float] = {}
+        remaining_fifo = float(lot_weight or 0.0)
+        heats = []
+        for h in candidate_heats:
+            if remaining_fifo <= 1e-6:
+                break
+            avail = float(heat_available(db, h) or 0.0)
+            if avail <= 1e-6:
+                continue
+            take = min(avail, remaining_fifo)
+            if take > 0:
+                allocs[h.id] = take
+                heats.append(h)
+                remaining_fifo -= take
+
+        total_alloc = sum(allocs.values())
+        tol = 0.05
+        if abs(total_alloc - float(lot_weight or 0.0)) > tol:
+            return _alert_redirect(f"FIFO allocation total ({total_alloc:.1f} kg) must equal Lot Weight ({float(lot_weight or 0):.1f} kg).")
 
         # ---- Create lot number ----
         lot_date_token = atom_lot_date.strftime("%Y%m%d")

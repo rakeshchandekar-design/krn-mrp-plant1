@@ -66,6 +66,21 @@ def _used_by_grn():
     return used
 
 
+def _fifo_allocate_grns(rows, required_qty: float):
+    remaining = float(required_qty or 0.0)
+    out = {}
+    ordered = sorted(rows, key=lambda r: (str(r.get("date") or ""), int(r.get("id") or 0)))
+    for r in ordered:
+        if remaining <= 1e-6:
+            break
+        avail = float(r.get("available_kg") or 0.0)
+        if avail <= 1e-6:
+            continue
+        take = min(avail, remaining)
+        out[int(r.get("id"))] = take
+        remaining -= take
+    return out
+
 def _used_by_anneal_lotno():
     used = {}
     try:
@@ -138,19 +153,13 @@ async def create_post(request: Request, dep: None = Depends(require_roles('admin
         return RedirectResponse('/pulv/create?err=Future+date+is+not+allowed&lot_date=' + lot_date.isoformat(), status_code=303)
     if lot_date < (date.today() - timedelta(days=4)):
         return RedirectResponse('/pulv/create?err=Only+current+date+and+last+4+days+allowed&lot_date=' + lot_date.isoformat(), status_code=303)
-    allocs = {}
-    total = 0.0
+    requested_total = 0.0
     for k, v in form.items():
         if k.startswith('alloc_'):
             try:
-                q = float(v or 0)
+                requested_total += max(float(v or 0), 0.0)
             except Exception:
-                q = 0.0
-            if q > 0:
-                allocs[int(k.replace('alloc_',''))] = q
-                total += q
-    if total <= 0:
-        return RedirectResponse('/pulv/create?err=Allocate+DRI+quantity+%3E+0', status_code=303)
+                pass
     try:
         mag_output = float(form.get('mag_output_qty_kg') or 0)
     except Exception:
@@ -158,17 +167,28 @@ async def create_post(request: Request, dep: None = Depends(require_roles('admin
     if mag_output <= 0:
         return RedirectResponse('/pulv/create?err=Enter+magnetic+output+qty', status_code=303)
 
+    min_required_total = mag_output / max(1.0 - (PULV_DUST_LOSS_PCT / 100.0), 1e-9)
+    total = requested_total if requested_total > 0 else min_required_total
+
     used = _used_by_grn()
-    avail = {r['id']: r for r in fetch_dri_balance()}
+    rows = []
+    for r in fetch_dri_balance():
+        effective = float(r['remaining_qty'] or 0) - float(used.get(int(r['id']), 0.0))
+        if effective > 0.0001:
+            x = dict(r)
+            x['available_kg'] = effective
+            rows.append(x)
+    if sum(float(r.get('available_kg') or 0.0) for r in rows) + 1e-6 < total:
+        return RedirectResponse('/pulv/create?err=Insufficient+FIFO+DRI+balance', status_code=303)
+
+    allocs = _fifo_allocate_grns(rows, total)
     input_value = 0.0
     trace_parts = []
+    avail = {r['id']: r for r in rows}
     for gid, q in allocs.items():
         r = avail.get(gid)
         if not r:
             return RedirectResponse('/pulv/create?err=Invalid+DRI+GRN', status_code=303)
-        effective = float(r['remaining_qty'] or 0) - float(used.get(gid, 0.0))
-        if q > effective + 1e-9:
-            return RedirectResponse('/pulv/create?err=Insufficient+DRI+balance', status_code=303)
         input_value += q * float(r['price'] or 0.0)
         trace_parts.append(r['grn_no'])
 
