@@ -4,6 +4,7 @@
 <div class="toolbar" style="margin:8px 0 12px; gap:8px; display:flex; flex-wrap:wrap;">
   <a class="btn" href="/dispatch">← Back</a>
   <a class="btn" href="/dispatch/customer-orders">Customer Orders</a>
+  <a class="btn" href="/dispatch/atp">ATP</a>
   <a class="btn" href="/dispatch/orders">Dispatch History</a>
 </div>
 {% if err %}<div class="alert alert-danger" style="margin:8px 0">{{ err }}</div>{% endif %}
@@ -75,13 +76,17 @@
   <div class="card table-card" style="margin-top:12px;">
     <h3>Linked Customer Order — {{ selected_sales_order.order_no }}</h3>
     <table class="table small">
-      <tr><th>FG Grade</th><th>Ordered (kg)</th><th>Dispatched (kg)</th><th>Pending (kg)</th><th>Remarks</th></tr>
+      <tr><th>Grade</th><th>Ordered (kg)</th><th>Reserved (kg)</th><th>Dispatched (kg)</th><th>Pending (kg)</th><th>Shortage (kg)</th><th>Source Pref</th><th>Status</th><th>Remarks</th></tr>
       {% for it in selected_sales_order_items %}
       <tr>
         <td>{{ it.fg_grade }}</td>
         <td>{{ '%.1f'|format(it.ordered_qty_kg or 0) }}</td>
+        <td>{{ '%.1f'|format(it.reserved_qty_kg or 0) }}</td>
         <td>{{ '%.1f'|format(it.dispatched_qty_kg or 0) }}</td>
         <td>{{ '%.1f'|format(it.pending_qty_kg or 0) }}</td>
+        <td>{{ '%.1f'|format(it.shortage_qty_kg or 0) }}</td>
+        <td>{{ it.source_preference or 'AUTO' }}</td>
+        <td>{{ it.line_status or 'OPEN' }}</td>
         <td>{{ it.remarks or '' }}</td>
       </tr>
       {% endfor %}

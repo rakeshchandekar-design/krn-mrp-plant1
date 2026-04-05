@@ -34,6 +34,10 @@ with engine.begin() as conn:
             customer_gstin TEXT,
             contact TEXT,
             customer_address TEXT,
+            po_no TEXT,
+            po_date DATE,
+            due_date DATE,
+            priority TEXT DEFAULT 'NORMAL',
             remarks TEXT,
             status TEXT NOT NULL DEFAULT 'OPEN',
             created_by TEXT,
@@ -49,7 +53,28 @@ with engine.begin() as conn:
             fg_grade TEXT NOT NULL,
             ordered_qty_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
             dispatched_qty_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+            reserved_qty_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+            committed_date DATE,
+            source_preference TEXT DEFAULT 'AUTO',
+            line_status TEXT DEFAULT 'OPEN',
             remarks TEXT
+        )
+    """))
+
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS dispatch_stock_reservations (
+            id SERIAL PRIMARY KEY,
+            sales_order_id INT NOT NULL,
+            sales_order_item_id INT NOT NULL,
+            source_stage TEXT NOT NULL,
+            fg_lot_id INT,
+            rap_lot_id INT,
+            source_lot_no TEXT,
+            fg_grade TEXT NOT NULL,
+            reserved_qty_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'ACTIVE',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            released_at TIMESTAMP
         )
     """))
 
@@ -68,6 +93,21 @@ with engine.begin() as conn:
         "ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS source_stage TEXT DEFAULT 'FG'",
         "ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS rap_lot_id INT",
         "ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS source_lot_no TEXT",
+    ]:
+        try:
+            conn.execute(text(_ddl))
+        except Exception:
+            pass
+
+    for _ddl in [
+        "ALTER TABLE dispatch_sales_orders ADD COLUMN IF NOT EXISTS po_no TEXT",
+        "ALTER TABLE dispatch_sales_orders ADD COLUMN IF NOT EXISTS po_date DATE",
+        "ALTER TABLE dispatch_sales_orders ADD COLUMN IF NOT EXISTS due_date DATE",
+        "ALTER TABLE dispatch_sales_orders ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'NORMAL'",
+        "ALTER TABLE dispatch_sales_order_items ADD COLUMN IF NOT EXISTS reserved_qty_kg DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE dispatch_sales_order_items ADD COLUMN IF NOT EXISTS committed_date DATE",
+        "ALTER TABLE dispatch_sales_order_items ADD COLUMN IF NOT EXISTS source_preference TEXT DEFAULT 'AUTO'",
+        "ALTER TABLE dispatch_sales_order_items ADD COLUMN IF NOT EXISTS line_status TEXT DEFAULT 'OPEN'",
     ]:
         try:
             conn.execute(text(_ddl))
@@ -174,7 +214,30 @@ def _is_admin(request: Request) -> bool:
     return isinstance(roles, (list,set,tuple)) and "admin" in roles
 
 
-def _fg_available_rows():
+def _active_reservation_maps(conn, exclude_sales_order_id: Optional[int] = None) -> tuple[Dict[int, float], Dict[int, float]]:
+    fg_reserved: Dict[int, float] = {}
+    rap_reserved: Dict[int, float] = {}
+    if not _table_exists(conn, "dispatch_stock_reservations"):
+        return fg_reserved, rap_reserved
+    q = """
+        SELECT fg_lot_id, rap_lot_id, COALESCE(SUM(reserved_qty_kg),0)::float AS reserved_qty
+        FROM dispatch_stock_reservations
+        WHERE UPPER(COALESCE(status,'ACTIVE'))='ACTIVE'
+    """
+    params: Dict[str, Any] = {}
+    if exclude_sales_order_id:
+        q += " AND sales_order_id <> :sid"
+        params['sid'] = exclude_sales_order_id
+    q += " GROUP BY fg_lot_id, rap_lot_id"
+    for r in conn.execute(text(q), params).mappings().all():
+        if r.get('fg_lot_id') is not None:
+            fg_reserved[int(r['fg_lot_id'])] = float(r.get('reserved_qty') or 0.0)
+        if r.get('rap_lot_id') is not None:
+            rap_reserved[int(r['rap_lot_id'])] = float(r.get('reserved_qty') or 0.0)
+    return fg_reserved, rap_reserved
+
+
+def _fg_available_rows(exclude_sales_order_id: Optional[int] = None, apply_reservations: bool = True):
     with engine.begin() as conn:
         lots = conn.execute(text("""
             SELECT id, lot_no, date, family, fg_grade,
@@ -191,10 +254,12 @@ def _fg_available_rows():
             WHERE COALESCE(source_stage,'FG')='FG'
             GROUP BY fg_lot_id
         """)).all() or [])
+        fg_reserved, _rap_reserved = _active_reservation_maps(conn, exclude_sales_order_id) if apply_reservations else ({}, {})
     out = []
     for r in lots:
         used = float(used_by_fg.get(r["id"], 0.0))
-        avail = float(r["weight_kg"] or 0.0) - used
+        reserved = float(fg_reserved.get(int(r['id']), 0.0))
+        avail = float(r["weight_kg"] or 0.0) - used - reserved
         if avail > 0.0001:
             out.append({
                 "source_stage": "FG",
@@ -214,7 +279,7 @@ def _fg_available_rows():
     return out
 
 
-def _rap_available_rows():
+def _rap_available_rows(exclude_sales_order_id: Optional[int] = None, apply_reservations: bool = True):
     with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT rl.id AS rap_lot_id, l.id AS base_lot_id, l.lot_no,
@@ -231,6 +296,7 @@ def _rap_available_rows():
             WHERE COALESCE(source_stage,'FG')='RAP'
             GROUP BY rap_lot_id
         """)).all() or [])
+        _fg_reserved, rap_reserved = _active_reservation_maps(conn, exclude_sales_order_id) if apply_reservations else ({}, {})
     out = []
     for r in rows:
         if str(r.get('qa_status') or '').upper() != 'APPROVED':
@@ -239,7 +305,8 @@ def _rap_available_rows():
         if not grade:
             continue
         used = float(used_by_rap.get(r['rap_lot_id'], 0.0))
-        avail = float(r.get('available_qty') or 0.0) - used
+        reserved = float(rap_reserved.get(int(r['rap_lot_id']), 0.0))
+        avail = float(r.get('available_qty') or 0.0) - used - reserved
         if avail <= 0.0001:
             continue
         family = grade if grade in ('KRIP','KRFS','KRM','KRSP') else grade
@@ -262,8 +329,8 @@ def _rap_available_rows():
     return out
 
 
-def _dispatch_available_rows():
-    return _fg_available_rows() + _rap_available_rows()
+def _dispatch_available_rows(exclude_sales_order_id: Optional[int] = None, apply_reservations: bool = True):
+    return _fg_available_rows(exclude_sales_order_id=exclude_sales_order_id, apply_reservations=apply_reservations) + _rap_available_rows(exclude_sales_order_id=exclude_sales_order_id, apply_reservations=apply_reservations)
 
 
 def _fetch_order(order_id: int):
@@ -354,15 +421,111 @@ def _fg_latest_coa_for_lot(fg_lot_id: int):
         return payload
 
 
+def _sync_sales_order_item_metrics(conn, sales_order_id: int) -> None:
+    item_rows = [dict(r) for r in conn.execute(text("""
+        SELECT id,
+               COALESCE(ordered_qty_kg,0)::float AS ordered_qty_kg,
+               COALESCE(dispatched_qty_kg,0)::float AS dispatched_qty_kg,
+               COALESCE(reserved_qty_kg,0)::float AS reserved_qty_kg
+        FROM dispatch_sales_order_items
+        WHERE sales_order_id=:id
+        ORDER BY id
+    """), {"id": sales_order_id}).mappings().all()]
+    for row in item_rows:
+        ordered = float(row.get('ordered_qty_kg') or 0.0)
+        dispatched = float(row.get('dispatched_qty_kg') or 0.0)
+        reserved = min(float(row.get('reserved_qty_kg') or 0.0), max(ordered - dispatched, 0.0))
+        pending = max(ordered - dispatched, 0.0)
+        if pending <= 0.0001:
+            line_status = 'CLOSED'
+        elif reserved >= pending - 0.0001:
+            line_status = 'RESERVED'
+        elif dispatched > 0 or reserved > 0:
+            line_status = 'PARTIAL'
+        else:
+            line_status = 'OPEN'
+        conn.execute(text("""
+            UPDATE dispatch_sales_order_items
+            SET reserved_qty_kg=:rq, line_status=:ls
+            WHERE id=:id
+        """), {"rq": reserved, "ls": line_status, "id": row['id']})
+
+
+def _rebuild_sales_order_reservations(conn, sales_order_id: int) -> None:
+    if not _table_exists(conn, 'dispatch_stock_reservations'):
+        return
+    conn.execute(text("DELETE FROM dispatch_stock_reservations WHERE sales_order_id=:id"), {'id': sales_order_id})
+    conn.execute(text("UPDATE dispatch_sales_order_items SET reserved_qty_kg=0 WHERE sales_order_id=:id"), {'id': sales_order_id})
+
+    items = [dict(r) for r in conn.execute(text("""
+        SELECT id, fg_grade,
+               COALESCE(ordered_qty_kg,0)::float AS ordered_qty_kg,
+               COALESCE(dispatched_qty_kg,0)::float AS dispatched_qty_kg,
+               COALESCE(source_preference,'AUTO') AS source_preference
+        FROM dispatch_sales_order_items
+        WHERE sales_order_id=:id
+        ORDER BY id
+    """), {'id': sales_order_id}).mappings().all()]
+
+    avail_rows = _dispatch_available_rows(exclude_sales_order_id=sales_order_id, apply_reservations=True)
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for r in avail_rows:
+        grouped.setdefault(str(r.get('fg_grade') or '').strip(), []).append(dict(r))
+    for grade in list(grouped.keys()):
+        grouped[grade] = sorted(grouped[grade], key=lambda r: (str(r.get('date') or ''), int(r.get('sort_seq') or 0), str(r.get('source_lot_no') or '')))
+
+    for it in items:
+        grade = str(it.get('fg_grade') or '').strip()
+        if not grade:
+            continue
+        pending = max(float(it.get('ordered_qty_kg') or 0.0) - float(it.get('dispatched_qty_kg') or 0.0), 0.0)
+        if pending <= 0.0001:
+            continue
+        pref = str(it.get('source_preference') or 'AUTO').upper()
+        reserved = 0.0
+        for src in grouped.get(grade, []):
+            if pending <= 0.0001:
+                break
+            if pref in ('FG','RAP') and str(src.get('source_stage') or '').upper() != pref:
+                continue
+            avail = float(src.get('available_kg') or 0.0)
+            if avail <= 0.0001:
+                continue
+            take = min(avail, pending)
+            conn.execute(text("""
+                INSERT INTO dispatch_stock_reservations
+                    (sales_order_id, sales_order_item_id, source_stage, fg_lot_id, rap_lot_id, source_lot_no, fg_grade, reserved_qty_kg, status)
+                VALUES
+                    (:sid, :siid, :ss, :fgid, :rid, :sln, :grade, :qty, 'ACTIVE')
+            """), {
+                'sid': sales_order_id,
+                'siid': it['id'],
+                'ss': src.get('source_stage') or 'FG',
+                'fgid': src.get('fg_lot_id'),
+                'rid': src.get('rap_lot_id'),
+                'sln': src.get('source_lot_no') or src.get('fg_lot_no'),
+                'grade': grade,
+                'qty': take,
+            })
+            reserved += take
+            pending -= take
+            src['available_kg'] = avail - take
+        conn.execute(text("UPDATE dispatch_sales_order_items SET reserved_qty_kg=:rq WHERE id=:id"), {'rq': reserved, 'id': it['id']})
+
+    _sync_sales_order_item_metrics(conn, sales_order_id)
+    _update_sales_order_status(conn, sales_order_id)
+
+
 def _sales_orders(status_filter: str = "open") -> List[Dict[str, Any]]:
     with engine.begin() as conn:
         sql = "SELECT * FROM dispatch_sales_orders"
         params: Dict[str, Any] = {}
         if status_filter == "open":
-            sql += " WHERE UPPER(COALESCE(status,'OPEN')) IN ('OPEN','PARTIAL')"
-        sql += " ORDER BY order_date DESC, id DESC"
+            sql += " WHERE UPPER(COALESCE(status,'OPEN')) IN ('OPEN','PARTIAL','RESERVED')"
+        sql += " ORDER BY COALESCE(due_date, order_date) ASC, order_date DESC, id DESC"
         heads = [dict(r) for r in conn.execute(text(sql), params).mappings().all()]
         for h in heads:
+            _sync_sales_order_item_metrics(conn, h['id'])
             items = [dict(r) for r in conn.execute(text("""
                 SELECT * FROM dispatch_sales_order_items
                 WHERE sales_order_id=:id
@@ -370,15 +533,19 @@ def _sales_orders(status_filter: str = "open") -> List[Dict[str, Any]]:
             """), {"id": h['id']}).mappings().all()]
             total_ordered = sum(float(i.get('ordered_qty_kg') or 0.0) for i in items)
             total_dispatched = sum(float(i.get('dispatched_qty_kg') or 0.0) for i in items)
+            total_reserved = sum(float(i.get('reserved_qty_kg') or 0.0) for i in items)
             h['items'] = items
             h['total_ordered_kg'] = total_ordered
             h['total_dispatched_kg'] = total_dispatched
+            h['total_reserved_kg'] = total_reserved
             h['total_pending_kg'] = max(total_ordered - total_dispatched, 0.0)
+            h['total_shortage_kg'] = max(h['total_pending_kg'] - total_reserved, 0.0)
     return heads
 
 
 def _fetch_sales_order(order_id: int) -> tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     with engine.begin() as conn:
+        _sync_sales_order_item_metrics(conn, order_id)
         head = conn.execute(text("SELECT * FROM dispatch_sales_orders WHERE id=:id"), {"id": order_id}).mappings().first()
         items = conn.execute(text("SELECT * FROM dispatch_sales_order_items WHERE sales_order_id=:id ORDER BY id"), {"id": order_id}).mappings().all()
     if not head:
@@ -386,10 +553,16 @@ def _fetch_sales_order(order_id: int) -> tuple[Optional[Dict[str, Any]], List[Di
     head_d = dict(head)
     item_list = [dict(r) for r in items]
     for it in item_list:
-        it['pending_qty_kg'] = max(float(it.get('ordered_qty_kg') or 0.0) - float(it.get('dispatched_qty_kg') or 0.0), 0.0)
+        ordered = float(it.get('ordered_qty_kg') or 0.0)
+        dispatched = float(it.get('dispatched_qty_kg') or 0.0)
+        reserved = float(it.get('reserved_qty_kg') or 0.0)
+        it['pending_qty_kg'] = max(ordered - dispatched, 0.0)
+        it['shortage_qty_kg'] = max(it['pending_qty_kg'] - reserved, 0.0)
     head_d['total_ordered_kg'] = sum(float(i.get('ordered_qty_kg') or 0.0) for i in item_list)
     head_d['total_dispatched_kg'] = sum(float(i.get('dispatched_qty_kg') or 0.0) for i in item_list)
+    head_d['total_reserved_kg'] = sum(float(i.get('reserved_qty_kg') or 0.0) for i in item_list)
     head_d['total_pending_kg'] = max(head_d['total_ordered_kg'] - head_d['total_dispatched_kg'], 0.0)
+    head_d['total_shortage_kg'] = max(head_d['total_pending_kg'] - head_d['total_reserved_kg'], 0.0)
     return head_d, item_list
 
 
@@ -397,16 +570,21 @@ def _update_sales_order_status(conn, sales_order_id: int) -> None:
     row = conn.execute(text("""
         SELECT
             COALESCE(SUM(ordered_qty_kg),0)::float AS ordered,
-            COALESCE(SUM(dispatched_qty_kg),0)::float AS dispatched
+            COALESCE(SUM(dispatched_qty_kg),0)::float AS dispatched,
+            COALESCE(SUM(reserved_qty_kg),0)::float AS reserved
         FROM dispatch_sales_order_items
         WHERE sales_order_id=:id
-    """), {"id": sales_order_id}).mappings().first() or {"ordered":0.0, "dispatched":0.0}
+    """), {"id": sales_order_id}).mappings().first() or {"ordered":0.0, "dispatched":0.0, "reserved":0.0}
     ordered = float(row.get('ordered') or 0.0)
     dispatched = float(row.get('dispatched') or 0.0)
+    reserved = float(row.get('reserved') or 0.0)
+    pending = max(ordered - dispatched, 0.0)
     status = 'OPEN'
     if ordered > 0 and dispatched >= ordered - 0.0001:
         status = 'CLOSED'
-    elif dispatched > 0:
+    elif reserved >= pending - 0.0001 and pending > 0:
+        status = 'RESERVED'
+    elif dispatched > 0 or reserved > 0:
         status = 'PARTIAL'
     conn.execute(text("""
         UPDATE dispatch_sales_orders
@@ -424,12 +602,10 @@ def _apply_dispatch_to_sales_order(conn, sales_order_id: int, dispatch_items: Li
         WHERE sales_order_id=:id
         ORDER BY id
     """), {"id": sales_order_id}).mappings().all()]
-
     by_grade: Dict[str, List[Dict[str, Any]]] = {}
     for r in pending_rows:
         grade = str(r.get('fg_grade') or '').strip()
         by_grade.setdefault(grade, []).append(r)
-
     for d in dispatch_items:
         grade = str(d.get('fg_grade') or '').strip()
         remaining = float(d.get('qty_kg') or 0.0)
@@ -446,8 +622,7 @@ def _apply_dispatch_to_sales_order(conn, sales_order_id: int, dispatch_items: Li
                 WHERE id=:id
             """), {"q": take, "id": row['id']})
             remaining -= take
-
-    _update_sales_order_status(conn, sales_order_id)
+    _rebuild_sales_order_reservations(conn, sales_order_id)
 
 
 def _fifo_dispatch_allocate(rows: List[Dict[str, Any]], requested_by_grade: Dict[str, float]) -> List[Dict[str, Any]]:
@@ -581,9 +756,9 @@ async def dispatch_customer_orders_post(request: Request, dep: None = Depends(re
         order_no = f'{prefix}{seq:03d}'
         order_id = conn.execute(text("""
             INSERT INTO dispatch_sales_orders
-                (order_no, order_date, customer_name, customer_gstin, contact, customer_address, remarks, status, created_by)
+                (order_no, order_date, customer_name, customer_gstin, contact, customer_address, po_no, po_date, due_date, priority, remarks, status, created_by)
             VALUES
-                (:ono, :d, :cn, :gst, :ct, :addr, :rmk, 'OPEN', :cb)
+                (:ono, :d, :cn, :gst, :ct, :addr, :pono, :podt, :due, :prio, :rmk, 'OPEN', :cb)
             RETURNING id
         """), {
             'ono': order_no,
@@ -592,15 +767,29 @@ async def dispatch_customer_orders_post(request: Request, dep: None = Depends(re
             'gst': (form.get('customer_gstin') or '').strip(),
             'ct': (form.get('contact') or '').strip(),
             'addr': (form.get('customer_address') or '').strip(),
+            'pono': (form.get('po_no') or '').strip(),
+            'podt': ((form.get('po_date') or '').strip() or None),
+            'due': ((form.get('due_date') or '').strip() or None),
+            'prio': ((form.get('priority') or 'NORMAL').strip() or 'NORMAL').upper(),
             'rmk': (form.get('remarks') or '').strip(),
             'cb': getattr(getattr(request,'state',None),'username','')
         }).mappings().first()['id']
 
+        item_payload = []
+        for idx, it in enumerate(items, start=1):
+            item_payload.append({
+                'sid': order_id,
+                'g': it['fg_grade'],
+                'q': it['ordered_qty_kg'],
+                'r': it.get('remarks',''),
+                'cd': ((form.get(f'committed_date_{idx}') or '').strip() or None),
+                'sp': ((form.get(f'source_pref_{idx}') or 'AUTO').strip() or 'AUTO').upper(),
+            })
         conn.execute(text("""
-            INSERT INTO dispatch_sales_order_items(sales_order_id, fg_grade, ordered_qty_kg, dispatched_qty_kg, remarks)
-            VALUES (:sid, :g, :q, 0, :r)
-        """), [{'sid': order_id, 'g': it['fg_grade'], 'q': it['ordered_qty_kg'], 'r': it.get('remarks','')} for it in items])
-        _update_sales_order_status(conn, order_id)
+            INSERT INTO dispatch_sales_order_items(sales_order_id, fg_grade, ordered_qty_kg, dispatched_qty_kg, reserved_qty_kg, committed_date, source_preference, line_status, remarks)
+            VALUES (:sid, :g, :q, 0, 0, :cd, :sp, 'OPEN', :r)
+        """), item_payload)
+        _rebuild_sales_order_reservations(conn, order_id)
 
     return RedirectResponse('/dispatch/customer-orders', status_code=303)
 
@@ -614,6 +803,61 @@ async def dispatch_customer_order_view(request: Request, order_id: int, dep: Non
         'request': request,
         'head': head,
         'items': items,
+        'is_admin': _is_admin(request),
+        **_tpl_auth(request),
+    })
+
+
+@router.get('/atp', response_class=HTMLResponse)
+async def dispatch_atp(request: Request, dep: None = Depends(require_roles('admin','dispatch','store','view','sales'))):
+    gross_rows = _dispatch_available_rows(apply_reservations=False)
+    avail_rows = _dispatch_available_rows(apply_reservations=True)
+    gross_by_grade: Dict[str, float] = {}
+    avail_by_grade: Dict[str, float] = {}
+    for r in gross_rows:
+        g = str(r.get('fg_grade') or '').strip()
+        gross_by_grade[g] = gross_by_grade.get(g, 0.0) + float(r.get('available_kg') or 0.0)
+    for r in avail_rows:
+        g = str(r.get('fg_grade') or '').strip()
+        avail_by_grade[g] = avail_by_grade.get(g, 0.0) + float(r.get('available_kg') or 0.0)
+    orders = _sales_orders('open')
+    line_rows: List[Dict[str, Any]] = []
+    for h in orders:
+        for it in h.get('items', []):
+            grade = str(it.get('fg_grade') or '').strip()
+            ordered = float(it.get('ordered_qty_kg') or 0.0)
+            dispatched = float(it.get('dispatched_qty_kg') or 0.0)
+            reserved = float(it.get('reserved_qty_kg') or 0.0)
+            pending = max(ordered - dispatched, 0.0)
+            shortage = max(pending - reserved, 0.0)
+            atp_avail = float(avail_by_grade.get(grade, 0.0))
+            if pending <= 0.0001:
+                atp_status = 'CLOSED'
+            elif reserved >= pending - 0.0001:
+                atp_status = 'READY'
+            elif reserved > 0 or atp_avail > 0:
+                atp_status = 'PARTIAL'
+            else:
+                atp_status = 'SHORTAGE'
+            line_rows.append({
+                'order_no': h.get('order_no'),
+                'customer_name': h.get('customer_name'),
+                'due_date': h.get('due_date'),
+                'priority': h.get('priority') or 'NORMAL',
+                'fg_grade': grade,
+                'ordered_qty_kg': ordered,
+                'dispatched_qty_kg': dispatched,
+                'reserved_qty_kg': reserved,
+                'pending_qty_kg': pending,
+                'shortage_qty_kg': shortage,
+                'gross_stock_kg': gross_by_grade.get(grade, 0.0),
+                'available_stock_kg': atp_avail,
+                'atp_status': atp_status,
+                'sales_order_id': h.get('id'),
+            })
+    return templates.TemplateResponse('dispatch_atp.html', {
+        'request': request,
+        'rows': line_rows,
         'is_admin': _is_admin(request),
         **_tpl_auth(request),
     })
@@ -640,9 +884,9 @@ async def dispatch_home(request: Request, dep: None = Depends(require_roles('adm
 # ---------------- CREATE ----------------
 @router.get('/create', response_class=HTMLResponse)
 async def dispatch_create_get(request: Request, dep: None = Depends(require_roles('admin','dispatch','store'))):
-    rows = _dispatch_available_rows()
     err = request.query_params.get('err','')
     sales_order_id_raw = request.query_params.get('sales_order_id','').strip()
+    rows = _dispatch_available_rows(exclude_sales_order_id=(int(sales_order_id_raw) if sales_order_id_raw.isdigit() else None))
     selected_sales_order = None
     selected_sales_order_items: List[Dict[str, Any]] = []
     if sales_order_id_raw:
@@ -675,7 +919,7 @@ async def dispatch_create_post(request: Request, dep: None = Depends(require_rol
     sales_order_id_raw = (form.get('sales_order_id') or '').strip()
     sales_order_id = int(sales_order_id_raw) if sales_order_id_raw.isdigit() else None
 
-    payload_rows = _dispatch_available_rows()
+    payload_rows = _dispatch_available_rows(exclude_sales_order_id=sales_order_id)
     requested_by_grade: Dict[str, float] = {}
     for k, v in form.items():
         if not k.startswith('q_'):

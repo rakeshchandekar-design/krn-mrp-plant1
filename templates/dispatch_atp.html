@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Available to Promise (ATP)</h2>
+<div class="toolbar" style="margin:8px 0 12px; gap:8px; display:flex; flex-wrap:wrap;">
+  <a class="btn" href="/dispatch">← Back to Dispatch</a>
+  <a class="btn" href="/dispatch/customer-orders">Customer Orders</a>
+  <a class="btn" href="/dispatch/orders">Dispatch History</a>
+</div>
+<div class="compact-muted" style="margin-bottom:10px">Gross Stock = dispatchable stock before reservation. Available Stock = free stock after active sales-order reservations. READY means the pending qty is fully reserved.</div>
+<table class="table">
+  <tr><th>Order</th><th>Customer</th><th>Due Date</th><th>Priority</th><th>Grade</th><th>Ordered</th><th>Reserved</th><th>Dispatched</th><th>Pending</th><th>Shortage</th><th>Gross Stock</th><th>Available Stock</th><th>ATP Status</th><th>Action</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.order_no }}</td><td>{{ r.customer_name }}</td><td>{{ r.due_date or '' }}</td><td>{{ r.priority }}</td><td>{{ r.fg_grade }}</td>
+    <td>{{ '%.1f'|format(r.ordered_qty_kg or 0) }}</td><td>{{ '%.1f'|format(r.reserved_qty_kg or 0) }}</td><td>{{ '%.1f'|format(r.dispatched_qty_kg or 0) }}</td>
+    <td>{{ '%.1f'|format(r.pending_qty_kg or 0) }}</td><td>{{ '%.1f'|format(r.shortage_qty_kg or 0) }}</td><td>{{ '%.1f'|format(r.gross_stock_kg or 0) }}</td><td>{{ '%.1f'|format(r.available_stock_kg or 0) }}</td>
+    <td>{{ r.atp_status }}</td>
+    <td><a class="btn btn-small" href="/dispatch/customer-orders/view/{{ r.sales_order_id }}">View Order</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

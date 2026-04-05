@@ -9,6 +9,7 @@
   <div class="actions-top">
     {% if can_dispatch_execute %}<a class="btn btn-primary" href="/dispatch/create">Create Dispatch</a>{% endif %}
     {% if can_sales_orders %}<a class="btn" href="/dispatch/customer-orders">Customer Orders</a>{% endif %}
+    {% if can_sales_orders %}<a class="btn" href="/dispatch/atp">ATP</a>{% endif %}
     {% if can_sales_orders %}<a class="btn" href="/dispatch/orders">Dispatch History</a>{% endif %}
   </div>
 
@@ -16,7 +17,7 @@
     <div class="card table-card">
       <h3>Available Lots</h3>
       <table class="table small">
-        <tr><th>Total FG lots visible</th><td>{{ rows|length }}</td></tr>
+        <tr><th>Total dispatchable rows visible</th><td>{{ rows|length }}</td></tr>
         <tr><th>Total available (kg)</th><td>{{ '%.1f'|format(total_avail or 0) }}</td></tr>
       </table>
     </div>
@@ -29,7 +30,7 @@
     </div>
     <div class="card table-card">
       <h3>Dispatch Pool</h3>
-      <div class="compact-muted">Use Customer Orders to register customer demand first, then Create Dispatch against that order for execution and traceability.</div>
+      <div class="compact-muted">Use Customer Orders to register customer demand first. System reserves FIFO stock automatically and ATP shows shortage / ready status.</div>
     </div>
   </div>
 
