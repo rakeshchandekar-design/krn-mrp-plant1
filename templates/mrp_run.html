@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block title %}MRP Run{% endblock %}
 {% block content %}
-<h2>MRP Run / Shortage Engine - Step 3</h2>
+<h2>MRP Run / Shortage Engine - Step 5</h2>
 <div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
   <a class="btn" href="/mrp">← Back to MRP</a>
   <a class="btn" href="/mrp/planned-orders">Planned Orders</a>
+  <a class="btn" href="/mrp/execution-queue">Execution Queue</a>
   <form method="post" action="/mrp/run" style="display:inline">
     <button class="btn" type="submit">Run MRP Now</button>
   </form>

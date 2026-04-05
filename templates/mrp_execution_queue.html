@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Execution Queue{% endblock %}
+{% block content %}
+<h2>Execution Queue - Step 5</h2>
+<div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+  <a class="btn" href="/mrp">← Back to MRP</a>
+  <a class="btn" href="/mrp/planned-orders">Planned Orders</a>
+</div>
+<div class="grid" style="display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px;margin-bottom:16px">
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Open</div><div style="font-size:24px;font-weight:800">{{ summary.open_count }}</div></div>
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">In Progress</div><div style="font-size:24px;font-weight:800">{{ summary.in_progress_count }}</div></div>
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Done</div><div style="font-size:24px;font-weight:800">{{ summary.done_count }}</div></div>
+  <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Open Qty (kg)</div><div style="font-size:24px;font-weight:800">{{ '%.2f'|format(summary.open_qty_kg or 0) }}</div></div>
+</div>
+<table class="table">
+  <tr><th>Plan</th><th>Stage</th><th>Dispatch Grade</th><th>Family</th><th>Target Qty (kg)</th><th>Status</th><th>Released By</th><th>Released At</th><th>Open Stage</th><th>Update</th><th>Route</th></tr>
+  {% for x in rows %}
+  <tr>
+    <td><a href="/mrp/planned-orders/{{ x.plan_id }}">{{ x.plan_label or ('PLAN-' ~ x.plan_id) }}</a></td>
+    <td><strong>{{ x.stage_name }}</strong></td>
+    <td>{{ x.dispatch_grade or '' }}</td>
+    <td>{{ x.source_family or '' }}</td>
+    <td>{{ '%.2f'|format(x.target_qty_kg or 0) }}</td>
+    <td>{{ x.status }}</td>
+    <td>{{ x.released_by or '' }}</td>
+    <td>{{ x.released_at }}</td>
+    <td>{% if x.stage_link %}<a class="btn btn-small" href="{{ x.stage_link }}">Open</a>{% else %}-{% endif %}</td>
+    <td>{% if is_admin %}<form method="post" action="/mrp/execution-queue/{{ x.id }}/status" style="display:flex;gap:6px;align-items:center"><select name="status"><option value="OPEN" {% if (x.status or '')=='OPEN' %}selected{% endif %}>OPEN</option><option value="IN_PROGRESS" {% if (x.status or '')=='IN_PROGRESS' %}selected{% endif %}>IN PROGRESS</option><option value="DONE" {% if (x.status or '')=='DONE' %}selected{% endif %}>DONE</option><option value="CANCELLED" {% if (x.status or '')=='CANCELLED' %}selected{% endif %}>CANCELLED</option></select><button class="btn btn-small" type="submit">Save</button></form>{% else %}{{ x.status }}{% endif %}</td>
+    <td>{{ x.route_steps or '' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

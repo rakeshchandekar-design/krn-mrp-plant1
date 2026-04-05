@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Planned Order{% endblock %}
 {% block content %}
-<h2>Planned Order - Step 4</h2>
+<h2>Planned Order - Step 5</h2>
 <div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
   <a class="btn" href="/mrp/planned-orders">← Back to Planned Orders</a>
+  <a class="btn" href="/mrp/execution-queue">Execution Queue</a>
   {% if plan.source_run_id %}<a class="btn" href="/mrp/run?run_id={{ plan.source_run_id }}">Open Source MRP Run</a>{% endif %}
   {% if is_admin %}
   <form method="post" action="/mrp/planned-orders/{{ plan.id }}/status" style="display:flex;gap:8px;align-items:center">
@@ -15,19 +16,19 @@
     </select>
     <button class="btn" type="submit">Update Status</button>
   </form>
+  {% if (plan.status or '') in ['OPEN','RELEASED'] %}<form method="post" action="/mrp/planned-orders/{{ plan.id }}/release" style="display:inline"><button class="btn" type="submit">Release to Execution Queue</button></form>{% endif %}
   {% endif %}
 </div>
-
+{% if request.query_params.get('msg') %}<div class="card" style="padding:12px;border:1px solid #bbf7d0;background:#f0fdf4;color:#166534;border-radius:12px;margin-bottom:12px">{{ request.query_params.get('msg') }}</div>{% endif %}
 <div class="grid" style="display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px;margin-bottom:16px">
   <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Plan</div><div style="font-weight:800">{{ plan.plan_label or ('PLAN-' ~ plan.id) }}</div></div>
   <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Status</div><div style="font-size:24px;font-weight:800">{{ plan.status }}</div></div>
   <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Lines</div><div style="font-size:24px;font-weight:800">{{ summary.line_count }}</div></div>
   <div class="card" style="padding:14px;border:1px solid #dbe4f0;border-radius:14px;background:#fff"><div class="small">Total Next Action Qty (kg)</div><div style="font-size:24px;font-weight:800">{{ '%.2f'|format(summary.total_next_action_qty_kg or 0) }}</div></div>
 </div>
-
 <table class="table">
   <tr>
-    <th>Dispatch Grade</th><th>Source Stage</th><th>Family</th><th>Shortage (kg)</th><th>FG Need</th><th>Grinding Need</th><th>Anneal Need</th><th>RAP Need</th><th>Atom Need</th><th>Melt Need</th><th>Next Action</th><th>Next Qty</th><th>Plan Days</th><th>Status</th><th>Route</th>
+    <th>Dispatch Grade</th><th>Source Stage</th><th>Family</th><th>Shortage (kg)</th><th>FG Need</th><th>Grinding Need</th><th>Anneal Need</th><th>RAP Need</th><th>Atom Need</th><th>Melt Need</th><th>Next Action</th><th>Next Qty</th><th>Plan Days</th><th>Status</th><th>Go</th><th>Route</th>
   </tr>
   {% for x in lines %}
   <tr>
@@ -45,6 +46,7 @@
     <td>{{ '%.2f'|format(x.next_action_qty_kg or 0) }}</td>
     <td>{% if x.planned_capacity_days %}{{ '%.2f'|format(x.planned_capacity_days) }}{% else %}-{% endif %}</td>
     <td>{{ x.status }}</td>
+    <td>{% if x.next_action_stage == 'FG' %}<a class="btn btn-small" href="/fg/create?fg_grade={{ x.dispatch_grade|urlencode }}">Open</a>{% elif x.next_action_stage == 'GRINDING' %}<a class="btn btn-small" href="/grind/create">Open</a>{% elif x.next_action_stage == 'ANNEALING' %}<a class="btn btn-small" href="/anneal/create">Open</a>{% elif x.next_action_stage == 'RAP' %}<a class="btn btn-small" href="/rap">Open</a>{% elif x.next_action_stage == 'ATOMIZATION' %}<a class="btn btn-small" href="/atomization">Open</a>{% elif x.next_action_stage == 'MELTING' %}<a class="btn btn-small" href="/melting">Open</a>{% else %}-{% endif %}</td>
     <td>{{ x.route_steps or '' }}</td>
   </tr>
   {% endfor %}

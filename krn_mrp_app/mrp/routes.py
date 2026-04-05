@@ -1,4 +1,5 @@
 from datetime import datetime
+from urllib.parse import quote_plus
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Request, Form
@@ -138,6 +139,25 @@ with engine.begin() as conn:
             next_action_qty_kg DOUBLE PRECISION DEFAULT 0,
             linked_run_line_count INT DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'OPEN',
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS mrp_execution_queue (
+            id SERIAL PRIMARY KEY,
+            plan_id INT NOT NULL,
+            plan_line_id INT NOT NULL,
+            stage_name TEXT NOT NULL,
+            dispatch_grade TEXT,
+            source_family TEXT,
+            source_grade TEXT,
+            target_qty_kg DOUBLE PRECISION DEFAULT 0,
+            route_steps TEXT,
+            stage_link TEXT,
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            released_by TEXT,
+            released_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -659,6 +679,7 @@ async def mrp_home(request: Request, dep: None = Depends(require_roles('admin','
         'yields': int(_scalar("SELECT COUNT(*) FROM mrp_yield_master WHERE COALESCE(is_active,TRUE)=TRUE") or 0),
         'runs': int(_scalar("SELECT COUNT(*) FROM mrp_run_header") or 0),
         'plans': int(_scalar("SELECT COUNT(*) FROM mrp_planned_order_header") or 0),
+        'queue': int(_scalar("SELECT COUNT(*) FROM mrp_execution_queue WHERE UPPER(COALESCE(status,'OPEN')) IN ('OPEN','IN_PROGRESS')") or 0),
     }
     dispatchable = _rows("""
         SELECT grade_code, grade_family, stage_type
@@ -681,6 +702,14 @@ async def mrp_home(request: Request, dep: None = Depends(require_roles('admin','
         latest_summary = latest_summary[0] if latest_summary else None
     latest_plan = _rows("SELECT id, plan_label, source_run_id, created_by, status, created_at FROM mrp_planned_order_header ORDER BY id DESC LIMIT 1")
     latest_plan = latest_plan[0] if latest_plan else None
+    latest_queue = _rows("""
+        SELECT id, plan_id, plan_line_id, stage_name, dispatch_grade, target_qty_kg, status, released_at
+        FROM mrp_execution_queue
+        WHERE UPPER(COALESCE(status,'OPEN')) IN ('OPEN','IN_PROGRESS')
+        ORDER BY id DESC
+        LIMIT 1
+    """)
+    latest_queue = latest_queue[0] if latest_queue else None
     return templates.TemplateResponse('mrp_home.html', {
         'request': request,
         'counts': counts,
@@ -688,6 +717,7 @@ async def mrp_home(request: Request, dep: None = Depends(require_roles('admin','
         'latest_run': latest_run,
         'latest_summary': latest_summary,
         'latest_plan': latest_plan,
+        'latest_queue': latest_queue,
         'is_admin': _is_admin(request),
         **_tpl_auth(request),
     })
@@ -1093,3 +1123,132 @@ async def mrp_planned_order_status(plan_id: int, status: str = Form(...), dep: N
         elif st == 'RELEASED':
             conn.execute(text("UPDATE mrp_planned_order_lines SET status='RELEASED' WHERE plan_id=:id AND COALESCE(status,'OPEN')='OPEN'"), {'id': plan_id})
     return RedirectResponse(f'/mrp/planned-orders/{plan_id}', status_code=303)
+
+
+
+def _stage_link(stage_name: str, dispatch_grade: str = '', source_family: str = '') -> str:
+    stg = str(stage_name or '').strip().upper()
+    grade = str(dispatch_grade or '').strip()
+    if stg == 'FG':
+        return f"/fg/create?fg_grade={quote_plus(grade)}" if grade else '/fg/create'
+    if stg == 'GRINDING':
+        return '/grind/create'
+    if stg == 'ANNEALING':
+        return '/anneal/create'
+    if stg == 'RAP':
+        return '/rap'
+    if stg == 'ATOMIZATION':
+        return '/atomization'
+    if stg == 'MELTING':
+        return '/melting'
+    if stg == 'PULV':
+        return '/pulv'
+    return '/mrp/planned-orders'
+
+
+def _release_plan_to_queue(conn, plan_id: int, released_by: str) -> int:
+    lines = conn.execute(text("""
+        SELECT * FROM mrp_planned_order_lines
+        WHERE plan_id=:id
+          AND COALESCE(status,'OPEN') IN ('OPEN','RELEASED')
+          AND COALESCE(next_action_qty_kg,0) > 0.0001
+        ORDER BY id
+    """), {'id': plan_id}).mappings().all()
+    created = 0
+    for ln in lines:
+        exists = conn.execute(text("""
+            SELECT 1 FROM mrp_execution_queue
+            WHERE plan_line_id=:plid
+              AND UPPER(COALESCE(status,'OPEN')) IN ('OPEN','IN_PROGRESS','DONE')
+            LIMIT 1
+        """), {'plid': int(ln['id'])}).first()
+        if exists:
+            continue
+        conn.execute(text("""
+            INSERT INTO mrp_execution_queue(
+                plan_id, plan_line_id, stage_name, dispatch_grade, source_family, source_grade,
+                target_qty_kg, route_steps, stage_link, status, released_by, notes
+            ) VALUES (
+                :plan_id, :plan_line_id, :stage_name, :dispatch_grade, :source_family, :source_grade,
+                :target_qty_kg, :route_steps, :stage_link, 'OPEN', :released_by, :notes
+            )
+        """), {
+            'plan_id': plan_id,
+            'plan_line_id': int(ln['id']),
+            'stage_name': str(ln.get('next_action_stage') or '').upper(),
+            'dispatch_grade': ln.get('dispatch_grade') or '',
+            'source_family': ln.get('source_family') or '',
+            'source_grade': ln.get('source_grade') or '',
+            'target_qty_kg': float(ln.get('next_action_qty_kg') or 0.0),
+            'route_steps': ln.get('route_steps') or '',
+            'stage_link': _stage_link(ln.get('next_action_stage') or '', ln.get('dispatch_grade') or '', ln.get('source_family') or ''),
+            'released_by': released_by,
+            'notes': ln.get('notes') or '',
+        })
+        created += 1
+    if created > 0:
+        conn.execute(text("UPDATE mrp_planned_order_header SET status='RELEASED' WHERE id=:id AND COALESCE(status,'OPEN')='OPEN'"), {'id': plan_id})
+        conn.execute(text("UPDATE mrp_planned_order_lines SET status='RELEASED' WHERE plan_id=:id AND COALESCE(status,'OPEN')='OPEN'"), {'id': plan_id})
+    return created
+
+
+@router.post('/planned-orders/{plan_id}/release')
+async def mrp_release_plan(plan_id: int, request: Request, dep: None = Depends(require_roles('admin','sales'))):
+    with engine.begin() as conn:
+        head = conn.execute(text("SELECT 1 FROM mrp_planned_order_header WHERE id=:id"), {'id': plan_id}).first()
+        if not head:
+            return RedirectResponse('/mrp/planned-orders?err=Planned+order+not+found', status_code=303)
+        created = _release_plan_to_queue(conn, plan_id, (getattr(request, 'session', {}) or {}).get('username', '') or 'system')
+    return RedirectResponse(f"/mrp/planned-orders/{plan_id}?msg={quote_plus(str(created) + ' execution queue item(s) released')}", status_code=303)
+
+
+@router.get('/execution-queue', response_class=HTMLResponse)
+async def mrp_execution_queue(request: Request, dep: None = Depends(require_roles('admin','sales','view'))):
+    rows = _rows("""
+        SELECT q.*, h.plan_label, pl.status AS plan_line_status, ph.status AS plan_status
+        FROM mrp_execution_queue q
+        LEFT JOIN mrp_planned_order_lines pl ON pl.id = q.plan_line_id
+        LEFT JOIN mrp_planned_order_header ph ON ph.id = q.plan_id
+        LEFT JOIN mrp_planned_order_header h ON h.id = q.plan_id
+        ORDER BY CASE WHEN UPPER(COALESCE(q.status,'OPEN'))='IN_PROGRESS' THEN 0 WHEN UPPER(COALESCE(q.status,'OPEN'))='OPEN' THEN 1 ELSE 2 END,
+                 q.id DESC
+    """)
+    summary = {
+        'open_count': sum(1 for r in rows if str(r.get('status') or '').upper() == 'OPEN'),
+        'in_progress_count': sum(1 for r in rows if str(r.get('status') or '').upper() == 'IN_PROGRESS'),
+        'done_count': sum(1 for r in rows if str(r.get('status') or '').upper() == 'DONE'),
+        'open_qty_kg': round(sum(float(r.get('target_qty_kg') or 0.0) for r in rows if str(r.get('status') or '').upper() in ('OPEN','IN_PROGRESS')), 2),
+    }
+    return templates.TemplateResponse('mrp_execution_queue.html', {
+        'request': request,
+        'rows': rows,
+        'summary': summary,
+        'is_admin': _is_admin(request),
+        **_tpl_auth(request),
+    })
+
+
+@router.post('/execution-queue/{queue_id}/status')
+async def mrp_execution_queue_status(queue_id: int, status: str = Form(...), dep: None = Depends(require_roles('admin','sales'))):
+    st = str(status or '').strip().upper()
+    if st not in {'OPEN','IN_PROGRESS','DONE','CANCELLED'}:
+        st = 'OPEN'
+    with engine.begin() as conn:
+        row = conn.execute(text("SELECT plan_id, plan_line_id FROM mrp_execution_queue WHERE id=:id"), {'id': queue_id}).mappings().first()
+        if not row:
+            return RedirectResponse('/mrp/execution-queue?err=Queue+item+not+found', status_code=303)
+        conn.execute(text("UPDATE mrp_execution_queue SET status=:st WHERE id=:id"), {'st': st, 'id': queue_id})
+        plan_line_id = int(row['plan_line_id'])
+        plan_id = int(row['plan_id'])
+        if st == 'DONE':
+            conn.execute(text("UPDATE mrp_planned_order_lines SET status='CLOSED' WHERE id=:id"), {'id': plan_line_id})
+        elif st == 'IN_PROGRESS':
+            conn.execute(text("UPDATE mrp_planned_order_lines SET status='RELEASED' WHERE id=:id AND COALESCE(status,'OPEN')='OPEN'"), {'id': plan_line_id})
+        elif st == 'CANCELLED':
+            conn.execute(text("UPDATE mrp_planned_order_lines SET status='CANCELLED' WHERE id=:id AND COALESCE(status,'OPEN') <> 'CLOSED'"), {'id': plan_line_id})
+        open_left = conn.execute(text("SELECT COUNT(*) FROM mrp_planned_order_lines WHERE plan_id=:id AND COALESCE(status,'OPEN') IN ('OPEN','RELEASED')"), {'id': plan_id}).scalar() or 0
+        if open_left == 0:
+            done_left = conn.execute(text("SELECT COUNT(*) FROM mrp_planned_order_lines WHERE plan_id=:id AND COALESCE(status,'OPEN')='CLOSED'"), {'id': plan_id}).scalar() or 0
+            if done_left > 0:
+                conn.execute(text("UPDATE mrp_planned_order_header SET status='CLOSED' WHERE id=:id"), {'id': plan_id})
+    return RedirectResponse('/mrp/execution-queue', status_code=303)
