@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}MRP Grade Master{% endblock %}
+{% block content %}
+<h2>MRP Grade Master</h2>
+{% if request.query_params.get('err') %}<div style="margin:8px 0;padding:10px 12px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b">{{ request.query_params.get('err') }}</div>{% endif %}
+{% if is_admin %}
+<form method="post" action="/mrp/grades" class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff;margin-bottom:16px">
+  <h3 style="margin-top:0">Add Grade</h3>
+  <div style="display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:10px">
+    <div><label>Grade Code</label><input type="text" name="grade_code" required></div>
+    <div><label>Grade Name</label><input type="text" name="grade_name"></div>
+    <div><label>Family</label><input type="text" name="grade_family"></div>
+    <div><label>Stage Type</label><input type="text" name="stage_type" placeholder="RAP / FG / GRINDING"></div>
+    <div><label>UOM</label><input type="text" name="uom" value="KG"></div>
+    <div><label>Dispatchable</label><select name="dispatchable"><option value="">No</option><option value="1">Yes</option></select></div>
+    <div><label>QA Required</label><select name="qa_required"><option value="1" selected>Yes</option><option value="off">No</option></select></div>
+    <div><label>Remarks</label><input type="text" name="remarks"></div>
+  </div>
+  <div style="margin-top:12px"><button class="btn" type="submit">Save Grade</button></div>
+</form>
+{% endif %}
+<table class="table">
+  <tr><th>Code</th><th>Name</th><th>Family</th><th>Stage</th><th>Dispatchable</th><th>QA</th><th>UOM</th><th>Status</th><th>Remarks</th>{% if is_admin %}<th>Action</th>{% endif %}</tr>
+  {% for x in rows %}
+  <tr>
+    <td>{{ x.grade_code }}</td><td>{{ x.grade_name or '' }}</td><td>{{ x.grade_family or '' }}</td><td>{{ x.stage_type or '' }}</td>
+    <td>{{ 'Yes' if x.dispatchable else 'No' }}</td><td>{{ 'Yes' if x.qa_required else 'No' }}</td><td>{{ x.uom or '' }}</td>
+    <td>{{ 'Active' if x.is_active else 'Inactive' }}</td><td>{{ x.remarks or '' }}</td>
+    {% if is_admin %}<td><form method="post" action="/mrp/grades/{{ x.id }}/toggle"><button class="btn secondary" type="submit">{{ 'Deactivate' if x.is_active else 'Activate' }}</button></form></td>{% endif %}
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

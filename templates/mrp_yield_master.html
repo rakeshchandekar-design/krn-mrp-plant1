@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}MRP Yield Master{% endblock %}
+{% block content %}
+<h2>MRP Yield Master</h2>
+{% if request.query_params.get('err') %}<div style="margin:8px 0;padding:10px 12px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b">{{ request.query_params.get('err') }}</div>{% endif %}
+{% if is_admin %}
+<form method="post" action="/mrp/yields" class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff;margin-bottom:16px">
+  <h3 style="margin-top:0">Add Yield / Capacity Row</h3>
+  <div style="display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:10px">
+    <div><label>Family</label><input type="text" name="item_family" required></div>
+    <div><label>Stage</label><input type="text" name="stage_name" placeholder="MELTING / ATOMIZATION / ANNEALING / GRINDING" required></div>
+    <div><label>Standard Yield %</label><input type="number" step="0.01" name="standard_yield_pct"></div>
+    <div><label>Recovery %</label><input type="number" step="0.01" name="recovery_pct"></div>
+    <div><label>Oversize Target %</label><input type="number" step="0.01" name="oversize_target_pct"></div>
+    <div><label>Capacity Kg/Day</label><input type="number" step="0.01" name="capacity_kg_day"></div>
+    <div style="grid-column: span 2"><label>Remarks</label><input type="text" name="remarks"></div>
+  </div>
+  <div style="margin-top:12px"><button class="btn" type="submit">Save Yield Row</button></div>
+</form>
+{% endif %}
+<table class="table">
+  <tr><th>Family</th><th>Stage</th><th>Yield %</th><th>Recovery %</th><th>Oversize Target %</th><th>Capacity Kg/Day</th><th>Status</th><th>Remarks</th>{% if is_admin %}<th>Action</th>{% endif %}</tr>
+  {% for x in rows %}
+  <tr>
+    <td>{{ x.item_family }}</td><td>{{ x.stage_name }}</td><td>{{ '%.2f'|format(x.standard_yield_pct or 0) if x.standard_yield_pct is not none else '' }}</td><td>{{ '%.2f'|format(x.recovery_pct or 0) if x.recovery_pct is not none else '' }}</td><td>{{ '%.2f'|format(x.oversize_target_pct or 0) if x.oversize_target_pct is not none else '' }}</td><td>{{ '%.2f'|format(x.capacity_kg_day or 0) if x.capacity_kg_day is not none else '' }}</td><td>{{ 'Active' if x.is_active else 'Inactive' }}</td><td>{{ x.remarks or '' }}</td>
+    {% if is_admin %}<td><form method="post" action="/mrp/yields/{{ x.id }}/toggle"><button class="btn secondary" type="submit">{{ 'Deactivate' if x.is_active else 'Activate' }}</button></form></td>{% endif %}
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

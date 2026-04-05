@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}MRP Recipe Master{% endblock %}
+{% block content %}
+<h2>MRP Process Recipe Master</h2>
+{% if request.query_params.get('err') %}<div style="margin:8px 0;padding:10px 12px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b">{{ request.query_params.get('err') }}</div>{% endif %}
+{% if is_admin %}
+<form method="post" action="/mrp/recipes" class="card" style="padding:16px;border:1px solid #dbe4f0;border-radius:14px;background:#fff;margin-bottom:16px">
+  <h3 style="margin-top:0">Add Recipe</h3>
+  <div style="display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:10px">
+    <div><label>Dispatch Grade</label><select name="dispatch_grade" required>{% for g in grades %}<option value="{{ g.grade_code }}">{{ g.grade_code }}</option>{% endfor %}</select></div>
+    <div><label>Source Stage</label><input type="text" name="source_stage" placeholder="FG / RAP / GRINDING" required></div>
+    <div><label>Source Family</label><input type="text" name="source_family"></div>
+    <div><label>Source Grade</label><input type="text" name="source_grade"></div>
+    <div><label>FIFO Mode</label><select name="fifo_mode"><option>STRICT</option><option>SOFT</option></select></div>
+    <div><label>Source Type</label><select name="dispatchable_source_type"><option>AUTO</option><option>FG</option><option>RAP</option></select></div>
+    <div style="grid-column: span 2"><label>Route Steps</label><input type="text" name="route_steps" placeholder="RAP -> Dispatch / FG -> Dispatch"></div>
+    <div style="grid-column: span 4"><label>Yield Basis Notes</label><input type="text" name="yield_basis_notes"></div>
+  </div>
+  <div style="margin-top:12px"><button class="btn" type="submit">Save Recipe</button></div>
+</form>
+{% endif %}
+<table class="table">
+  <tr><th>Dispatch Grade</th><th>Source Stage</th><th>Source Family</th><th>Source Grade</th><th>FIFO</th><th>Source Type</th><th>Route</th><th>Status</th>{% if is_admin %}<th>Action</th>{% endif %}</tr>
+  {% for x in rows %}
+  <tr>
+    <td>{{ x.dispatch_grade }}</td><td>{{ x.source_stage }}</td><td>{{ x.source_family or '' }}</td><td>{{ x.source_grade or '' }}</td><td>{{ x.fifo_mode }}</td><td>{{ x.dispatchable_source_type }}</td><td>{{ x.route_steps or '' }}</td><td>{{ 'Active' if x.is_active else 'Inactive' }}</td>
+    {% if is_admin %}<td><form method="post" action="/mrp/recipes/{{ x.id }}/toggle"><button class="btn secondary" type="submit">{{ 'Deactivate' if x.is_active else 'Activate' }}</button></form></td>{% endif %}
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

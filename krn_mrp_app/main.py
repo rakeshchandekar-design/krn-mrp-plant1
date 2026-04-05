@@ -1548,6 +1548,7 @@ from krn_mrp_app.annealing.routes import router as anneal_router
 from krn_mrp_app.pulv.routes import router as pulv_router
 from krn_mrp_app.grinding.routes import router as grind_router
 from krn_mrp_app.fg.routes import router as fg_router
+from krn_mrp_app.mrp.routes import router as mrp_router
 app.include_router(anneal_router, prefix="/anneal", tags=["Annealing"])
 app.include_router(pulv_router, prefix="/pulv", tags=["Pulverization"])
 app.include_router(grind_router, prefix="/grind", tags=["Grinding & Screening"])
@@ -1555,6 +1556,7 @@ app.include_router(fg_router, prefix="/fg", tags=["FG"])
 # -------------- include Dispatch router --------------
 from krn_mrp_app.dispatch import routes as dispatch_routes
 app.include_router(dispatch_routes.router, prefix="/dispatch", tags=["Dispatch"])
+app.include_router(mrp_router, prefix="/mrp", tags=["MRP"])
 
 # expose python builtins to Jinja
 templates.env.globals.update(max=max, min=min, round=round, int=int, float=float)

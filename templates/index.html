@@ -266,6 +266,21 @@
         </div>
       </div>
 
+
+<!-- MRP -->
+{% set allow = role in ['admin','sales','view'] %}
+<div class="card">
+  <h3><span class="icon">🧠</span>MRP Foundation</h3>
+  <div class="sub">Admin, Sales, View</div>
+  <div class="foot">
+    {% if allow %}
+      <a class="open" href="/mrp">Open</a>
+    {% else %}
+      <button class="open" disabled>Open</button><span class="deny">✗</span>
+    {% endif %}
+  </div>
+</div>
+
       <!-- Dispatch -->
       {% set allow = role in ['admin','dispatch','store','view','sales'] %}
       <div class="card">

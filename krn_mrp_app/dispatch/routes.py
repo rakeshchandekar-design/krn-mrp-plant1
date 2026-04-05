@@ -84,8 +84,19 @@ def _dispatch_customers(active_only: bool = True):
 def _dispatch_grade_options() -> List[str]:
     grades: set[str] = set()
 
-    # Always include dispatchable semi-finished / RAP families as a base master
-    # so customer-order booking is not dependent on whether a lot already exists.
+    # Primary source of truth from MRP Grade Master (step 1 foundation)
+    try:
+        with engine.begin() as conn:
+            mrp_rows = conn.execute(text("""
+                SELECT grade_code
+                FROM mrp_grade_master
+                WHERE COALESCE(is_active,TRUE)=TRUE AND COALESCE(dispatchable,FALSE)=TRUE
+            """)).mappings().all()
+        grades.update(str(r.get('grade_code') or '').strip() for r in mrp_rows if str(r.get('grade_code') or '').strip())
+    except Exception:
+        pass
+
+    # Fallback/static baseline so order booking never goes blank
     grades.update({
         'KRIP', 'KRFS', 'KRM', 'KRSP',
         'KIP', 'KFS', 'KSP',
