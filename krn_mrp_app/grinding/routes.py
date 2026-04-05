@@ -69,22 +69,6 @@ def _load_fg_allocations_used(conn) -> tuple[Dict[str, float], Dict[str, float],
     if not _table_exists(conn, "fg_lots"):
         return main_used, ov80_used, ov40_used
 
-
-def _fifo_allocate_rows(rows: List[Dict[str, Any]], required_qty: float, key_field: str = "lot_no", avail_field: str = "available_kg") -> Dict[str, float]:
-    remaining = float(required_qty or 0.0)
-    out: Dict[str, float] = {}
-    ordered = sorted(rows, key=lambda r: (str(r.get("date") or ""), str(r.get(key_field) or "")))
-    for r in ordered:
-        if remaining <= 1e-6:
-            break
-        avail = float(r.get(avail_field) or 0.0)
-        if avail <= 1e-6:
-            continue
-        take = min(avail, remaining)
-        out[str(r.get(key_field))] = take
-        remaining -= take
-    return out
-
     cols = set()
     try:
         if str(engine.url).startswith("sqlite"):
@@ -149,7 +133,6 @@ def _fifo_allocate_rows(rows: List[Dict[str, Any]], required_qty: float, key_fie
                 main_used[key] = float(main_used.get(key, 0.0)) + qty
 
     return main_used, ov80_used, ov40_used
-
 
 def _fifo_allocate_rows(rows: List[Dict[str, Any]], required_qty: float, key_field: str = "lot_no", avail_field: str = "available_kg") -> Dict[str, float]:
     remaining = float(required_qty or 0.0)
