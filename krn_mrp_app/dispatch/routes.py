@@ -84,6 +84,13 @@ def _dispatch_customers(active_only: bool = True):
 def _dispatch_grade_options() -> List[str]:
     grades: set[str] = set()
 
+    # Always include dispatchable semi-finished / RAP families as a base master
+    # so customer-order booking is not dependent on whether a lot already exists.
+    grades.update({
+        'KRIP', 'KRFS', 'KRM', 'KRSP',
+        'KIP', 'KFS', 'KSP',
+    })
+
     # Full configured FG grade master from FG module
     try:
         from krn_mrp_app.fg.routes import FG_SURCHARGE, FG_FAMILY
