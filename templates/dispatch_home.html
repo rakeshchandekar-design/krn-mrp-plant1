@@ -1,12 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
+{% set _role_name = (role if role is defined else (request.state.role if request.state.role is defined else 'guest'))|string|lower %}
+{% set can_dispatch_execute = _role_name in ['admin','dispatch','store'] %}
+{% set can_sales_orders = _role_name in ['admin','dispatch','store','sales','view'] %}
 <div class="module-shell">
   <h1 class="module-title">Dispatch — Available FG Lots</h1>
 
   <div class="actions-top">
-    <a class="btn btn-primary" href="/dispatch/create">Create Dispatch</a>
-    <a class="btn" href="/dispatch/customer-orders">Customer Orders</a>
-    <a class="btn" href="/dispatch/orders">Dispatch History</a>
+    {% if can_dispatch_execute %}<a class="btn btn-primary" href="/dispatch/create">Create Dispatch</a>{% endif %}
+    {% if can_sales_orders %}<a class="btn" href="/dispatch/customer-orders">Customer Orders</a>{% endif %}
+    {% if can_sales_orders %}<a class="btn" href="/dispatch/orders">Dispatch History</a>{% endif %}
   </div>
 
   <div class="summary-cards">

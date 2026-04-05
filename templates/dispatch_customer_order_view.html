@@ -1,9 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
+{% set _role_name = (role if role is defined else (request.state.role if request.state.role is defined else 'guest'))|string|lower %}
+{% set can_dispatch_execute = _role_name in ['admin','dispatch','store'] %}
+{% set can_sales_orders = _role_name in ['admin','dispatch','store','sales','view'] %}
 <h2>Customer Order — {{ head.order_no }}</h2>
 <div class="toolbar" style="margin:8px 0 12px; gap:8px; display:flex; flex-wrap:wrap;">
   <a class="btn" href="/dispatch/customer-orders">← Back to Customer Orders</a>
-  {% if head.total_pending_kg > 0 %}<a class="btn" href="/dispatch/create?sales_order_id={{ head.id }}">Create Dispatch</a>{% endif %}
+  {% if can_dispatch_execute and head.total_pending_kg > 0 %}<a class="btn" href="/dispatch/create?sales_order_id={{ head.id }}">Create Dispatch</a>{% endif %}
 </div>
 <p class="muted">Date: {{ head.order_date }} | Customer: {{ head.customer_name }} | Status: {{ head.status }} | Ordered: {{ '%.1f'|format(head.total_ordered_kg or 0) }} kg | Dispatched: {{ '%.1f'|format(head.total_dispatched_kg or 0) }} kg | Pending: {{ '%.1f'|format(head.total_pending_kg or 0) }} kg</p>
 <table class="table">

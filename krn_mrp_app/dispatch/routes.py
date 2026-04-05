@@ -71,14 +71,48 @@ def _dispatch_customers(active_only: bool = True):
 
 
 def _dispatch_grade_options() -> List[str]:
+    grades: set[str] = set()
+
+    # Full configured FG grade master from FG module
+    try:
+        from krn_mrp_app.fg.routes import FG_SURCHARGE, FG_FAMILY
+        grades.update(str(k).strip() for k in list(FG_SURCHARGE.keys()) + list(FG_FAMILY.keys()) if str(k).strip())
+    except Exception:
+        pass
+
+    # Also include any live/historic grades already created in FG and in sales orders
     with engine.begin() as conn:
-        rows = conn.execute(text("""
+        fg_rows = conn.execute(text("""
             SELECT DISTINCT COALESCE(fg_grade,'') AS fg_grade
             FROM fg_lots
             WHERE COALESCE(fg_grade,'') <> ''
-            ORDER BY fg_grade
         """)).mappings().all()
-    return [str(r['fg_grade']) for r in rows if str(r.get('fg_grade') or '').strip()]
+        so_rows = conn.execute(text("""
+            SELECT DISTINCT COALESCE(fg_grade,'') AS fg_grade
+            FROM dispatch_sales_order_items
+            WHERE COALESCE(fg_grade,'') <> ''
+        """)).mappings().all()
+
+    grades.update(str(r.get('fg_grade') or '').strip() for r in fg_rows if str(r.get('fg_grade') or '').strip())
+    grades.update(str(r.get('fg_grade') or '').strip() for r in so_rows if str(r.get('fg_grade') or '').strip())
+
+    def _sort_key(g: str):
+        g2 = (g or '').upper()
+        if g2.startswith('KIP M') or g2.startswith('KIPM'):
+            bucket = 1
+        elif g2.startswith('KIP') or g2.startswith('KIPH'):
+            bucket = 2
+        elif g2.startswith('KSP'):
+            bucket = 3
+        elif g2.startswith('KFS'):
+            bucket = 4
+        elif g2.startswith('PREMIX'):
+            bucket = 5
+        else:
+            bucket = 9
+        return (bucket, g2)
+
+    return sorted(grades, key=_sort_key)
 
 
 # ---------- Helpers: mirror style of other modules ----------

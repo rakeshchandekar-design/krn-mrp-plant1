@@ -1,9 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
+{% set _role_name = (role if role is defined else (request.state.role if request.state.role is defined else 'guest'))|string|lower %}
+{% set can_dispatch_execute = _role_name in ['admin','dispatch','store'] %}
+{% set can_sales_orders = _role_name in ['admin','dispatch','store','sales','view'] %}
 <h2>Dispatch History</h2>
 <div class="toolbar" style="margin:8px 0 12px; gap:8px; display:flex; flex-wrap:wrap">
   <a class="btn" href="/dispatch">← Back</a>
-  <a class="btn" href="/dispatch/customer-orders">Customer Orders</a>
+  {% if can_sales_orders %}<a class="btn" href="/dispatch/customer-orders">Customer Orders</a>{% endif %}
   <a class="btn" href="/dispatch/create">Create Dispatch</a>
   <form method="get" action="/dispatch/orders" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
     <label>From</label><input type="date" name="from_date" value="{{ from_date or today }}">

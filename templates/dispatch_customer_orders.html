@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
+{% set _role_name = (role if role is defined else (request.state.role if request.state.role is defined else 'guest'))|string|lower %}
+{% set can_dispatch_execute = _role_name in ['admin','dispatch','store'] %}
+{% set can_sales_orders = _role_name in ['admin','dispatch','store','sales','view'] %}
 <h2>Customer Orders</h2>
 <div class="toolbar" style="margin:8px 0 12px; gap:8px; display:flex; flex-wrap:wrap;">
   <a class="btn" href="/dispatch">← Back to Dispatch</a>
   <a class="btn" href="/dispatch/create">Create Dispatch</a>
-  <a class="btn" href="/dispatch/orders">Dispatch History</a>
+  {% if can_sales_orders %}<a class="btn" href="/dispatch/orders">Dispatch History</a>{% endif %}
 </div>
 {% if err %}<div class="alert alert-danger" style="margin:8px 0">{{ err }}</div>{% endif %}
 <div class="card table-card" style="margin-bottom:16px;">
@@ -58,7 +61,7 @@
       <td>{{ '%.1f'|format(r.total_ordered_kg or 0) }}</td>
       <td>{{ '%.1f'|format(r.total_dispatched_kg or 0) }}</td>
       <td>{{ '%.1f'|format(r.total_pending_kg or 0) }}</td>
-      <td><a href="/dispatch/customer-orders/view/{{ r.id }}">View</a> {% if r.total_pending_kg > 0 %}| <a href="/dispatch/create?sales_order_id={{ r.id }}">Create Dispatch</a>{% endif %}</td>
+      <td><a href="/dispatch/customer-orders/view/{{ r.id }}">View</a> {% if can_dispatch_execute and r.total_pending_kg > 0 %}| <a href="/dispatch/create?sales_order_id={{ r.id }}">Create Dispatch</a>{% endif %}</td>
     </tr>
     {% endfor %}
   </table>
