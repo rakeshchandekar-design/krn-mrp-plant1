@@ -4847,14 +4847,18 @@ def qa_dashboard(
     show_all = (request.query_params.get("all") == "1")
 
     # ---------------- Date Range Setup ----------------
-    s_iso = start or today.isoformat()
-    e_iso = end or today.isoformat()
+    default_start = (today - dt.timedelta(days=3)).isoformat()
+    default_end = today.isoformat()
+    s_iso = start or default_start
+    e_iso = end or default_end
     try:
         s_date = dt.date.fromisoformat(s_iso)
         e_date = dt.date.fromisoformat(e_iso)
     except Exception:
-        s_date = e_date = today
-        s_iso = e_iso = today.isoformat()
+        s_date = today - dt.timedelta(days=3)
+        e_date = today
+        s_iso = s_date.isoformat()
+        e_iso = e_date.isoformat()
 
     # ---------------- Data Loading ----------------
     heats_all = db.query(Heat).order_by(Heat.id.desc()).all()
@@ -5076,7 +5080,8 @@ def qa_export(
     heats = db.query(Heat).order_by(Heat.id.asc()).all()
     lots  = db.query(Lot).order_by(Lot.id.asc()).all()
     today = dt.date.today()
-    s = dt.date.fromisoformat(start) if start else today
+    default_start = today - dt.timedelta(days=3)
+    s = dt.date.fromisoformat(start) if start else default_start
     e = dt.date.fromisoformat(end)   if end   else today
 
     heats_in = [h for h in heats if s <= (heat_date_from_no(h.heat_no) or today) <= e]
