@@ -1070,6 +1070,18 @@ with engine.begin() as conn:
         # Helpful indexes
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dispatch_orders_date ON dispatch_orders(date)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dispatch_items_dispatch ON dispatch_items(dispatch_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dispatch_items_fg_source ON dispatch_items(fg_lot_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dispatch_items_rap_source ON dispatch_items(rap_lot_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dispatch_items_stage ON dispatch_items(source_stage)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_heat_qa_status ON heat(qa_status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_heat_heat_no ON heat(heat_no)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_lotheat_heat_id ON lot_heat(heat_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_lot_qa_grade ON lot(qa_status, grade)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_rap_lot_lot_id ON rap_lot(lot_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_rap_alloc_rap_lot_id ON rap_alloc(rap_lot_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_rap_alloc_date_kind ON rap_alloc(date, kind)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grn_date_rmtype ON grn(date, rm_type)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_grn_remaining_qty ON grn(remaining_qty)"))
 
         # --- Safety: add any missing columns
         for coldef in [
@@ -2967,11 +2979,24 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     melt_mtd  = _agg_melting(heats_mtd,  for_day=None)
 
     # ---------- Atomization ----------
-    lots_all  = db.query(Lot).all()
-    lots_yday = [l for l in lots_all if lot_date_from_no(l.lot_no) == yest]
-    lots_rng  = [l for l in lots_all if (_from <= (lot_date_from_no(l.lot_no) or today) <= _to)]
-    atom_yday_prod = sum(float(l.weight or 0) for l in lots_yday)
-    atom_mtd_prod  = sum(float(l.weight or 0) for l in lots_rng)
+    atom_yday_prod = 0.0
+    atom_mtd_prod = 0.0
+    try:
+        span_days = max((_to - _from).days, 0)
+        if span_days <= 31:
+            y_token = yest.strftime("%Y%m%d")
+            m_tokens = [( _from + dt.timedelta(days=i) ).strftime("%Y%m%d") for i in range(span_days + 1)]
+            atom_yday_prod = float(db.query(func.coalesce(func.sum(Lot.weight), 0.0)).filter(Lot.lot_no.like(f"%-{y_token}-%")).scalar() or 0.0)
+            if m_tokens:
+                atom_mtd_prod = float(db.query(func.coalesce(func.sum(Lot.weight), 0.0)).filter(or_(*[Lot.lot_no.like(f"%-{tok}-%") for tok in m_tokens])).scalar() or 0.0)
+        else:
+            lots_rng = db.query(Lot).all()
+            atom_yday_prod = sum(float(l.weight or 0) for l in lots_rng if lot_date_from_no(l.lot_no) == yest)
+            atom_mtd_prod = sum(float(l.weight or 0) for l in lots_rng if (_from <= (lot_date_from_no(l.lot_no) or today) <= _to))
+    except Exception:
+        lots_rng = db.query(Lot).all()
+        atom_yday_prod = sum(float(l.weight or 0) for l in lots_rng if lot_date_from_no(l.lot_no) == yest)
+        atom_mtd_prod = sum(float(l.weight or 0) for l in lots_rng if (_from <= (lot_date_from_no(l.lot_no) or today) <= _to))
 
     atom_tgt_yday = atom_day_target_kg(db, yest)
     atom_tgt_rsum  = 0.0
@@ -2983,32 +3008,39 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     atom_mtd_eff  = (atom_mtd_prod  / atom_tgt_rsum * 100.0) if atom_tgt_rsum  > 0 else 0.0
 
     # ---------- Non-approved lots ----------
-    lots_pending  = db.query(Lot).filter((Lot.qa_status.is_(None)) | (Lot.qa_status == "PENDING")).all()
-    lots_hold     = db.query(Lot).filter(Lot.qa_status == "HOLD").all()
-    lots_rejected = db.query(Lot).filter(Lot.qa_status == "REJECTED").all()
-    def _sum_qty_cost(rows):
-        return (
-            sum(float(x.weight or 0) for x in rows),
-            sum(float(x.total_cost or (x.unit_cost or 0)*(x.weight or 0)) for x in rows)
-        )
-    pend_qty, pend_cost = _sum_qty_cost(lots_pending)
-    hold_qty, hold_cost = _sum_qty_cost(lots_hold)
-    rej_qty,  rej_cost  = _sum_qty_cost(lots_rejected)
+    pending_rows = db.execute(text("""
+        SELECT UPPER(COALESCE(qa_status,'PENDING')) AS qa_status,
+               COALESCE(SUM(COALESCE(weight,0)),0)::double precision AS qty,
+               COALESCE(SUM(COALESCE(total_cost, COALESCE(unit_cost,0)*COALESCE(weight,0))),0)::double precision AS cost
+        FROM lot
+        WHERE COALESCE(qa_status,'PENDING') IN ('PENDING','HOLD','REJECTED')
+        GROUP BY UPPER(COALESCE(qa_status,'PENDING'))
+    """)).mappings().all()
+    _pending_map = {str(r['qa_status']).upper(): (float(r.get('qty') or 0.0), float(r.get('cost') or 0.0)) for r in pending_rows}
+    pend_qty, pend_cost = _pending_map.get('PENDING', (0.0, 0.0))
+    hold_qty, hold_cost = _pending_map.get('HOLD', (0.0, 0.0))
+    rej_qty,  rej_cost  = _pending_map.get('REJECTED', (0.0, 0.0))
 
     # ---------- RAP availability & movements ----------
-    lots_approved = db.query(Lot).filter(Lot.qa_status == "APPROVED").all()
     rap_grade_qty, rap_grade_cost = {"KRIP":0.0, "KRFS":0.0, "KRM":0.0, "KRSP":0.0}, {"KRIP":0.0, "KRFS":0.0, "KRM":0.0, "KRSP":0.0}
-    for lot in lots_approved:
-        total_alloc = (
-            db.query(func.coalesce(func.sum(RAPAlloc.qty), 0.0))
-            .join(RAPLot, RAPAlloc.rap_lot_id == RAPLot.id)
-            .filter(RAPLot.lot_id == lot.id)
-            .scalar() or 0.0
-        )
-        avail = max(float(lot.weight or 0.0) - float(total_alloc), 0.0)
-        g = (lot.grade or "KRIP").upper()
-        rap_grade_qty[g]  = rap_grade_qty.get(g, 0.0)  + avail
-        rap_grade_cost[g] = rap_grade_cost.get(g, 0.0) + avail * float(lot.unit_cost or 0.0)
+    rap_live_rows = db.execute(text("""
+        SELECT UPPER(COALESCE(l.grade,'KRIP')) AS grade,
+               COALESCE(SUM(GREATEST(COALESCE(l.weight,0) - COALESCE(a.alloc_qty,0), 0)),0)::double precision AS qty,
+               COALESCE(SUM(GREATEST(COALESCE(l.weight,0) - COALESCE(a.alloc_qty,0), 0) * COALESCE(l.unit_cost,0)),0)::double precision AS val
+        FROM lot l
+        LEFT JOIN (
+            SELECT rl.lot_id AS lot_id, COALESCE(SUM(ra.qty),0) AS alloc_qty
+            FROM rap_lot rl
+            LEFT JOIN rap_alloc ra ON ra.rap_lot_id = rl.id
+            GROUP BY rl.lot_id
+        ) a ON a.lot_id = l.id
+        WHERE COALESCE(l.qa_status,'') = 'APPROVED'
+        GROUP BY UPPER(COALESCE(l.grade,'KRIP'))
+    """)).mappings().all()
+    for r in rap_live_rows:
+        g = str(r.get('grade') or 'KRIP').upper()
+        rap_grade_qty[g] = float(r.get('qty') or 0.0)
+        rap_grade_cost[g] = float(r.get('val') or 0.0)
 
     rap_y_rows = (
         db.query(RAPAlloc.kind, func.coalesce(func.sum(RAPAlloc.qty), 0.0))
@@ -4264,26 +4296,26 @@ def atom_page(
     for lid, s1 in rap_pairs:
         rap_alloc_by_lot[int(lid)] = float(s1 or 0.0)
 
-    stock_bucket: Dict[str, Dict[str, float]] = {}
-    stock_rows = db.execute(text("""
-        SELECT id, lot_no, COALESCE(grade,'KRIP') AS grade,
-               COALESCE(weight,0)::double precision AS weight_kg,
-               COALESCE(unit_cost,0)::double precision AS unit_cost,
-               COALESCE(oversize_kg,0)::double precision AS oversize_kg
-        FROM lot
-        ORDER BY id DESC
+    lots_stock_rows = db.execute(text("""
+        SELECT grade,
+               COALESCE(SUM(qty),0)::double precision AS qty,
+               COALESCE(SUM(val),0)::double precision AS value
+        FROM (
+            SELECT UPPER(COALESCE(l.grade,'KRIP')) AS grade,
+                   GREATEST(COALESCE(l.weight,0)::double precision - COALESCE(a.allocated_qty,0)::double precision, 0.0) AS qty,
+                   GREATEST(COALESCE(l.weight,0)::double precision - COALESCE(a.allocated_qty,0)::double precision, 0.0) * COALESCE(l.unit_cost,0)::double precision AS val
+            FROM lot l
+            LEFT JOIN (
+                SELECT rl.lot_id AS lot_id, COALESCE(SUM(ra.qty),0)::double precision AS allocated_qty
+                FROM rap_lot rl
+                LEFT JOIN rap_alloc ra ON ra.rap_lot_id = rl.id
+                GROUP BY rl.lot_id
+            ) a ON a.lot_id = l.id
+        ) s
+        WHERE qty > 0.0001
+        GROUP BY grade
+        ORDER BY grade
     """)).mappings().all()
-    for lot in stock_rows:
-        gross = float(lot["weight_kg"] or 0.0)
-        rap_taken = rap_alloc_by_lot.get(int(lot["id"]), 0.0)
-        qty = max(gross - rap_taken, 0.0)
-        if qty <= 0:
-            continue
-        grade = str(lot.get("grade") or "KRIP").strip().upper() or "KRIP"
-        row = stock_bucket.setdefault(grade, {"grade": grade, "qty": 0.0, "value": 0.0})
-        row["qty"] += qty
-        row["value"] += qty * float(lot["unit_cost"] or 0.0)
-    lots_stock_rows = sorted(stock_bucket.values(), key=lambda x: x["grade"])
     lots_stock_total_qty = sum(float(r["qty"] or 0.0) for r in lots_stock_rows)
     lots_stock_total_val = sum(float(r["value"] or 0.0) for r in lots_stock_rows)
 

@@ -251,24 +251,23 @@ def _active_reservation_maps(conn, exclude_sales_order_id: Optional[int] = None)
     return fg_reserved, rap_reserved
 
 
-def _fg_available_rows(exclude_sales_order_id: Optional[int] = None, apply_reservations: bool = True):
-    with engine.begin() as conn:
-        lots = conn.execute(text("""
-            SELECT id, lot_no, date, family, fg_grade,
-                   COALESCE(weight_kg,0)::float AS weight_kg,
-                   COALESCE(cost_per_kg,0)::float AS cost_per_kg,
-                   qa_status, remarks
-            FROM fg_lots
-            WHERE UPPER(COALESCE(qa_status,''))='APPROVED'
-            ORDER BY date DESC, id DESC
-        """)).mappings().all()
-        used_by_fg = dict(conn.execute(text("""
-            SELECT fg_lot_id, COALESCE(SUM(qty_kg),0) AS used
-            FROM dispatch_items
-            WHERE COALESCE(source_stage,'FG')='FG'
-            GROUP BY fg_lot_id
-        """)).all() or [])
-        fg_reserved, _rap_reserved = _active_reservation_maps(conn, exclude_sales_order_id) if apply_reservations else ({}, {})
+def _fg_available_rows_conn(conn, exclude_sales_order_id: Optional[int] = None, apply_reservations: bool = True):
+    lots = conn.execute(text("""
+        SELECT id, lot_no, date, family, fg_grade,
+               COALESCE(weight_kg,0)::float AS weight_kg,
+               COALESCE(cost_per_kg,0)::float AS cost_per_kg,
+               qa_status, remarks
+        FROM fg_lots
+        WHERE UPPER(COALESCE(qa_status,''))='APPROVED'
+        ORDER BY date DESC, id DESC
+    """)).mappings().all()
+    used_by_fg = dict(conn.execute(text("""
+        SELECT fg_lot_id, COALESCE(SUM(qty_kg),0) AS used
+        FROM dispatch_items
+        WHERE COALESCE(source_stage,'FG')='FG'
+        GROUP BY fg_lot_id
+    """)).all() or [])
+    fg_reserved, _rap_reserved = _active_reservation_maps(conn, exclude_sales_order_id) if apply_reservations else ({}, {})
     out = []
     for r in lots:
         used = float(used_by_fg.get(r["id"], 0.0))
@@ -293,24 +292,28 @@ def _fg_available_rows(exclude_sales_order_id: Optional[int] = None, apply_reser
     return out
 
 
-def _rap_available_rows(exclude_sales_order_id: Optional[int] = None, apply_reservations: bool = True):
+def _fg_available_rows(exclude_sales_order_id: Optional[int] = None, apply_reservations: bool = True):
     with engine.begin() as conn:
-        rows = conn.execute(text("""
-            SELECT rl.id AS rap_lot_id, l.id AS base_lot_id, l.lot_no,
-                   COALESCE(l.grade,'') AS grade, COALESCE(l.unit_cost,0)::float AS cost_per_kg,
-                   COALESCE(rl.available_qty,0)::float AS available_qty, COALESCE(rl.status,'') AS rap_status,
-                   COALESCE(l.qa_status,'') AS qa_status
-            FROM rap_lot rl
-            JOIN lot l ON l.id = rl.lot_id
-            ORDER BY rl.id ASC
-        """)).mappings().all()
-        used_by_rap = dict(conn.execute(text("""
-            SELECT rap_lot_id, COALESCE(SUM(qty_kg),0) AS used
-            FROM dispatch_items
-            WHERE COALESCE(source_stage,'FG')='RAP'
-            GROUP BY rap_lot_id
-        """)).all() or [])
-        _fg_reserved, rap_reserved = _active_reservation_maps(conn, exclude_sales_order_id) if apply_reservations else ({}, {})
+        return _fg_available_rows_conn(conn, exclude_sales_order_id=exclude_sales_order_id, apply_reservations=apply_reservations)
+
+
+def _rap_available_rows_conn(conn, exclude_sales_order_id: Optional[int] = None, apply_reservations: bool = True):
+    rows = conn.execute(text("""
+        SELECT rl.id AS rap_lot_id, l.id AS base_lot_id, l.lot_no,
+               COALESCE(l.grade,'') AS grade, COALESCE(l.unit_cost,0)::float AS cost_per_kg,
+               COALESCE(rl.available_qty,0)::float AS available_qty, COALESCE(rl.status,'') AS rap_status,
+               COALESCE(l.qa_status,'') AS qa_status
+        FROM rap_lot rl
+        JOIN lot l ON l.id = rl.lot_id
+        ORDER BY rl.id ASC
+    """)).mappings().all()
+    used_by_rap = dict(conn.execute(text("""
+        SELECT rap_lot_id, COALESCE(SUM(qty_kg),0) AS used
+        FROM dispatch_items
+        WHERE COALESCE(source_stage,'FG')='RAP'
+        GROUP BY rap_lot_id
+    """)).all() or [])
+    _fg_reserved, rap_reserved = _active_reservation_maps(conn, exclude_sales_order_id) if apply_reservations else ({}, {})
     out = []
     for r in rows:
         if str(r.get('qa_status') or '').upper() != 'APPROVED':
@@ -343,8 +346,14 @@ def _rap_available_rows(exclude_sales_order_id: Optional[int] = None, apply_rese
     return out
 
 
+def _rap_available_rows(exclude_sales_order_id: Optional[int] = None, apply_reservations: bool = True):
+    with engine.begin() as conn:
+        return _rap_available_rows_conn(conn, exclude_sales_order_id=exclude_sales_order_id, apply_reservations=apply_reservations)
+
+
 def _dispatch_available_rows(exclude_sales_order_id: Optional[int] = None, apply_reservations: bool = True):
-    return _fg_available_rows(exclude_sales_order_id=exclude_sales_order_id, apply_reservations=apply_reservations) + _rap_available_rows(exclude_sales_order_id=exclude_sales_order_id, apply_reservations=apply_reservations)
+    with engine.begin() as conn:
+        return _fg_available_rows_conn(conn, exclude_sales_order_id=exclude_sales_order_id, apply_reservations=apply_reservations) + _rap_available_rows_conn(conn, exclude_sales_order_id=exclude_sales_order_id, apply_reservations=apply_reservations)
 
 
 def _fetch_order(order_id: int):
@@ -372,17 +381,24 @@ def _dispatch_rows_in_range(start: date, end: date):
             WHERE date BETWEEN :s AND :e
             ORDER BY date DESC, id DESC
         """), {"s": start, "e": end}).mappings().all()
-
+        totals_map = {
+            int(r['dispatch_id']): (float(r.get('qty') or 0.0), float(r.get('val') or 0.0))
+            for r in conn.execute(text("""
+                SELECT dispatch_id, COALESCE(SUM(qty_kg),0) AS qty,
+                       COALESCE(SUM(value),0) AS val
+                FROM dispatch_items
+                WHERE dispatch_id IN (
+                    SELECT id FROM dispatch_orders WHERE date BETWEEN :s AND :e
+                )
+                GROUP BY dispatch_id
+            """), {"s": start, "e": end}).mappings().all()
+        }
         out = []
         for o in orders:
-            totals = conn.execute(text("""
-                SELECT COALESCE(SUM(qty_kg),0) AS qty,
-                       COALESCE(SUM(value),0) AS val
-                FROM dispatch_items WHERE dispatch_id=:d
-            """), {"d":o["id"]}).mappings().first() or {"qty":0,"val":0}
+            qty, val = totals_map.get(int(o['id']), (0.0, 0.0))
             d = dict(o)
-            d["total_qty_kg"] = float(totals["qty"] or 0.0)
-            d["total_value"]  = float(totals["val"] or 0.0)
+            d["total_qty_kg"] = qty
+            d["total_value"] = val
             out.append(d)
     return out
 
