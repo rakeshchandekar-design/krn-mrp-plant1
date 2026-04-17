@@ -2,7 +2,7 @@ import os, io, datetime as dt
 import qrcode
 import json
 from io import BytesIO
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Any
 from urllib.parse import quote
 from enum import Enum
 from starlette.middleware.sessions import SessionMiddleware
@@ -1273,13 +1273,81 @@ def _fg_latest_coa_for_lot(fg_lot_id: int) -> dict|None:
             payload["params"].insert(1, {"name":"Compressibility","value":f"{float(grqa['compressibility']):.2f}","unit":"","spec_min":"","spec_max":""})
         return payload
 
+        # Briquetting input opening stock and production batches
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS briquetting_opening(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    family TEXT NOT NULL,
+                    qty_kg REAL NOT NULL DEFAULT 0,
+                    remaining_qty REAL NOT NULL DEFAULT 0,
+                    cost_per_kg REAL NOT NULL DEFAULT 0,
+                    remarks TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS briquette_batch(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL,
+                    batch_no TEXT UNIQUE,
+                    family TEXT NOT NULL,
+                    input_qty_kg REAL NOT NULL DEFAULT 0,
+                    output_qty_kg REAL NOT NULL DEFAULT 0,
+                    remaining_qty REAL NOT NULL DEFAULT 0,
+                    cost_per_kg REAL NOT NULL DEFAULT 0,
+                    src_alloc_json TEXT,
+                    remarks TEXT,
+                    trace_id TEXT,
+                    moved_grn_id INTEGER,
+                    status TEXT DEFAULT 'OPEN'
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_briq_open_date ON briquetting_opening(date)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_briq_batch_date ON briquette_batch(date)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_briq_batch_family ON briquette_batch(family)"))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS briquetting_opening(
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    family TEXT NOT NULL,
+                    qty_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    remaining_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    remarks TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS briquette_batch(
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    batch_no TEXT UNIQUE,
+                    family TEXT NOT NULL,
+                    input_qty_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    output_qty_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    remaining_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    src_alloc_json TEXT,
+                    remarks TEXT,
+                    trace_id TEXT,
+                    moved_grn_id INTEGER,
+                    status TEXT DEFAULT 'OPEN'
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_briq_open_date ON briquetting_opening(date)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_briq_batch_date ON briquette_batch(date)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_briq_batch_family ON briquette_batch(family)"))
+
 # -------------------------------------------------
 # Constants
 # -------------------------------------------------
-RM_TYPES = ["MS Scrap", "Turnings", "CRC", "TMT end cuts", "FeSi", "DRI", "Others"]
+RM_TYPES = ["MS Scrap", "Turnings", "CRC", "TMT end cuts", "FeSi", "DRI", "Others", "Briquettes"]
 
 def rm_price_defaults():
-    return {"MS Scrap": 34.0, "Turnings": 33.0, "CRC": 40.0, "TMT end cuts": 37.0, "FeSi": 104.0, "Others": 0.0}
+    return {"MS Scrap": 34.0, "Turnings": 33.0, "CRC": 40.0, "TMT end cuts": 37.0, "FeSi": 104.0, "DRI": 0.0, "Others": 0.0, "Briquettes": 0.0}
 
 # -------------------------------------------------
 # Models
@@ -1699,6 +1767,7 @@ USER_DB = {
     "qa":      {"password": os.getenv("KRN_QA_PASSWORD",      "qa@2025"),      "role": "qa"},
     "krn":     {"password": os.getenv("KRN_VIEW_PASSWORD",    "krn"),          "role": "view"},
     "sales":   {"password": os.getenv("KRN_SALES_PASSWORD",   "sales@2025"),   "role": "sales"},
+    "briq":    {"password": os.getenv("KRN_BRIQ_PASSWORD",    "briq@2025"),    "role": "briq"},
 }
 
 def current_username(request: Request) -> str:
@@ -1732,6 +1801,9 @@ def role_allowed(request: Request, allowed: set[str]) -> bool:
 # -------------------------------------------------
 # Startup
 # -------------------------------------------------
+
+
+
 @app.on_event("startup")
 def _startup_migrate():
     Base.metadata.create_all(bind=engine)
@@ -4590,6 +4662,320 @@ def atom_downtime_export(db: Session = Depends(get_db)):
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="atom_downtime_export.csv"'}
     )
+
+
+
+# -------------------------------------------------
+# Briquetting
+# -------------------------------------------------
+def _briq_family_key(value: str) -> str:
+    s = (value or '').strip().upper()
+    if s.startswith('KRFS') or s.startswith('KFS'):
+        return 'KFS'
+    if s.startswith('KRM') or s.startswith('KIPM'):
+        return 'KIPM'
+    if s.startswith('KRSP') or s.startswith('KSP'):
+        return 'KSP'
+    return 'KIP'
+
+def _briq_batch_date_from_no(batch_no: str) -> Optional[dt.date]:
+    try:
+        parts = str(batch_no or '').split('-')
+        for p in parts:
+            if len(p) == 8 and p.isdigit():
+                return dt.datetime.strptime(p, '%Y%m%d').date()
+    except Exception:
+        pass
+    return None
+
+def _briq_fg_ov40_used(db: Session) -> Dict[str, float]:
+    used: Dict[str, float] = {}
+    if not _table_exists(db, 'fg_lots') or not _table_has_column(db, 'fg_lots', 'src_alloc_json'):
+        return used
+    rows = db.execute(text("SELECT src_alloc_json, COALESCE(qa_status,'') AS qa_status, COALESCE(status,'') AS status FROM fg_lots")).mappings().all()
+    for r in rows:
+        qa_status = str(r.get('qa_status') or '').strip().upper()
+        status = str(r.get('status') or '').strip().upper()
+        if qa_status in {'REJECTED','CANCELLED','VOID','DELETED'} or status in {'CANCELLED','VOID','DELETED'}:
+            continue
+        try:
+            data = json.loads(r.get('src_alloc_json') or '{}')
+        except Exception:
+            data = {}
+        if not isinstance(data, dict):
+            continue
+        for k, v in data.items():
+            key = str(k or '')
+            if not key.startswith('OV40|'):
+                continue
+            lot_no = key.split('|', 1)[1] if '|' in key else key
+            try:
+                qty = float(v or 0.0)
+            except Exception:
+                qty = 0.0
+            if qty > 0:
+                used[lot_no] = used.get(lot_no, 0.0) + qty
+    return used
+
+def _briq_used_maps(db: Session) -> Tuple[Dict[str, float], Dict[str, float], Dict[int, float]]:
+    atom20: Dict[str, float] = {}
+    grd40: Dict[str, float] = {}
+    opening: Dict[int, float] = {}
+    if not _table_exists(db, 'briquette_batch'):
+        return atom20, grd40, opening
+    rows = db.execute(text("SELECT src_alloc_json, COALESCE(status,'OPEN') AS status FROM briquette_batch")).mappings().all()
+    for r in rows:
+        status = str(r.get('status') or 'OPEN').strip().upper()
+        if status == 'CANCELLED':
+            continue
+        try:
+            data = json.loads(r.get('src_alloc_json') or '{}')
+        except Exception:
+            data = {}
+        if not isinstance(data, dict):
+            continue
+        for k, v in data.items():
+            key = str(k or '')
+            try:
+                qty = float(v or 0.0)
+            except Exception:
+                qty = 0.0
+            if qty <= 0:
+                continue
+            if key.startswith('ATOM20|'):
+                atom20[key.split('|',1)[1]] = atom20.get(key.split('|',1)[1], 0.0) + qty
+            elif key.startswith('GRD40|'):
+                grd40[key.split('|',1)[1]] = grd40.get(key.split('|',1)[1], 0.0) + qty
+            elif key.startswith('OPEN|'):
+                try:
+                    oid = int(key.split('|',1)[1])
+                    opening[oid] = opening.get(oid, 0.0) + qty
+                except Exception:
+                    pass
+    return atom20, grd40, opening
+
+def _briq_available_source_rows(db: Session) -> List[Dict[str, Any]]:
+    atom20_used, grd40_used, opening_used = _briq_used_maps(db)
+    fg_ov40_used = _briq_fg_ov40_used(db)
+    rows: List[Dict[str, Any]] = []
+    atom_rows = db.execute(text("""
+        SELECT id, lot_no, COALESCE(grade,'KRIP') AS grade,
+               COALESCE(weight,0)::double precision AS weight_kg,
+               COALESCE(oversize_kg,0)::double precision AS oversize_kg,
+               COALESCE(unit_cost,0)::double precision AS unit_cost,
+               COALESCE(qa_status,'') AS qa_status
+        FROM lot
+        ORDER BY id ASC
+    """)).mappings().all()
+    for r in atom_rows:
+        if str(r.get('qa_status') or '').upper() != 'APPROVED':
+            continue
+        lot_no = str(r.get('lot_no') or '')
+        avail = float(r.get('oversize_kg') or 0.0) - float(atom20_used.get(lot_no, 0.0))
+        if avail <= 0.0001:
+            continue
+        rows.append({
+            'src_key': f'ATOM20|{lot_no}',
+            'source_type': '+20',
+            'date': lot_date_from_no(lot_no) or dt.date.today(),
+            'source_no': lot_no,
+            'family': _briq_family_key(str(r.get('grade') or '')),
+            'display_family': str(r.get('grade') or ''),
+            'available_kg': avail,
+            'cost_per_kg': float(r.get('unit_cost') or 0.0),
+        })
+    grind_rows = db.execute(text("""
+        SELECT id, lot_no, COALESCE(grade,'KIP') AS grade,
+               COALESCE(oversize_p40_kg,0)::double precision AS p40,
+               COALESCE(cost_per_kg,0)::double precision AS cost_per_kg,
+               COALESCE(qa_status,'') AS qa_status
+        FROM grinding_lots
+        ORDER BY id ASC
+    """)).mappings().all() if _table_exists(db,'grinding_lots') else []
+    for r in grind_rows:
+        if str(r.get('qa_status') or '').upper() != 'APPROVED':
+            continue
+        lot_no = str(r.get('lot_no') or '')
+        avail = float(r.get('p40') or 0.0) - float(fg_ov40_used.get(lot_no, 0.0)) - float(grd40_used.get(lot_no, 0.0))
+        if avail <= 0.0001:
+            continue
+        rows.append({
+            'src_key': f'GRD40|{lot_no}',
+            'source_type': '+40',
+            'date': lot_date_from_no(lot_no) or dt.date.today(),
+            'source_no': lot_no,
+            'family': _briq_family_key(str(r.get('grade') or '')),
+            'display_family': str(r.get('grade') or ''),
+            'available_kg': avail,
+            'cost_per_kg': float(r.get('cost_per_kg') or 0.0),
+        })
+    open_rows = db.execute(text("""
+        SELECT id, date, source_kind, family, COALESCE(remaining_qty,0)::double precision AS remaining_qty,
+               COALESCE(cost_per_kg,0)::double precision AS cost_per_kg, COALESCE(remarks,'') AS remarks
+        FROM briquetting_opening
+        WHERE COALESCE(remaining_qty,0) > 0
+        ORDER BY date ASC, id ASC
+    """)).mappings().all() if _table_exists(db,'briquetting_opening') else []
+    for r in open_rows:
+        oid = int(r.get('id'))
+        avail = float(r.get('remaining_qty') or 0.0) - float(opening_used.get(oid, 0.0))
+        if avail <= 0.0001:
+            continue
+        rows.append({
+            'src_key': f'OPEN|{oid}',
+            'source_type': str(r.get('source_kind') or 'OPEN'),
+            'date': r.get('date') or dt.date.today(),
+            'source_no': f'OPEN-{oid}',
+            'family': _briq_family_key(str(r.get('family') or '')),
+            'display_family': str(r.get('family') or ''),
+            'available_kg': avail,
+            'cost_per_kg': float(r.get('cost_per_kg') or 0.0),
+            'remarks': str(r.get('remarks') or ''),
+        })
+    rows.sort(key=lambda x: (x.get('date') or dt.date.today(), str(x.get('source_no') or '')))
+    return rows
+
+def _briq_fifo_allocate(rows: List[Dict[str, Any]], qty_needed: float) -> Tuple[Dict[str, float], float]:
+    remaining = float(qty_needed or 0.0)
+    alloc: Dict[str, float] = {}
+    for r in sorted(rows, key=lambda x: (x.get('date') or dt.date.today(), str(x.get('source_no') or ''))):
+        if remaining <= 1e-6:
+            break
+        avail = float(r.get('available_kg') or 0.0)
+        if avail <= 1e-6:
+            continue
+        take = min(avail, remaining)
+        if take > 0:
+            alloc[str(r.get('src_key'))] = take
+            remaining -= take
+    return alloc, max(remaining, 0.0)
+
+def _briq_source_families(db: Session) -> List[str]:
+    fams = []
+    for r in _briq_available_source_rows(db):
+        f = str(r.get('family') or '')
+        if f and f not in fams:
+            fams.append(f)
+    return fams
+
+@app.get('/briquetting', response_class=HTMLResponse)
+def briquetting_page(request: Request, start: Optional[str] = None, end: Optional[str] = None, db: Session = Depends(get_db)):
+    if not role_allowed(request, {'admin','store','briq','view'}):
+        return RedirectResponse('/login', status_code=303)
+    today = dt.date.today()
+    source_rows = _briq_available_source_rows(db)
+    family_summary: Dict[str, Dict[str, float]] = {}
+    for r in source_rows:
+        fam = str(r.get('family') or 'KIP')
+        s = family_summary.setdefault(fam, {'p20':0.0,'p40':0.0,'opening':0.0,'total':0.0})
+        qty = float(r.get('available_kg') or 0.0)
+        st = str(r.get('source_type') or '')
+        if st == '+20': s['p20'] += qty
+        elif st == '+40': s['p40'] += qty
+        else: s['opening'] += qty
+        s['total'] += qty
+    q = 'SELECT * FROM briquette_batch WHERE 1=1'
+    params = {}
+    show_all_history = bool(start or end)
+    if start:
+        q += ' AND date >= :s'; params['s'] = dt.date.fromisoformat(start)
+    if end:
+        q += ' AND date <= :e'; params['e'] = dt.date.fromisoformat(end)
+    q += ' ORDER BY date DESC, id DESC'
+    batches = [dict(r) for r in db.execute(text(q), params).mappings().all()] if _table_exists(db,'briquette_batch') else []
+    if not show_all_history:
+        batches = [b for b in batches if float(b.get('remaining_qty') or 0.0) > 0.0001]
+    openings = [dict(r) for r in db.execute(text('SELECT * FROM briquetting_opening ORDER BY date DESC, id DESC')).mappings().all()] if _table_exists(db,'briquetting_opening') else []
+    min_date = (today - dt.timedelta(days=4)).isoformat()
+    max_date = today.isoformat()
+    return templates.TemplateResponse('briquetting.html', {
+        'request': request,
+        'role': current_role(request),
+        'read_only': (not role_allowed(request, {'admin','store','briq'})),
+        'source_rows': source_rows,
+        'family_summary': family_summary,
+        'families': _briq_source_families(db),
+        'batches': batches,
+        'openings': openings,
+        'start': start or '', 'end': end or '', 'showing_all_history': show_all_history,
+        'today_iso': today.isoformat(), 'min_date': min_date, 'max_date': max_date,
+        'err': request.query_params.get('err',''), 'ok': request.query_params.get('ok','')
+    })
+
+@app.post('/briquetting/opening')
+def briquetting_opening_post(request: Request, date: str = Form(...), source_kind: str = Form(...), family: str = Form(...), qty_kg: float = Form(...), cost_per_kg: float = Form(0.0), remarks: str = Form(''), db: Session = Depends(get_db)):
+    if not role_allowed(request, {'admin','store','briq'}):
+        return RedirectResponse('/login', status_code=303)
+    try:
+        d = dt.date.fromisoformat((date or '').strip())
+    except Exception:
+        return RedirectResponse('/briquetting?err=Invalid+opening+date', status_code=303)
+    today = dt.date.today()
+    if d > today or d < (today - dt.timedelta(days=30)):
+        return RedirectResponse('/briquetting?err=Opening+date+must+be+today+or+within+last+30+days', status_code=303)
+    if qty_kg <= 0:
+        return RedirectResponse('/briquetting?err=Opening+qty+must+be+greater+than+0', status_code=303)
+    db.execute(text("""
+        INSERT INTO briquetting_opening(date, source_kind, family, qty_kg, remaining_qty, cost_per_kg, remarks)
+        VALUES (:d, :k, :f, :q, :q, :c, :r)
+    """), {'d': d, 'k': (source_kind or '').strip().upper(), 'f': _briq_family_key(family), 'q': float(qty_kg or 0.0), 'c': float(cost_per_kg or 0.0), 'r': remarks or ''})
+    db.commit()
+    return RedirectResponse('/briquetting?ok=Opening+stock+added', status_code=303)
+
+@app.post('/briquetting/new')
+def briquetting_new(request: Request, batch_date: str = Form(...), family: str = Form(...), output_qty_kg: float = Form(...), remarks: str = Form(''), db: Session = Depends(get_db)):
+    if not role_allowed(request, {'admin','store','briq'}):
+        return RedirectResponse('/login', status_code=303)
+    try:
+        d = dt.date.fromisoformat((batch_date or '').strip())
+    except Exception:
+        return RedirectResponse('/briquetting?err=Invalid+batch+date', status_code=303)
+    today = dt.date.today()
+    if d > today or d < (today - dt.timedelta(days=4)):
+        return RedirectResponse('/briquetting?err=Batch+date+must+be+today+or+within+last+4+days', status_code=303)
+    if output_qty_kg <= 0:
+        return RedirectResponse('/briquetting?err=Output+qty+must+be+greater+than+0', status_code=303)
+    fam = _briq_family_key(family)
+    eligible = [r for r in _briq_available_source_rows(db) if _briq_family_key(str(r.get('family') or '')) == fam]
+    total_avail = sum(float(r.get('available_kg') or 0.0) for r in eligible)
+    if total_avail + 1e-6 < float(output_qty_kg or 0.0):
+        return RedirectResponse(f'/briquetting?err=Insufficient+{fam}+source+balance.+Available+{total_avail:.1f}+kg', status_code=303)
+    alloc_map, rem = _briq_fifo_allocate(eligible, float(output_qty_kg or 0.0))
+    if rem > 1e-6:
+        return RedirectResponse('/briquetting?err=FIFO+allocation+failed', status_code=303)
+    input_cost = 0.0
+    source_by_key = {str(r.get('src_key')): r for r in eligible}
+    for k, q in alloc_map.items():
+        input_cost += float(q or 0.0) * float((source_by_key.get(k) or {}).get('cost_per_kg') or 0.0)
+    cost_per_kg = (input_cost / float(output_qty_kg or 0.0)) if float(output_qty_kg or 0.0) > 0 else 0.0
+    prefix = 'BRI-' + d.strftime('%Y%m%d') + '-'
+    last = db.execute(text('SELECT batch_no FROM briquette_batch WHERE batch_no LIKE :p ORDER BY batch_no DESC LIMIT 1'), {'p': f'{prefix}%'}).scalar()
+    seq = int(str(last).split('-')[-1]) + 1 if last else 1
+    batch_no = f'{prefix}{seq:03d}'
+    db.execute(text("""
+        INSERT INTO briquette_batch(date, batch_no, family, input_qty_kg, output_qty_kg, remaining_qty, cost_per_kg, src_alloc_json, remarks, trace_id, status)
+        VALUES (:d, :b, :f, :iq, :oq, :oq, :c, :a, :r, :t, 'OPEN')
+    """), {'d': d, 'b': batch_no, 'f': fam, 'iq': float(output_qty_kg or 0.0), 'oq': float(output_qty_kg or 0.0), 'c': cost_per_kg, 'a': json.dumps(alloc_map), 'r': remarks or '', 't': batch_no})
+    db.commit()
+    return RedirectResponse('/briquetting?ok=Briquette+batch+created', status_code=303)
+
+@app.post('/briquetting/{batch_id}/move-to-grn')
+def briquetting_move_to_grn(batch_id: int, request: Request, db: Session = Depends(get_db)):
+    if not role_allowed(request, {'admin','store','briq'}):
+        return RedirectResponse('/login', status_code=303)
+    row = db.execute(text('SELECT * FROM briquette_batch WHERE id=:id'), {'id': batch_id}).mappings().first() if _table_exists(db,'briquette_batch') else None
+    if not row:
+        return RedirectResponse('/briquetting?err=Batch+not+found', status_code=303)
+    remaining_qty = float(row.get('remaining_qty') or 0.0)
+    if remaining_qty <= 0.0001:
+        return RedirectResponse('/briquetting?err=No+remaining+briquettes+to+move', status_code=303)
+    move_date = dt.date.today()
+    grn = GRN(grn_no=next_grn_no(db, move_date), date=move_date, supplier=f"Internal Briquetting ({row.get('family') or 'KIP'})", rm_type='Briquettes', qty=remaining_qty, remaining_qty=remaining_qty, price=float(row.get('cost_per_kg') or 0.0), transporter='Internal', vehicle_no='INTERNAL')
+    db.add(grn)
+    db.flush()
+    db.execute(text('UPDATE briquette_batch SET remaining_qty=0, moved_grn_id=:gid, status=:st WHERE id=:id'), {'gid': grn.id, 'st': 'MOVED_TO_GRN', 'id': batch_id})
+    db.commit()
+    return RedirectResponse('/briquetting?ok=Briquettes+moved+to+GRN+for+Melting', status_code=303)
 
 # ---------- Anneal QA helper (robust date filtering + safe oxygen cast) ----------
 from sqlalchemy import text

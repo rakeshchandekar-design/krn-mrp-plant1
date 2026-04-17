@@ -211,6 +211,20 @@
         </div>
       </div>
 
+      <!-- Briquetting -->
+      {% set allow = role in ['admin','briq','store','view'] %}
+      <div class="card">
+        <h3><span class="icon">🧱</span>Briquetting</h3>
+        <div class="sub">Admin, Briq, Store</div>
+        <div class="foot">
+          {% if allow %}
+            <a class="open" href="/briquetting">Open</a>
+          {% else %}
+            <button class="open" disabled>Open</button><span class="deny">✗</span>
+          {% endif %}
+        </div>
+      </div>
+
       <!-- Annealing -->
       {% set allow = role in ['admin','anneal','view'] %}
       <div class="card">

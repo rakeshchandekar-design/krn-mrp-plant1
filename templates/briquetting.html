@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Briquetting</h2>
+{% if err %}<div class="alert alert-danger" style="margin:8px 0; color:#b91c1c">{{ err }}</div>{% endif %}
+{% if ok %}<div class="alert alert-success" style="margin:8px 0; color:#166534">{{ ok }}</div>{% endif %}
+
+<div class="toolbar" style="margin-bottom:12px; gap:8px; display:flex; flex-wrap:wrap; align-items:center">
+  <a class="btn" href="/">← Back to Home</a>
+  <form method="get" action="/briquetting" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+    <label>From</label><input type="date" name="start" value="{{ start or '' }}">
+    <label>To</label><input type="date" name="end" value="{{ end or '' }}">
+    <button class="btn" type="submit">Fetch</button>
+    <a class="btn" href="/briquetting">Reset</a>
+  </form>
+</div>
+
+<div class="grid2" style="display:grid; grid-template-columns:1.1fr .9fr; gap:14px; align-items:start">
+  <div class="card">
+    <h3>Available Input Sources</h3>
+    <table class="table">
+      <tr><th>Family</th><th>+20</th><th>+40</th><th>Opening</th><th>Total</th></tr>
+      {% for fam, s in family_summary.items() %}
+      <tr><td>{{ fam }}</td><td>{{ '%.1f'|format(s.p20 or 0) }}</td><td>{{ '%.1f'|format(s.p40 or 0) }}</td><td>{{ '%.1f'|format(s.opening or 0) }}</td><td>{{ '%.1f'|format(s.total or 0) }}</td></tr>
+      {% endfor %}
+    </table>
+    <div class="muted" style="margin-top:6px">Source FIFO is automatic within selected family. +20 comes from Atomization dryer oversize and +40 comes from Grinding oversize.</div>
+  </div>
+
+  <div class="card">
+    <h3>Create Briquette Batch</h3>
+    <form method="post" action="/briquetting/new" style="display:grid; grid-template-columns:repeat(2,minmax(180px,1fr)); gap:10px">
+      <div><label>Date</label><input type="date" name="batch_date" min="{{ min_date }}" max="{{ max_date }}" value="{{ today_iso }}" required></div>
+      <div><label>Family</label><select name="family" required>{% for f in families %}<option value="{{ f }}">{{ f }}</option>{% endfor %}</select></div>
+      <div><label>Output Qty (kg)</label><input type="number" step="0.01" min="0.01" name="output_qty_kg" required></div>
+      <div><label>Remarks</label><input type="text" name="remarks"></div>
+      <div style="grid-column:1/-1"><button class="btn" type="submit">Create Batch</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <h3>Add Opening Input Stock</h3>
+  <form method="post" action="/briquetting/opening" style="display:grid; grid-template-columns:repeat(6,minmax(120px,1fr)); gap:10px; align-items:end">
+    <div><label>Date</label><input type="date" name="date" value="{{ today_iso }}" required></div>
+    <div><label>Source</label><select name="source_kind"><option value="+20">+20</option><option value="+40">+40</option></select></div>
+    <div><label>Family</label><select name="family">{% for f in ['KIP','KFS','KIPM','KSP'] %}<option value="{{ f }}">{{ f }}</option>{% endfor %}</select></div>
+    <div><label>Qty (kg)</label><input type="number" step="0.01" min="0.01" name="qty_kg" required></div>
+    <div><label>Cost/kg</label><input type="number" step="0.01" min="0" name="cost_per_kg" value="0"></div>
+    <div><label>Remarks</label><input type="text" name="remarks"></div>
+    <div style="grid-column:1/-1"><button class="btn" type="submit">Add Opening</button></div>
+  </form>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <h3>Source Availability Detail</h3>
+  <table class="table">
+    <tr><th>Date</th><th>Source</th><th>Ref</th><th>Family</th><th>Available (kg)</th><th>Cost/kg</th></tr>
+    {% for x in source_rows %}
+    <tr><td>{{ x.date }}</td><td>{{ x.source_type }}</td><td>{{ x.source_no }}</td><td>{{ x.family }}</td><td>{{ '%.1f'|format(x.available_kg or 0) }}</td><td>{{ '%.2f'|format(x.cost_per_kg or 0) }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <h3>Briquette Batches</h3>
+  <div class="muted" style="margin-bottom:6px">Default view hides zero-balance batches. Use date filter above to see history.</div>
+  <table class="table">
+    <tr><th>Date</th><th>Batch No</th><th>Family</th><th>Input Qty</th><th>Output Qty</th><th>Balance Qty</th><th>Cost/kg</th><th>Status</th><th>Remarks</th><th>Action</th></tr>
+    {% for x in batches %}
+    <tr>
+      <td>{{ x.date }}</td><td>{{ x.batch_no }}</td><td>{{ x.family }}</td><td>{{ '%.1f'|format(x.input_qty_kg or 0) }}</td><td>{{ '%.1f'|format(x.output_qty_kg or 0) }}</td><td>{{ '%.1f'|format(x.remaining_qty or 0) }}</td><td>{{ '%.2f'|format(x.cost_per_kg or 0) }}</td><td>{{ x.status or '' }}</td><td>{{ x.remarks or '' }}</td>
+      <td>{% if (x.remaining_qty or 0) > 0.0001 and not read_only %}<form method="post" action="/briquetting/{{ x.id }}/move-to-grn" onsubmit="return confirm('Move full remaining briquettes to GRN for Melting?');"><button class="btn btn-small" type="submit">Move to GRN</button></form>{% else %}-{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <h3>Opening Stock Register</h3>
+  <table class="table">
+    <tr><th>Date</th><th>Source</th><th>Family</th><th>Opening Qty</th><th>Balance Qty</th><th>Cost/kg</th><th>Remarks</th></tr>
+    {% for x in openings %}
+    <tr><td>{{ x.date }}</td><td>{{ x.source_kind }}</td><td>{{ x.family }}</td><td>{{ '%.1f'|format(x.qty_kg or 0) }}</td><td>{{ '%.1f'|format(x.remaining_qty or 0) }}</td><td>{{ '%.2f'|format(x.cost_per_kg or 0) }}</td><td>{{ x.remarks or '' }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}
