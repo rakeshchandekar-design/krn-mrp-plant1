@@ -162,6 +162,82 @@ def _table_exists(conn, table: str) -> bool:
     return conn.execute(q, {"t": table}).first() is not None
 
 
+
+def _ensure_briquetting_tables(conn_or_db) -> None:
+    """Create briquetting tables/indexes if missing. Safe to call repeatedly."""
+    conn = conn_or_db
+    try:
+        if hasattr(conn_or_db, "connection") and hasattr(conn_or_db, "execute"):
+            conn = conn_or_db.connection()
+    except Exception:
+        conn = conn_or_db
+    try:
+        if str(engine.url).startswith("sqlite"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS briquetting_opening(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    family TEXT NOT NULL,
+                    qty_kg REAL NOT NULL DEFAULT 0,
+                    remaining_qty REAL NOT NULL DEFAULT 0,
+                    cost_per_kg REAL NOT NULL DEFAULT 0,
+                    remarks TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS briquette_batch(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL,
+                    batch_no TEXT UNIQUE,
+                    family TEXT NOT NULL,
+                    input_qty_kg REAL NOT NULL DEFAULT 0,
+                    output_qty_kg REAL NOT NULL DEFAULT 0,
+                    remaining_qty REAL NOT NULL DEFAULT 0,
+                    cost_per_kg REAL NOT NULL DEFAULT 0,
+                    src_alloc_json TEXT,
+                    remarks TEXT,
+                    trace_id TEXT,
+                    moved_grn_id INTEGER,
+                    status TEXT DEFAULT 'OPEN'
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS briquetting_opening(
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    family TEXT NOT NULL,
+                    qty_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    remaining_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    remarks TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS briquette_batch(
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    batch_no TEXT UNIQUE,
+                    family TEXT NOT NULL,
+                    input_qty_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    output_qty_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    remaining_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    cost_per_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    src_alloc_json TEXT,
+                    remarks TEXT,
+                    trace_id TEXT,
+                    moved_grn_id INTEGER,
+                    status TEXT DEFAULT 'OPEN'
+                )
+            """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_briq_open_date ON briquetting_opening(date)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_briq_batch_date ON briquette_batch(date)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_briq_batch_family ON briquette_batch(family)"))
+    except Exception:
+        pass
+
 def migrate_schema(engine):
     with engine.begin() as conn:
         # Heat costing columns
@@ -1808,6 +1884,11 @@ def role_allowed(request: Request, allowed: set[str]) -> bool:
 def _startup_migrate():
     Base.metadata.create_all(bind=engine)
     migrate_schema(engine)
+    try:
+        with engine.begin() as conn:
+            _ensure_briquetting_tables(conn)
+    except Exception:
+        pass
 
 # -------------------------------------------------
 # DB dependency
@@ -4870,6 +4951,7 @@ def _briq_source_families(db: Session) -> List[str]:
 
 @app.get('/briquetting', response_class=HTMLResponse)
 def briquetting_page(request: Request, start: Optional[str] = None, end: Optional[str] = None, db: Session = Depends(get_db)):
+    _ensure_briquetting_tables(db)
     if not role_allowed(request, {'admin','store','briq','view'}):
         return RedirectResponse('/login', status_code=303)
     today = dt.date.today()
@@ -4914,6 +4996,7 @@ def briquetting_page(request: Request, start: Optional[str] = None, end: Optiona
 
 @app.post('/briquetting/opening')
 def briquetting_opening_post(request: Request, date: str = Form(...), source_kind: str = Form(...), family: str = Form(...), qty_kg: float = Form(...), cost_per_kg: float = Form(0.0), remarks: str = Form(''), db: Session = Depends(get_db)):
+    _ensure_briquetting_tables(db)
     if not role_allowed(request, {'admin','store','briq'}):
         return RedirectResponse('/login', status_code=303)
     try:
@@ -4934,6 +5017,7 @@ def briquetting_opening_post(request: Request, date: str = Form(...), source_kin
 
 @app.post('/briquetting/new')
 def briquetting_new(request: Request, batch_date: str = Form(...), family: str = Form(...), output_qty_kg: float = Form(...), remarks: str = Form(''), db: Session = Depends(get_db)):
+    _ensure_briquetting_tables(db)
     if not role_allowed(request, {'admin','store','briq'}):
         return RedirectResponse('/login', status_code=303)
     try:
@@ -4971,6 +5055,7 @@ def briquetting_new(request: Request, batch_date: str = Form(...), family: str =
 
 @app.post('/briquetting/{batch_id}/move-to-grn')
 def briquetting_move_to_grn(batch_id: int, request: Request, db: Session = Depends(get_db)):
+    _ensure_briquetting_tables(db)
     if not role_allowed(request, {'admin','store','briq'}):
         return RedirectResponse('/login', status_code=303)
     row = db.execute(text('SELECT * FROM briquette_batch WHERE id=:id'), {'id': batch_id}).mappings().first() if _table_exists(db,'briquette_batch') else None
