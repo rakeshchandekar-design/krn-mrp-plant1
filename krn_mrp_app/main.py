@@ -4692,10 +4692,20 @@ def _briq_fg_ov40_used(db: Session) -> Dict[str, float]:
     used: Dict[str, float] = {}
     if not _table_exists(db, 'fg_lots') or not _table_has_column(db, 'fg_lots', 'src_alloc_json'):
         return used
-    rows = db.execute(text("SELECT src_alloc_json, COALESCE(qa_status,'') AS qa_status, COALESCE(status,'') AS status FROM fg_lots")).mappings().all()
+
+    has_qa_status = _table_has_column(db, 'fg_lots', 'qa_status')
+    has_status = _table_has_column(db, 'fg_lots', 'status')
+
+    select_cols = ["src_alloc_json"]
+    if has_qa_status:
+        select_cols.append("COALESCE(qa_status,'') AS qa_status")
+    if has_status:
+        select_cols.append("COALESCE(status,'') AS status")
+
+    rows = db.execute(text(f"SELECT {', '.join(select_cols)} FROM fg_lots")).mappings().all()
     for r in rows:
-        qa_status = str(r.get('qa_status') or '').strip().upper()
-        status = str(r.get('status') or '').strip().upper()
+        qa_status = str(r.get('qa_status') or '').strip().upper() if has_qa_status else ''
+        status = str(r.get('status') or '').strip().upper() if has_status else ''
         if qa_status in {'REJECTED','CANCELLED','VOID','DELETED'} or status in {'CANCELLED','VOID','DELETED'}:
             continue
         try:
