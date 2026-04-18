@@ -100,6 +100,14 @@ with engine.begin() as conn:
         except Exception:
             pass
 
+    # Older live schemas had dispatch_items.fg_lot_id as NOT NULL because dispatch handled only FG.
+    # RAP dispatch mirroring and RAP-source final dispatch require NULL fg_lot_id rows.
+    # Relax the column safely without disturbing existing logic.
+    try:
+        conn.execute(text("ALTER TABLE dispatch_items ALTER COLUMN fg_lot_id DROP NOT NULL"))
+    except Exception:
+        pass
+
     for _ddl in [
         "ALTER TABLE dispatch_sales_orders ADD COLUMN IF NOT EXISTS po_no TEXT",
         "ALTER TABLE dispatch_sales_orders ADD COLUMN IF NOT EXISTS po_date DATE",
@@ -129,6 +137,30 @@ def _table_exists(conn, table_name: str) -> bool:
         )
     except Exception:
         return False
+
+
+def _ensure_dispatch_item_schema(conn) -> None:
+    """Keep dispatch_items compatible with RAP-source rows on older live DB schemas."""
+    try:
+        conn.execute(text("ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS source_stage TEXT DEFAULT 'FG'"))
+    except Exception:
+        pass
+    try:
+        conn.execute(text("ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS rap_lot_id INT"))
+    except Exception:
+        pass
+    try:
+        conn.execute(text("ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS source_lot_no TEXT"))
+    except Exception:
+        pass
+    try:
+        conn.execute(text("ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS stock_already_applied BOOLEAN DEFAULT FALSE"))
+    except Exception:
+        pass
+    try:
+        conn.execute(text("ALTER TABLE dispatch_items ALTER COLUMN fg_lot_id DROP NOT NULL"))
+    except Exception:
+        pass
 
 def _dispatch_customers(active_only: bool = True):
     with engine.begin() as conn:
@@ -359,6 +391,7 @@ def _dispatch_available_rows(exclude_sales_order_id: Optional[int] = None, apply
 
 
 def _ensure_rap_dispatch_mirrors(conn) -> None:
+    _ensure_dispatch_item_schema(conn)
     if not (_table_exists(conn, 'rap_dispatch') and _table_exists(conn, 'rap_dispatch_item') and _table_exists(conn, 'dispatch_orders') and _table_exists(conn, 'dispatch_items')):
         return
     existing = {str(r['order_no']) for r in conn.execute(text("SELECT order_no FROM dispatch_orders WHERE order_no LIKE 'RAPDSP-%'")).mappings().all()}
@@ -390,6 +423,7 @@ def _ensure_rap_dispatch_mirrors(conn) -> None:
 
 def _fetch_order(order_id: int):
     with engine.begin() as conn:
+        _ensure_dispatch_item_schema(conn)
         _ensure_rap_dispatch_mirrors(conn)
         head = conn.execute(text("SELECT * FROM dispatch_orders WHERE id=:id"), {"id": order_id}).mappings().first()
         items = conn.execute(text("""
@@ -1029,6 +1063,7 @@ async def dispatch_create_post(request: Request, dep: None = Depends(require_rol
         return RedirectResponse('/dispatch/create' + q, status_code=303)
 
     with engine.begin() as conn:
+        _ensure_dispatch_item_schema(conn)
         prefix = 'DSP-' + date.today().strftime('%Y%m%d') + '-'
         last = conn.execute(text("""
             SELECT order_no FROM dispatch_orders
