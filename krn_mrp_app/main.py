@@ -6857,6 +6857,23 @@ async def rap_dispatch_save(request: Request, db: Session = Depends(get_db)):
     disp.total_qty = total_qty_acc
     disp.total_cost = total_cost_acc
     db.add(disp)
+    db.flush()
+
+    try:
+        head_id = db.execute(text("""
+            INSERT INTO dispatch_orders(order_no, date, customer_name, remarks, created_by)
+            VALUES (:ono, :dt, :cust, :rmk, 'system')
+            RETURNING id
+        """), {'ono': f"RAPDSP-{int(disp.id):06d}", 'dt': d, 'cust': customer, 'rmk': f"Mirrored from RAP Dispatch #{int(disp.id)}"}).mappings().first()['id']
+        db.execute(text("""
+            INSERT INTO dispatch_items(dispatch_id, fg_lot_id, rap_lot_id, source_stage, source_lot_no, fg_lot_no, fg_grade, qty_kg, cost_per_kg, value, stock_already_applied)
+            VALUES (:did, NULL, :rid, 'RAP', :sno, :fno, :g, :q, :c, :v, TRUE)
+        """), [
+            {'did': head_id, 'rid': rap.id, 'sno': lot.lot_no, 'fno': lot.lot_no, 'g': lot.grade or sel_grade, 'q': q, 'c': float(lot.unit_cost or 0.0), 'v': q * float(lot.unit_cost or 0.0)}
+            for rap, lot, q in items
+        ])
+    except Exception:
+        pass
     db.commit()
 
     # multi-lot PDF

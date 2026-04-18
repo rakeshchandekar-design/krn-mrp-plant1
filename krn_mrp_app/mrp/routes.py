@@ -379,6 +379,7 @@ def _dispatch_stock_maps(conn) -> tuple[Dict[str, float], Dict[str, float], Dict
             SELECT rap_lot_id, COALESCE(SUM(qty_kg),0)::float AS used
             FROM dispatch_items
             WHERE COALESCE(source_stage,'FG')='RAP'
+              AND COALESCE(stock_already_applied,FALSE)=FALSE
             GROUP BY rap_lot_id
         """)).mappings().all() if r.get('rap_lot_id') is not None}
     except Exception:

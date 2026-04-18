@@ -93,6 +93,7 @@ with engine.begin() as conn:
         "ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS source_stage TEXT DEFAULT 'FG'",
         "ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS rap_lot_id INT",
         "ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS source_lot_no TEXT",
+        "ALTER TABLE dispatch_items ADD COLUMN IF NOT EXISTS stock_already_applied BOOLEAN DEFAULT FALSE",
     ]:
         try:
             conn.execute(text(_ddl))
@@ -311,6 +312,7 @@ def _rap_available_rows_conn(conn, exclude_sales_order_id: Optional[int] = None,
         SELECT rap_lot_id, COALESCE(SUM(qty_kg),0) AS used
         FROM dispatch_items
         WHERE COALESCE(source_stage,'FG')='RAP'
+          AND COALESCE(stock_already_applied,FALSE)=FALSE
         GROUP BY rap_lot_id
     """)).all() or [])
     _fg_reserved, rap_reserved = _active_reservation_maps(conn, exclude_sales_order_id) if apply_reservations else ({}, {})
@@ -356,8 +358,39 @@ def _dispatch_available_rows(exclude_sales_order_id: Optional[int] = None, apply
         return _fg_available_rows_conn(conn, exclude_sales_order_id=exclude_sales_order_id, apply_reservations=apply_reservations) + _rap_available_rows_conn(conn, exclude_sales_order_id=exclude_sales_order_id, apply_reservations=apply_reservations)
 
 
+def _ensure_rap_dispatch_mirrors(conn) -> None:
+    if not (_table_exists(conn, 'rap_dispatch') and _table_exists(conn, 'rap_dispatch_item') and _table_exists(conn, 'dispatch_orders') and _table_exists(conn, 'dispatch_items')):
+        return
+    existing = {str(r['order_no']) for r in conn.execute(text("SELECT order_no FROM dispatch_orders WHERE order_no LIKE 'RAPDSP-%'")).mappings().all()}
+    dispatches = conn.execute(text("SELECT id, date, customer, grade FROM rap_dispatch ORDER BY id")).mappings().all()
+    for d in dispatches:
+        order_no = f"RAPDSP-{int(d['id']):06d}"
+        if order_no in existing:
+            continue
+        head_id = conn.execute(text("""
+            INSERT INTO dispatch_orders(order_no, date, customer_name, remarks, created_by)
+            VALUES (:ono, :dt, :cust, :rmk, 'system')
+            RETURNING id
+        """), {'ono': order_no, 'dt': d['date'], 'cust': d['customer'], 'rmk': f"Mirrored from RAP Dispatch #{int(d['id'])}"}).mappings().first()['id']
+        items = conn.execute(text("""
+            SELECT rdi.qty, rdi.cost, l.lot_no, COALESCE(l.grade,:grade) AS grade, rl.id AS rap_lot_id
+            FROM rap_dispatch_item rdi
+            JOIN lot l ON l.id = rdi.lot_id
+            LEFT JOIN rap_lot rl ON rl.lot_id = l.id
+            WHERE rdi.dispatch_id=:did
+            ORDER BY rdi.id
+        """), {'did': d['id'], 'grade': d['grade']}).mappings().all()
+        if items:
+            conn.execute(text("""
+                INSERT INTO dispatch_items(dispatch_id, fg_lot_id, rap_lot_id, source_stage, source_lot_no, fg_lot_no, fg_grade, qty_kg, cost_per_kg, value, stock_already_applied)
+                VALUES (:did, NULL, :rid, 'RAP', :sno, :fno, :g, :q, :c, :v, TRUE)
+            """), [{'did': head_id, 'rid': it.get('rap_lot_id'), 'sno': it['lot_no'], 'fno': it['lot_no'], 'g': it['grade'], 'q': float(it.get('qty') or 0.0), 'c': float(it.get('cost') or 0.0), 'v': float(it.get('qty') or 0.0)*float(it.get('cost') or 0.0)} for it in items])
+        existing.add(order_no)
+
+
 def _fetch_order(order_id: int):
     with engine.begin() as conn:
+        _ensure_rap_dispatch_mirrors(conn)
         head = conn.execute(text("SELECT * FROM dispatch_orders WHERE id=:id"), {"id": order_id}).mappings().first()
         items = conn.execute(text("""
             SELECT di.*,
@@ -374,6 +407,7 @@ def _fetch_order(order_id: int):
 
 def _dispatch_rows_in_range(start: date, end: date):
     with engine.begin() as conn:
+        _ensure_rap_dispatch_mirrors(conn)
         orders = conn.execute(text("""
             SELECT id, order_no, date, customer_name, transporter, vehicle_no, lr_no, remarks,
                    COALESCE(sales_order_no,'') AS sales_order_no
@@ -896,6 +930,8 @@ async def dispatch_atp(request: Request, dep: None = Depends(require_roles('admi
 # ---------------- HOME ----------------
 @router.get('/', response_class=HTMLResponse)
 async def dispatch_home(request: Request, dep: None = Depends(require_roles('admin','dispatch','store','view','sales'))):
+    with engine.begin() as conn:
+        _ensure_rap_dispatch_mirrors(conn)
     rows = _dispatch_available_rows()
     total_avail = sum(float(r['available_kg'] or 0.0) for r in rows)
     open_orders = _sales_orders('open')
@@ -1027,9 +1063,32 @@ async def dispatch_create_post(request: Request, dep: None = Depends(require_rol
         }).mappings().first()['id']
 
         conn.execute(text("""
-            INSERT INTO dispatch_items(dispatch_id, fg_lot_id, rap_lot_id, source_stage, source_lot_no, fg_lot_no, fg_grade, qty_kg, cost_per_kg, value)
-            VALUES (:did, :fid, :rid, :ss, :sno, :fno, :g, :q, :c, :v)
-        """), [{'did': head_id, 'fid': it.get('fg_lot_id'), 'rid': it.get('rap_lot_id'), 'ss': it.get('source_stage') or 'FG', 'sno': it.get('source_lot_no') or it.get('fg_lot_no'), 'fno': it['fg_lot_no'], 'g': it['fg_grade'], 'q': it['qty_kg'], 'c': it['cost_per_kg'], 'v': it['value']} for it in items])
+            INSERT INTO dispatch_items(dispatch_id, fg_lot_id, rap_lot_id, source_stage, source_lot_no, fg_lot_no, fg_grade, qty_kg, cost_per_kg, value, stock_already_applied)
+            VALUES (:did, :fid, :rid, :ss, :sno, :fno, :g, :q, :c, :v, :applied)
+        """), [{'did': head_id, 'fid': it.get('fg_lot_id'), 'rid': it.get('rap_lot_id'), 'ss': it.get('source_stage') or 'FG', 'sno': it.get('source_lot_no') or it.get('fg_lot_no'), 'fno': it['fg_lot_no'], 'g': it['fg_grade'], 'q': it['qty_kg'], 'c': it['cost_per_kg'], 'v': it['value'], 'applied': True if str(it.get('source_stage') or 'FG').upper() == 'RAP' else False} for it in items])
+
+        for it in items:
+            if str(it.get('source_stage') or 'FG').upper() != 'RAP' or not it.get('rap_lot_id'):
+                continue
+            try:
+                conn.execute(text("""
+                    INSERT INTO rap_alloc(rap_lot_id, date, kind, qty, remarks, dest)
+                    VALUES (:rid, :dt, 'DISPATCH', :q, :rmk, :dest)
+                """), {
+                    'rid': int(it['rap_lot_id']),
+                    'dt': order_date,
+                    'q': float(it.get('qty_kg') or 0.0),
+                    'rmk': f"Main Dispatch {order_no}",
+                    'dest': customer_name,
+                })
+                conn.execute(text("""
+                    UPDATE rap_lot
+                    SET available_qty = GREATEST(0, COALESCE(available_qty,0) - :q),
+                        status = CASE WHEN GREATEST(0, COALESCE(available_qty,0) - :q) <= 0.000001 THEN 'CLOSED' ELSE 'OPEN' END
+                    WHERE id = :rid
+                """), {'rid': int(it['rap_lot_id']), 'q': float(it.get('qty_kg') or 0.0)})
+            except Exception:
+                pass
 
         if sales_order_id:
             _apply_dispatch_to_sales_order(conn, sales_order_id, items)
