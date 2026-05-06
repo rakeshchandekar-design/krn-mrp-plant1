@@ -1,6 +1,7 @@
 from datetime import date, timedelta, datetime
 from typing import Any, Dict, List, Optional
 import json, io, csv
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
