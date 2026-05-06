@@ -149,6 +149,14 @@ def _fifo_allocate_rows(rows: List[Dict[str, Any]], required_qty: float, key_fie
         remaining -= take
     return out
 
+
+
+def _date_input_bounds(request: Request, days: int = 4, today: Optional[date] = None) -> tuple[str, str]:
+    today = today or date.today()
+    if _is_admin(request):
+        return "", ""
+    return (today - timedelta(days=days)).isoformat(), today.isoformat()
+
 def fetch_anneal_balance():
     """Fetch APPROVED Anneal lots and compute remaining available balance."""
     with engine.begin() as conn:
@@ -288,8 +296,7 @@ async def grind_create_get(request: Request, dep: None = Depends(require_roles("
     err = request.query_params.get("err", "")
     lot_date = request.query_params.get("lot_date") or date.today().isoformat()
     today = date.today()
-    min_lot_date = (today - timedelta(days=4)).isoformat()
-    max_lot_date = today.isoformat()
+    min_lot_date, max_lot_date = _date_input_bounds(request, 4, today=today)
     return templates.TemplateResponse("grinding_create.html", {
         "request": request,
         "anneal_rows": rows,
@@ -313,13 +320,14 @@ async def grind_create_post(request: Request, dep: None = Depends(require_roles(
 
     today = date.today()
     min_allowed_date = today - timedelta(days=4)
-    if lot_date > today:
-        return RedirectResponse(f"/grind/create?err=Future+date+is+not+allowed.&lot_date={lot_date.isoformat()}", status_code=303)
-    if lot_date < min_allowed_date:
-        return RedirectResponse(
-            f"/grind/create?err=Only+current+date+and+last+4+days+are+allowed+for+Grinding+lot+creation.&lot_date={lot_date.isoformat()}",
-            status_code=303,
-        )
+    if not _is_admin(request):
+        if lot_date > today:
+            return RedirectResponse(f"/grind/create?err=Future+date+is+not+allowed.&lot_date={lot_date.isoformat()}", status_code=303)
+        if lot_date < min_allowed_date:
+            return RedirectResponse(
+                f"/grind/create?err=Only+current+date+and+last+4+days+are+allowed+for+Grinding+lot+creation.&lot_date={lot_date.isoformat()}",
+                status_code=303,
+            )
 
     requested_markers = {}
     for k, v in form.items():

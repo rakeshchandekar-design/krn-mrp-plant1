@@ -1869,10 +1869,23 @@ def current_role(request: Request) -> str:
 
 def role_allowed(request: Request, allowed: set[str]) -> bool:
     role = current_role(request)
-    if role == "view":
-        # allow GET/HEAD/OPTIONS everywhere
-        return request.method in ("GET", "HEAD", "OPTIONS")
     return role in allowed
+
+
+def admin_unrestricted_dates(request: Request) -> bool:
+    return current_role(request) == "admin"
+
+def date_input_bounds(request: Request, days: int = 4, *, today=None) -> tuple[str, str]:
+    today = today or dt.date.today()
+    if admin_unrestricted_dates(request):
+        return "", ""
+    return (today - dt.timedelta(days=days)).isoformat(), today.isoformat()
+
+def is_date_allowed(request: Request, d, days: int = 4, *, today=None) -> bool:
+    today = today or dt.date.today()
+    if admin_unrestricted_dates(request):
+        return True
+    return (today - dt.timedelta(days=days)) <= d <= today
     
 # -------------------------------------------------
 # Startup
@@ -3769,8 +3782,7 @@ def grn_new(request: Request):
         return RedirectResponse("/login", status_code=303)
 
     today = dt.date.today()
-    min_date = (today - dt.timedelta(days=4)).isoformat()
-    max_date = today.isoformat()
+    min_date, max_date = date_input_bounds(request, 4, today=today)
     return templates.TemplateResponse(
         "grn_new.html",
         {
@@ -3807,10 +3819,8 @@ def grn_new_post(
     today = dt.date.today()
     d = dt.date.fromisoformat(date)
 
-    # Same rule as before: today to 4 days back; no future
-    if d > today or d < (today - dt.timedelta(days=4)):
-        min_date = (today - dt.timedelta(days=4)).isoformat()
-        max_date = today.isoformat()
+    if not is_date_allowed(request, d, 4, today=today):
+        min_date, max_date = date_input_bounds(request, 4, today=today)
         return templates.TemplateResponse(
             "grn_new.html",
             {
@@ -3844,8 +3854,7 @@ def grn_new_post(
         .first()
     )
     if duplicate:
-        min_date = (today - dt.timedelta(days=4)).isoformat()
-        max_date = today.isoformat()
+        min_date, max_date = date_input_bounds(request, 4, today=today)
         return templates.TemplateResponse(
             "grn_new.html",
             {
@@ -4069,7 +4078,7 @@ def melting_page(
             parts.append(f"{rm}: {items_txt}")
         trace_map[h.id] = "; ".join(parts) if parts else "-"
 
-    min_back_date = today - dt.timedelta(days=4)
+    min_back_date = None if admin_unrestricted_dates(request) else (today - dt.timedelta(days=4))
 
     return templates.TemplateResponse(
         "melting.html",
@@ -4100,8 +4109,9 @@ def melting_page(
             "showing_all_history": show_all_history,
 
             # ✅ new context for backdate selection
-            "heat_date_max": today.isoformat(),
-            "heat_date_min": min_back_date.isoformat(),
+            "heat_date_max": "" if admin_unrestricted_dates(request) else today.isoformat(),
+            "heat_date_min": "" if admin_unrestricted_dates(request) else (min_back_date.isoformat() if min_back_date else ""),
+            "admin_unrestricted_dates": admin_unrestricted_dates(request),
         },
     )
 
@@ -4164,10 +4174,11 @@ def melting_new(
         return PlainTextResponse("Invalid date format.", status_code=400)
 
     today = dt.date.today()
-    if d_sel > today:
-        return PlainTextResponse("Future date not allowed.", status_code=400)
-    if d_sel < today - dt.timedelta(days=4):
-        return PlainTextResponse("Backdating allowed only up to 4 days.", status_code=400)
+    if not admin_unrestricted_dates(request):
+        if d_sel > today:
+            return PlainTextResponse("Future date not allowed.", status_code=400)
+        if d_sel < today - dt.timedelta(days=4):
+            return PlainTextResponse("Backdating allowed only up to 4 days.", status_code=400)
 
     # ✅ Generate heat number using selected date
     date_str = d_sel.strftime("%Y%m%d")
@@ -4539,9 +4550,11 @@ def atom_page(
         {
             "request": request,
             "role": current_role(request),
-            "today_iso": dt.date.today().isoformat(),  # caps date inputs (max)
-            "min_lot_date": (dt.date.today() - dt.timedelta(days=4)).isoformat(),
+            "today_iso": dt.date.today().isoformat(),
+            "min_lot_date": "" if admin_unrestricted_dates(request) else (dt.date.today() - dt.timedelta(days=4)).isoformat(),
+            "max_lot_date": "" if admin_unrestricted_dates(request) else dt.date.today().isoformat(),
             "selected_lot_date": request.query_params.get("lot_date", dt.date.today().isoformat()),
+            "admin_unrestricted_dates": admin_unrestricted_dates(request),
             "heats": heats,
             "lots": lots,
             "showing_all_history": show_all_history,
@@ -4580,10 +4593,11 @@ async def atom_new(
             return _alert_redirect('Atomization lot date is invalid.', '/atomization?lot_date=' + quote((lot_date or '').strip()))
         today_d = dt.date.today()
         min_allowed = today_d - dt.timedelta(days=4)
-        if atom_lot_date > today_d:
-            return _alert_redirect('Future date is not allowed.', '/atomization?lot_date=' + atom_lot_date.isoformat())
-        if atom_lot_date < min_allowed:
-            return _alert_redirect('Only current date and last 4 days are allowed for Atomization lot creation.', '/atomization?lot_date=' + atom_lot_date.isoformat())
+        if not admin_unrestricted_dates(request):
+            if atom_lot_date > today_d:
+                return _alert_redirect('Future date is not allowed.', '/atomization?lot_date=' + atom_lot_date.isoformat())
+            if atom_lot_date < min_allowed:
+                return _alert_redirect('Only current date and last 4 days are allowed for Atomization lot creation.', '/atomization?lot_date=' + atom_lot_date.isoformat())
 
         # ---- FIFO AUTO MODE ----
         # User selections are used only to indicate the desired heat family.
@@ -4978,8 +4992,7 @@ def briquetting_page(request: Request, start: Optional[str] = None, end: Optiona
     if not show_all_history:
         batches = [b for b in batches if float(b.get('remaining_qty') or 0.0) > 0.0001]
     openings = [dict(r) for r in db.execute(text('SELECT * FROM briquetting_opening ORDER BY date DESC, id DESC')).mappings().all()] if _table_exists(db,'briquetting_opening') else []
-    min_date = (today - dt.timedelta(days=4)).isoformat()
-    max_date = today.isoformat()
+    min_date, max_date = date_input_bounds(request, 4, today=today)
     return templates.TemplateResponse('briquetting.html', {
         'request': request,
         'role': current_role(request),
@@ -5004,8 +5017,9 @@ def briquetting_opening_post(request: Request, date: str = Form(...), source_kin
     except Exception:
         return RedirectResponse('/briquetting?err=Invalid+opening+date', status_code=303)
     today = dt.date.today()
-    if d > today or d < (today - dt.timedelta(days=30)):
-        return RedirectResponse('/briquetting?err=Opening+date+must+be+today+or+within+last+30+days', status_code=303)
+    if not admin_unrestricted_dates(request):
+        if d > today or d < (today - dt.timedelta(days=30)):
+            return RedirectResponse('/briquetting?err=Opening+date+must+be+today+or+within+last+30+days', status_code=303)
     if qty_kg <= 0:
         return RedirectResponse('/briquetting?err=Opening+qty+must+be+greater+than+0', status_code=303)
     db.execute(text("""
@@ -5025,8 +5039,9 @@ def briquetting_new(request: Request, batch_date: str = Form(...), family: str =
     except Exception:
         return RedirectResponse('/briquetting?err=Invalid+batch+date', status_code=303)
     today = dt.date.today()
-    if d > today or d < (today - dt.timedelta(days=4)):
-        return RedirectResponse('/briquetting?err=Batch+date+must+be+today+or+within+last+4+days', status_code=303)
+    if not admin_unrestricted_dates(request):
+        if d > today or d < (today - dt.timedelta(days=4)):
+            return RedirectResponse('/briquetting?err=Batch+date+must+be+today+or+within+last+4+days', status_code=303)
     if output_qty_kg <= 0:
         return RedirectResponse('/briquetting?err=Output+qty+must+be+greater+than+0', status_code=303)
     fam = _briq_family_key(family)

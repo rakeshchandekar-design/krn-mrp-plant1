@@ -47,8 +47,8 @@
 <div class="anneal-grid-2x2">
   <div class="field-block">
     <label>Lot Date <span style="color:#ef4444">*</span></label>
-    <input id="lot_date" type="date" name="lot_date" value="{{ request.query_params.get('lot_date', today) }}" required min="{{ min_date }}" max="{{ today }}">
-    <div style="font-size:12px;color:#64748b;margin-top:6px">Allowed: current date and last 4 days only.</div>
+    <input id="lot_date" type="date" name="lot_date" value="{{ request.query_params.get('lot_date', today) }}" required {% if min_date %}min="{{ min_date }}"{% endif %} {% if max_date %}max="{{ max_date }}"{% endif %}>
+    <div style="font-size:12px;color:#64748b;margin-top:6px">{% if is_admin %}Admin: unrestricted date entry allowed.{% else %}Allowed: current date and last 4 days only.{% endif %}</div>
   </div>
   <div class="field-block">
     <label>Lot Weight (kg)</label><div style="font-size:12px;color:#64748b;margin-bottom:6px">Auto-calculated from allocated RAP / Plant-2 lot quantity.</div>

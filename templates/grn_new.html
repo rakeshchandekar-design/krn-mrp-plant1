@@ -21,8 +21,8 @@
 
       <div class="form-row">
         <label for="date">Date</label>
-        <input id="date" name="date" type="date" required min="{{ min_date }}" max="{{ max_date }}">
-        <div class="muted">Allowed: today to 4 days back (no future date)</div>
+        <input id="date" name="date" type="date" required {% if min_date %}min="{{ min_date }}"{% endif %} {% if max_date %}max="{{ max_date }}"{% endif %}>
+        <div class="muted">{% if role == "admin" %}Admin: unrestricted date entry allowed.{% else %}Allowed: today to 4 days back (no future date){% endif %}</div>
       </div>
 
       <div class="form-row">

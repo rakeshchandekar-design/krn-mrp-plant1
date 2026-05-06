@@ -18,7 +18,7 @@
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
       <div>
         <label>Order Date</label>
-        <input type="date" name="order_date" value="{{ today }}" required>
+        <input type="date" name="order_date" value="{{ today }}" {% if min_date %}min="{{ min_date }}"{% endif %} {% if max_date %}max="{{ max_date }}"{% endif %} required>
       </div>
       <div>
         <label>Customer Master</label>

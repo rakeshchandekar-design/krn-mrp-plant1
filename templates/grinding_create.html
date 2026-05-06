@@ -12,8 +12,8 @@
 <div class="compact-muted" style="margin:6px 0 10px">FIFO Auto Mode is enabled. System allocates oldest eligible stock first. Manual source selection is used only as a family/grade marker where required.</div>
 <form method="post" id="createForm">
   <label>Lot Date</label>
-  <input id="lot_date" name="lot_date" type="date" value="{{ lot_date }}" min="{{ min_lot_date }}" max="{{ max_lot_date }}" required>
-  <div class="muted" style="margin:4px 0 10px">Only current date and last 4 days are allowed. Future date is not allowed.</div>
+  <input id="lot_date" name="lot_date" type="date" value="{{ lot_date }}" {% if min_lot_date %}min="{{ min_lot_date }}"{% endif %} {% if max_lot_date %}max="{{ max_lot_date }}"{% endif %} required>
+  <div class="muted" style="margin:4px 0 10px">{% if is_admin %}Admin: unrestricted date entry allowed.{% else %}Only current date and last 4 days are allowed. Future date is not allowed.{% endif %}</div>
 
   <label>Lot Weight (kg)</label>
   <input id="lot_weight" name="lot_weight" type="number" step="0.01" min="0.01" required>

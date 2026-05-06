@@ -6,7 +6,7 @@
 <div class="compact-muted" style="margin:6px 0 10px">FIFO Auto Mode is enabled. System allocates oldest eligible stock first. Manual source selection is used only as a family/grade marker where required.</div>
 <form method="post">
   <label>Lot Date</label>
-  <input type="date" name="lot_date" value="{{ lot_date }}" min="{{ min_date }}" max="{{ today }}" required>
+  <input type="date" name="lot_date" value="{{ lot_date }}" {% if min_date %}min="{{ min_date }}"{% endif %} {% if max_date %}max="{{ max_date }}"{% endif %} required>
   <label>Measured Magnetic Output Qty (kg)</label>
   <input type="number" name="mag_output_qty_kg" step="0.01" min="0.01" required>
   <table class="table">

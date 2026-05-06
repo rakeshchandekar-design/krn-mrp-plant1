@@ -137,7 +137,7 @@ def create_get(request: Request, dep: None = Depends(require_roles('admin','pulv
     return templates.TemplateResponse('pulv_create.html', {
         'request': request, 'role': current_role(request), 'is_admin': _is_admin(request),
         'rows': rows, 'err': request.query_params.get('err',''),
-        'today': date.today().isoformat(), 'min_date': (date.today()-timedelta(days=4)).isoformat(),
+        'today': date.today().isoformat(), 'min_date': _date_input_bounds(request, 4, today=date.today())[0], 'max_date': _date_input_bounds(request, 4, today=date.today())[1],
         'lot_date': request.query_params.get('lot_date', date.today().isoformat())
     })
 
@@ -149,10 +149,11 @@ async def create_post(request: Request, dep: None = Depends(require_roles('admin
         lot_date = date.fromisoformat(lot_date_raw) if lot_date_raw else date.today()
     except Exception:
         return RedirectResponse('/pulv/create?err=Invalid+lot+date&lot_date=' + lot_date_raw.replace(' ','+'), status_code=303)
-    if lot_date > date.today():
-        return RedirectResponse('/pulv/create?err=Future+date+is+not+allowed&lot_date=' + lot_date.isoformat(), status_code=303)
-    if lot_date < (date.today() - timedelta(days=4)):
-        return RedirectResponse('/pulv/create?err=Only+current+date+and+last+4+days+allowed&lot_date=' + lot_date.isoformat(), status_code=303)
+    if not _is_admin(request):
+        if lot_date > date.today():
+            return RedirectResponse('/pulv/create?err=Future+date+is+not+allowed&lot_date=' + lot_date.isoformat(), status_code=303)
+        if lot_date < (date.today() - timedelta(days=4)):
+            return RedirectResponse('/pulv/create?err=Only+current+date+and+last+4+days+allowed&lot_date=' + lot_date.isoformat(), status_code=303)
     requested_total = 0.0
     for k, v in form.items():
         if k.startswith('alloc_'):

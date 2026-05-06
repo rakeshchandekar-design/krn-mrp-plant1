@@ -250,6 +250,22 @@ def _tpl_auth(request: Request) -> dict:
     sess = (getattr(request, "session", {}) or {})
     return {"user": sess.get("username", "") or "", "role": sess.get("role", "guest") or "guest"}
 
+def _date_input_bounds(request: Request, days: int = 4, today: Optional[date] = None) -> tuple[str, str]:
+    today = today or date.today()
+    if _is_admin(request):
+        return "", ""
+    return (today - timedelta(days=days)).isoformat(), today.isoformat()
+
+def _validate_entry_date(request: Request, d: date, label: str, days: int = 4) -> Optional[str]:
+    if _is_admin(request):
+        return None
+    today = date.today()
+    if d > today:
+        return f"{label} date cannot be in the future"
+    if d < (today - timedelta(days=days)):
+        return f"{label} date must be current date or within last {days} days"
+    return None
+
 
 def _is_admin(request: Request) -> bool:
     s = getattr(request, "state", None)
@@ -807,6 +823,8 @@ async def dispatch_customer_orders_get(request: Request, dep: None = Depends(req
         'customers': customers,
         'grades': grades,
         'today': date.today().isoformat(),
+        'min_date': _date_input_bounds(request, 4, today=date.today())[0],
+        'max_date': _date_input_bounds(request, 4, today=date.today())[1],
         'is_admin': _is_admin(request),
         'err': request.query_params.get('err',''),
         **_tpl_auth(request),
@@ -823,6 +841,9 @@ async def dispatch_customer_orders_post(request: Request, dep: None = Depends(re
         order_date = date.fromisoformat((form.get('order_date') or date.today().isoformat()).strip())
     except Exception:
         return RedirectResponse('/dispatch/customer-orders?err=Order+Date+is+invalid', status_code=303)
+    msg = _validate_entry_date(request, order_date, 'Order', 4)
+    if msg:
+        return RedirectResponse('/dispatch/customer-orders?err=' + quote_plus(msg), status_code=303)
 
     items = []
     for idx in range(1, 7):
@@ -976,6 +997,8 @@ async def dispatch_home(request: Request, dep: None = Depends(require_roles('adm
         'open_orders': open_orders,
         'is_admin': _is_admin(request),
         'today': date.today().isoformat(),
+        'min_date': _date_input_bounds(request, 4, today=date.today())[0],
+        'max_date': _date_input_bounds(request, 4, today=date.today())[1],
         'customers': _dispatch_customers(True),
         **_tpl_auth(request),
     })
@@ -1016,6 +1039,14 @@ async def dispatch_create_post(request: Request, dep: None = Depends(require_rol
     if not customer_name:
         return RedirectResponse('/dispatch/create?err=Customer+Name+is+required', status_code=303)
     order_date = form.get('date') or date.today().isoformat()
+    try:
+        order_dt = date.fromisoformat(str(order_date).strip())
+    except Exception:
+        return RedirectResponse('/dispatch/create?err=Dispatch+date+is+invalid', status_code=303)
+    msg = _validate_entry_date(request, order_dt, 'Dispatch', 4)
+    if msg:
+        return RedirectResponse('/dispatch/create?err=' + quote_plus(msg), status_code=303)
+    order_date = order_dt.isoformat()
     sales_order_id_raw = (form.get('sales_order_id') or '').strip()
     sales_order_id = int(sales_order_id_raw) if sales_order_id_raw.isdigit() else None
 

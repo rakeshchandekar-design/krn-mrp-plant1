@@ -7,8 +7,8 @@
 <div class="compact-muted" style="margin:6px 0 10px">FIFO Auto Mode is enabled. System allocates oldest eligible stock first. Manual source selection is used only as a family/grade marker where required.</div>
 <form method="post" id="createForm">
   <label>FG Lot Date <span style="color:#ef4444">*</span></label>
-  <input type="date" name="lot_date" id="lot_date" value="{{ selected_lot_date or today }}" required min="{{ min_date }}" max="{{ today }}">
-  <div class="muted" style="margin-bottom:8px">Allowed: current date and last 4 days only.</div>
+  <input type="date" name="lot_date" id="lot_date" value="{{ selected_lot_date or today }}" required {% if min_date %}min="{{ min_date }}"{% endif %} {% if max_date %}max="{{ max_date }}"{% endif %}>
+  <div class="muted" style="margin-bottom:8px">{% if is_admin %}Admin: unrestricted date entry allowed.{% else %}Allowed: current date and last 4 days only.{% endif %}</div>
 
   <div class="muted" style="margin-bottom:8px">For grades 40.29 and 20, source comes only from oversize byproduct bucket of the same family.</div>
   <label>FG Grade</label>

@@ -29,7 +29,7 @@
   <div class="card">
     <h3>Create Briquette Batch</h3>
     <form method="post" action="/briquetting/new" style="display:grid; grid-template-columns:repeat(2,minmax(180px,1fr)); gap:10px">
-      <div><label>Date</label><input type="date" name="batch_date" min="{{ min_date }}" max="{{ max_date }}" value="{{ today_iso }}" required></div>
+      <div><label>Date</label><input type="date" name="batch_date" {% if min_date %}min="{{ min_date }}"{% endif %} {% if max_date %}max="{{ max_date }}"{% endif %} value="{{ today_iso }}" required></div>
       <div><label>Family</label><select name="family" required>{% for f in families %}<option value="{{ f }}">{{ f }}</option>{% endfor %}</select></div>
       <div><label>Output Qty (kg)</label><input type="number" step="0.01" min="0.01" name="output_qty_kg" required></div>
       <div><label>Remarks</label><input type="text" name="remarks"></div>
@@ -41,7 +41,7 @@
 <div class="card" style="margin-top:14px">
   <h3>Add Opening Input Stock</h3>
   <form method="post" action="/briquetting/opening" style="display:grid; grid-template-columns:repeat(6,minmax(120px,1fr)); gap:10px; align-items:end">
-    <div><label>Date</label><input type="date" name="date" value="{{ today_iso }}" required></div>
+    <div><label>Date</label><input type="date" name="date" value="{{ today_iso }}" {% if min_date %}min="{{ min_date }}"{% endif %} {% if max_date %}max="{{ max_date }}"{% endif %} required></div>
     <div><label>Source</label><select name="source_kind"><option value="+20">+20</option><option value="+40">+40</option></select></div>
     <div><label>Family</label><select name="family">{% for f in ['KIP','KFS','KIPM','KSP'] %}<option value="{{ f }}">{{ f }}</option>{% endfor %}</select></div>
     <div><label>Qty (kg)</label><input type="number" step="0.01" min="0.01" name="qty_kg" required></div>

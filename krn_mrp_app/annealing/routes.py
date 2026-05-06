@@ -189,6 +189,13 @@ def _is_admin(request: Request) -> bool:
         return True
     return False
 
+
+def _date_input_bounds(request: Request, days: int = 4, today: Optional[date] = None) -> tuple[str, str]:
+    today = today or date.today()
+    if _is_admin(request):
+        return "", ""
+    return (today - timedelta(days=days)).isoformat(), today.isoformat()
+
 # ------------------ ROUTES ------------------
 
 @router.get("/", response_class=HTMLResponse)
@@ -339,7 +346,7 @@ async def anneal_create_get(
     rap_rows = fetch_plant2_balance()
     err = request.query_params.get("err", "")
     today = date.today()
-    min_date = (today - timedelta(days=4)).isoformat()
+    min_date, max_date = _date_input_bounds(request, 4, today=today)
 
     return templates.TemplateResponse(
         "annealing_create.html",
@@ -353,6 +360,7 @@ async def anneal_create_get(
             "downtime_types": ["production","maintenance","power","other"],
             "today": today.isoformat(),
             "min_date": min_date,
+            "max_date": max_date,
         },
     )
 
@@ -372,10 +380,11 @@ async def anneal_create_post(
 
     today = date.today()
     min_allowed_date = today - timedelta(days=4)
-    if lot_date > today:
-        return RedirectResponse(url=f"/anneal/create?err={quote_plus('Future date is not allowed.')}&lot_date={lot_date.isoformat()}", status_code=303)
-    if lot_date < min_allowed_date:
-        return RedirectResponse(url=f"/anneal/create?err={quote_plus('Only current date and last 4 days are allowed for Annealing lot creation.')}&lot_date={lot_date.isoformat()}", status_code=303)
+    if not _is_admin(request):
+        if lot_date > today:
+            return RedirectResponse(url=f"/anneal/create?err={quote_plus('Future date is not allowed.')}&lot_date={lot_date.isoformat()}", status_code=303)
+        if lot_date < min_allowed_date:
+            return RedirectResponse(url=f"/anneal/create?err={quote_plus('Only current date and last 4 days are allowed for Annealing lot creation.')}&lot_date={lot_date.isoformat()}", status_code=303)
 
     requested_markers: dict[str, float] = {}
     for k, v in form.items():

@@ -502,6 +502,13 @@ def _fg_family_for_grade(fg_grade: str) -> str:
 def _surcharge_for_grade(fg_grade: str) -> float:
     return float(FG_SURCHARGE.get(fg_grade, 0.0))
 
+
+def _date_input_bounds(request: Request, days: int = 4, today: Optional[date] = None) -> tuple[str, str]:
+    today = today or date.today()
+    if _is_admin(request):
+        return "", ""
+    return (today - timedelta(days=days)).isoformat(), today.isoformat()
+
 # --------------- HOME (KPIs) ---------------
 @router.get("/", response_class=HTMLResponse)
 async def fg_home(request: Request, dep: None = Depends(require_roles("admin","fg","view"))):
@@ -615,7 +622,7 @@ async def fg_create_get(request: Request, dep: None = Depends(require_roles("fg"
     rows = fetch_fg_source_balance(selected_fg_grade) if selected_fg_grade else []
     debug_rows = fetch_fg_source_debug(selected_fg_grade) if selected_fg_grade and _is_admin(request) else []
     today = date.today()
-    min_date = (today - timedelta(days=4)).isoformat()
+    min_date, max_date = _date_input_bounds(request, 4, today=today)
     selected_lot_date = request.query_params.get("lot_date", today.isoformat())
     return templates.TemplateResponse("fg_create.html", {
         "request": request,
@@ -650,10 +657,11 @@ async def fg_create_post(
 
     today = date.today()
     min_allowed_date = today - timedelta(days=4)
-    if fg_lot_date > today:
-        return RedirectResponse(f"/fg/create?err=Future+date+is+not+allowed.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
-    if fg_lot_date < min_allowed_date:
-        return RedirectResponse(f"/fg/create?err=Only+current+date+and+last+4+days+are+allowed+for+FG+lot+creation.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
+    if not _is_admin(request):
+        if fg_lot_date > today:
+            return RedirectResponse(f"/fg/create?err=Future+date+is+not+allowed.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
+        if fg_lot_date < min_allowed_date:
+            return RedirectResponse(f"/fg/create?err=Only+current+date+and+last+4+days+are+allowed+for+FG+lot+creation.&fg_grade={quote_plus(fg_grade)}&lot_date={fg_lot_date.isoformat()}", status_code=303)
 
     try:
         fg_weight = float(lot_weight or 0)

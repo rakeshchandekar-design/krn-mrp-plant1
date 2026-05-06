@@ -122,7 +122,7 @@
       <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:6px 0">
         <div>
           <label>Lot Date</label>
-          <input type="date" name="lot_date" value="{{ selected_lot_date }}" min="{{ min_lot_date }}" max="{{ today_iso }}" required>
+          <input type="date" name="lot_date" value="{{ selected_lot_date }}" {% if min_lot_date %}min="{{ min_lot_date }}"{% endif %} {% if max_lot_date %}max="{{ max_lot_date }}"{% endif %} required>
         </div>
         <div>
           <label>Lot Weight (kg)</label>
