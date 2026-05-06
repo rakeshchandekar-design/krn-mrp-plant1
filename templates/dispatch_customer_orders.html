@@ -3,6 +3,7 @@
 {% set _role_name = (role if role is defined else (request.state.role if request.state.role is defined else 'guest'))|string|lower %}
 {% set can_dispatch_execute = _role_name in ['admin','dispatch','store'] %}
 {% set can_sales_orders = _role_name in ['admin','dispatch','store','sales','view'] %}
+{% set can_admin_order_manage = _role_name == 'admin' %}
 <h2>Customer Orders</h2>
 <div class="toolbar" style="margin:8px 0 12px; gap:8px; display:flex; flex-wrap:wrap;">
   <a class="btn" href="/dispatch">← Back to Dispatch</a>
@@ -63,12 +64,23 @@
     <tr>
       <td>{{ r.order_no }}</td>
       <td>{{ r.order_date }}</td>
+      <td>{{ r.due_date or '' }}</td>
       <td>{{ r.customer_name }}</td>
+      <td>{{ r.priority or 'NORMAL' }}</td>
       <td>{{ r.status }}</td>
       <td>{{ '%.1f'|format(r.total_ordered_kg or 0) }}</td>
+      <td>{{ '%.1f'|format(r.total_reserved_kg or 0) }}</td>
       <td>{{ '%.1f'|format(r.total_dispatched_kg or 0) }}</td>
       <td>{{ '%.1f'|format(r.total_pending_kg or 0) }}</td>
-      <td><a href="/dispatch/customer-orders/view/{{ r.id }}">View</a> {% if can_dispatch_execute and r.total_pending_kg > 0 %}| <a href="/dispatch/create?sales_order_id={{ r.id }}">Create Dispatch</a>{% endif %}</td>
+      <td>{{ '%.1f'|format(r.total_shortage_kg or 0) }}</td>
+      <td>
+        <a href="/dispatch/customer-orders/view/{{ r.id }}">View</a>
+        {% if can_dispatch_execute and r.total_pending_kg > 0 %}| <a href="/dispatch/create?sales_order_id={{ r.id }}">Create Dispatch</a>{% endif %}
+        {% if can_admin_order_manage %}| <a href="/dispatch/customer-orders/edit/{{ r.id }}">Edit</a>
+        <form method="post" action="/dispatch/customer-orders/delete/{{ r.id }}" style="display:inline" onsubmit="return confirm('Delete this customer order? This is blocked once dispatch exists.');">
+          <button type="submit" class="link-btn">Delete</button>
+        </form>{% endif %}
+      </td>
     </tr>
     {% endfor %}
   </table>
@@ -84,4 +96,5 @@ function fillCustomerFromMaster(){
   document.getElementById('customer_address').value=opt.dataset.address||'';
 }
 </script>
+<style>.link-btn{background:none;border:none;padding:0;margin:0;color:#0b57d0;text-decoration:underline;cursor:pointer;font:inherit;}</style>
 {% endblock %}

@@ -680,6 +680,14 @@ def _fetch_sales_order(order_id: int) -> tuple[Optional[Dict[str, Any]], List[Di
     return head_d, item_list
 
 
+
+
+def _sales_order_has_dispatch(conn, sales_order_id: int) -> bool:
+    try:
+        cnt = conn.execute(text("SELECT COUNT(*) FROM dispatch_orders WHERE sales_order_id=:id"), {"id": sales_order_id}).scalar() or 0
+        return int(cnt or 0) > 0
+    except Exception:
+        return False
 def _update_sales_order_status(conn, sales_order_id: int) -> None:
     row = conn.execute(text("""
         SELECT
@@ -927,6 +935,121 @@ async def dispatch_customer_order_view(request: Request, order_id: int, dep: Non
     })
 
 
+
+@router.get('/customer-orders/edit/{order_id}', response_class=HTMLResponse)
+async def dispatch_customer_order_edit_get(request: Request, order_id: int, dep: None = Depends(require_roles('admin'))):
+    head, items = _fetch_sales_order(order_id)
+    if not head:
+        raise HTTPException(status_code=404, detail='Customer order not found')
+    customers = _dispatch_customers(True)
+    grades = _dispatch_grade_options()
+    return templates.TemplateResponse('dispatch_customer_order_edit.html', {
+        'request': request,
+        'head': head,
+        'items': items,
+        'customers': customers,
+        'grades': grades,
+        'today': date.today().isoformat(),
+        'min_date': None,
+        'max_date': None,
+        'is_admin': _is_admin(request),
+        'err': request.query_params.get('err',''),
+        **_tpl_auth(request),
+    })
+
+@router.post('/customer-orders/edit/{order_id}')
+async def dispatch_customer_order_edit_post(request: Request, order_id: int, dep: None = Depends(require_roles('admin'))):
+    form = await request.form()
+    customer_name = (form.get('customer_name') or form.get('customer_master') or '').strip()
+    if not customer_name:
+        return RedirectResponse(f'/dispatch/customer-orders/edit/{order_id}?err=Customer+Name+is+required', status_code=303)
+    try:
+        order_date = date.fromisoformat((form.get('order_date') or date.today().isoformat()).strip())
+    except Exception:
+        return RedirectResponse(f'/dispatch/customer-orders/edit/{order_id}?err=Order+Date+is+invalid', status_code=303)
+    items = []
+    for idx in range(1, 7):
+        grade = (form.get(f'fg_grade_{idx}') or '').strip()
+        qty_raw = (form.get(f'qty_{idx}') or '').strip()
+        line_remarks = (form.get(f'line_remarks_{idx}') or '').strip()
+        if not grade and not qty_raw:
+            continue
+        try:
+            qty = float(qty_raw or 0.0)
+        except Exception:
+            qty = 0.0
+        if not grade or qty <= 0:
+            continue
+        items.append({'fg_grade': grade, 'ordered_qty_kg': qty, 'remarks': line_remarks, 'idx': idx})
+    if not items:
+        return RedirectResponse(f'/dispatch/customer-orders/edit/{order_id}?err=Add+at+least+one+grade+line+with+Qty+%3E+0', status_code=303)
+    with engine.begin() as conn:
+        if _sales_order_has_dispatch(conn, order_id):
+            return RedirectResponse(f'/dispatch/customer-orders/edit/{order_id}?err=Order+already+has+dispatch.+Edit+is+blocked+for+traceability', status_code=303)
+        row = conn.execute(text('SELECT id FROM dispatch_sales_orders WHERE id=:id'), {'id': order_id}).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail='Customer order not found')
+        conn.execute(text("""
+            UPDATE dispatch_sales_orders
+            SET order_date=:d,
+                customer_name=:cn,
+                customer_gstin=:gst,
+                contact=:ct,
+                customer_address=:addr,
+                po_no=:pono,
+                po_date=:podt,
+                due_date=:due,
+                priority=:prio,
+                remarks=:rmk,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE id=:id
+        """), {
+            'id': order_id,
+            'd': order_date,
+            'cn': customer_name,
+            'gst': (form.get('customer_gstin') or '').strip(),
+            'ct': (form.get('contact') or '').strip(),
+            'addr': (form.get('customer_address') or '').strip(),
+            'pono': (form.get('po_no') or '').strip(),
+            'podt': ((form.get('po_date') or '').strip() or None),
+            'due': ((form.get('due_date') or '').strip() or None),
+            'prio': ((form.get('priority') or 'NORMAL').strip() or 'NORMAL').upper(),
+            'rmk': (form.get('remarks') or '').strip(),
+        })
+        if _table_exists(conn, 'dispatch_stock_reservations'):
+            conn.execute(text('DELETE FROM dispatch_stock_reservations WHERE sales_order_id=:id'), {'id': order_id})
+        conn.execute(text('DELETE FROM dispatch_sales_order_items WHERE sales_order_id=:id'), {'id': order_id})
+        payload=[]
+        for it in items:
+            idx=it['idx']
+            payload.append({
+                'sid': order_id,
+                'g': it['fg_grade'],
+                'q': it['ordered_qty_kg'],
+                'r': it.get('remarks',''),
+                'cd': ((form.get(f'committed_date_{idx}') or '').strip() or None),
+                'sp': ((form.get(f'source_pref_{idx}') or 'AUTO').strip() or 'AUTO').upper(),
+            })
+        conn.execute(text("""
+            INSERT INTO dispatch_sales_order_items(sales_order_id, fg_grade, ordered_qty_kg, dispatched_qty_kg, reserved_qty_kg, committed_date, source_preference, line_status, remarks)
+            VALUES (:sid, :g, :q, 0, 0, :cd, :sp, 'OPEN', :r)
+        """), payload)
+        _rebuild_sales_order_reservations(conn, order_id)
+    return RedirectResponse(f'/dispatch/customer-orders/view/{order_id}', status_code=303)
+
+@router.post('/customer-orders/delete/{order_id}')
+async def dispatch_customer_order_delete(request: Request, order_id: int, dep: None = Depends(require_roles('admin'))):
+    with engine.begin() as conn:
+        row = conn.execute(text('SELECT id FROM dispatch_sales_orders WHERE id=:id'), {'id': order_id}).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail='Customer order not found')
+        if _sales_order_has_dispatch(conn, order_id):
+            return RedirectResponse('/dispatch/customer-orders?err=Order+already+has+dispatch.+Delete+is+blocked+for+traceability', status_code=303)
+        if _table_exists(conn, 'dispatch_stock_reservations'):
+            conn.execute(text('DELETE FROM dispatch_stock_reservations WHERE sales_order_id=:id'), {'id': order_id})
+        conn.execute(text('DELETE FROM dispatch_sales_order_items WHERE sales_order_id=:id'), {'id': order_id})
+        conn.execute(text('DELETE FROM dispatch_sales_orders WHERE id=:id'), {'id': order_id})
+    return RedirectResponse('/dispatch/customer-orders', status_code=303)
 @router.get('/atp', response_class=HTMLResponse)
 async def dispatch_atp(request: Request, dep: None = Depends(require_roles('admin','dispatch','store','view','sales'))):
     gross_rows = _dispatch_available_rows(apply_reservations=False)

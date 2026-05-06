@@ -3,11 +3,13 @@
 {% set _role_name = (role if role is defined else (request.state.role if request.state.role is defined else 'guest'))|string|lower %}
 {% set can_dispatch_execute = _role_name in ['admin','dispatch','store'] %}
 {% set can_sales_orders = _role_name in ['admin','dispatch','store','sales','view'] %}
+{% set can_admin_order_manage = _role_name == 'admin' %}
 <h2>Customer Order — {{ head.order_no }}</h2>
 <div class="toolbar" style="margin:8px 0 12px; gap:8px; display:flex; flex-wrap:wrap;">
   <a class="btn" href="/dispatch/customer-orders">← Back to Customer Orders</a>
   <a class="btn" href="/dispatch/atp">ATP</a>
   {% if can_dispatch_execute and head.total_pending_kg > 0 %}<a class="btn" href="/dispatch/create?sales_order_id={{ head.id }}">Create Dispatch</a>{% endif %}
+  {% if can_admin_order_manage %}<a class="btn" href="/dispatch/customer-orders/edit/{{ head.id }}">Edit Order</a> <form method="post" action="/dispatch/customer-orders/delete/{{ head.id }}" style="display:inline" onsubmit="return confirm('Delete this customer order? This is blocked once dispatch exists.');"><button class="btn btn-danger" type="submit">Delete Order</button></form>{% endif %}
 </div>
 <p class="muted">Date: {{ head.order_date }} | Due: {{ head.due_date or "" }} | Priority: {{ head.priority or "NORMAL" }} | Customer: {{ head.customer_name }} | Status: {{ head.status }} | Ordered: {{ '%.1f'|format(head.total_ordered_kg or 0) }} kg | Reserved: {{ '%.1f'|format(head.total_reserved_kg or 0) }} kg | Dispatched: {{ '%.1f'|format(head.total_dispatched_kg or 0) }} kg | Pending: {{ '%.1f'|format(head.total_pending_kg or 0) }} kg | Shortage: {{ '%.1f'|format(head.total_shortage_kg or 0) }} kg</p>
 <table class="table">
