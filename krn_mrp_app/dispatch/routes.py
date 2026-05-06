@@ -270,12 +270,22 @@ def _validate_entry_date(request: Request, d: date, label: str, days: int = 4) -
 
 def _is_admin(request: Request) -> bool:
     s = getattr(request, "state", None)
-    if not s: return False
-    if getattr(s, "is_admin", False): return True
-    role = getattr(s, "role", None)
-    if isinstance(role, str) and role.lower() == "admin": return True
-    roles = getattr(s, "roles", None)
-    return isinstance(roles, (list,set,tuple)) and "admin" in roles
+    if s:
+        if getattr(s, "is_admin", False):
+            return True
+        role = getattr(s, "role", None)
+        if isinstance(role, str) and role.lower() == "admin":
+            return True
+        roles = getattr(s, "roles", None)
+        if isinstance(roles, (list, set, tuple)) and "admin" in {str(x).lower() for x in roles}:
+            return True
+    sess = (getattr(request, "session", {}) or {})
+    if str(sess.get("role") or "").strip().lower() == "admin":
+        return True
+    cookies = getattr(request, "cookies", {}) or {}
+    if str(cookies.get("role") or "").strip().lower() == "admin":
+        return True
+    return False
 
 
 def _active_reservation_maps(conn, exclude_sales_order_id: Optional[int] = None) -> tuple[Dict[int, float], Dict[int, float]]:
@@ -1152,6 +1162,8 @@ async def dispatch_create_get(request: Request, dep: None = Depends(require_role
         'err': err,
         'is_admin': _is_admin(request),
         'today': date.today().isoformat(),
+        'min_date': _date_input_bounds(request, 4, today=date.today())[0],
+        'max_date': _date_input_bounds(request, 4, today=date.today())[1],
         **_tpl_auth(request),
     })
 
